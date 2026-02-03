@@ -1,0 +1,45 @@
+🚀 Starting Maya Agent (with integrated Token Server)...
+🚀 Starting Integrated Token Server on port 5050...
+/usr/lib/python3.12/multiprocessing/popen_fork.py:66: DeprecationWarning: This process (pid=47668) is multi-threaded, use of fork() may lead to deadlocks in the child.
+  self.pid = os.fork()
+/home/harsha/Downloads/projects/LIveKIt/version 2/LIVEKIT vvv2/Agent/venv/lib/python3.12/site-packages/aiohttp/web_app.py:305: DeprecationWarning: old-style middleware "<function run_token_server.<locals>.cors_middleware at 0x76af2a902de0>" deprecated, see #2252
+  self._middlewares_handlers = tuple(self._prepare_middleware())
+/home/harsha/Downloads/projects/LIveKIt/version 2/LIVEKIT vvv2/Agent/venv/lib/python3.12/site-packages/livekit/agents/cli/cli.py:1653: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+DEBUG:asyncio:Using selector: EpollSelector
+🚀 Starting Maya Agent Worker...
+    22:27:18.234 DEBUG… asyncio            Using selector: EpollSelector  
+DEV:livekit.agents:Watching /home/harsha/Downloads/projects/LIveKIt/version 2/LIVEKIT vvv2/Agent
+    22:27:18.238 DEV  … livekit.agents     Watching                             
+                                           /home/harsha/Downloads/projects/LI…  
+                                           2/LIVEKIT vvv2/Agent                 
+DEBUG:asyncio:Using selector: EpollSelector
+    22:27:21.736 DEBUG… asyncio            Using selector: EpollSelector  
+/home/harsha/Downloads/projects/LIveKIt/version 2/LIVEKIT vvv2/Agent/venv/lib/python3.12/site-packages/livekit/agents/utils/http_server.py:13: DeprecationWarning: loop argument is deprecated
+  self._app = web.Application(loop=self._loop)
+INFO:livekit.agents:starting worker
+    22:27:21.740 INFO … livekit.agents     starting worker  
+                                         {"version": "1.3.12", "rtc-version": 
+"1.0.23"}
+INFO:livekit.agents:preloading plugins
+    22:27:21.741 INFO … livekit.agents     preloading plugins  
+                                         {"packages": ["livekit.plugins.silero",
+"livekit.plugins.openai", "livekit.plugins.groq", "livekit.plugins.cartesia", 
+"av"]}
+/home/harsha/Downloads/projects/LIveKIt/version 2/LIVEKIT vvv2/Agent/venv/lib/python3.12/site-packages/livekit/agents/utils/http_server.py:30: DeprecationWarning: Application.make_handler(...) is deprecated, use AppRunner API instead
+  handler = self._app.make_handler()
+INFO:livekit.agents:HTTP server listening on :34377
+    22:27:21.743 INFO … livekit.agents     HTTP server listening on :34377  
+INFO:livekit.agents:registered worker
+    22:27:26.513 INFO … livekit.agents     registered worker  
+                                         {"agent_name": "", "id": 
+"AW_mYB4RmgWkm97", "url": "wss://onetry-embmzlra.livekit.cloud", "region": 
+"India South", "protocol": 16}
+WARNING:watchfiles.main:received signal 15, raising KeyboardInterrupt
+INFO:livekit.agents:shutting down worker
+    22:32:10.795 INFO … livekit.agents     shutting down worker  
+                                         {"id": "AW_mYB4RmgWkm97"}
+    22:32:10.792 WARNI… watchfiles.main    received signal 15, raising          
+                                           KeyboardInterrupt                    
+WARNING:livekit.agents:exiting forcefully
+    22:32:10.805 WARNI… livekit.agents     exiting forcefully  

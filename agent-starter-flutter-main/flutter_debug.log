@@ -1,0 +1,564 @@
+[  +35 ms] Unable to locate an Android SDK.
+[   +4 ms] executing: uname -m
+[   +5 ms] Exit code 0 from: uname -m
+[        ] x86_64
+[  +10 ms] Artifact Instance of 'MaterialFonts' is not required, skipping update.
+[        ] Artifact Instance of 'GradleWrapper' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterSdk' is not required, skipping update.
+[        ] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FontSubsetArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'PubDependencies' is not required, skipping update.
+[   +1 ms] executing: [/home/harsha/flutter/] git -c log.showSignature=false log HEAD -n 1 --pretty=format:%ad --date=iso
+[  +42 ms] Exit code 0 from: git -c log.showSignature=false log HEAD -n 1 --pretty=format:%ad --date=iso
+[        ] 2025-12-11 11:50:07 -0500
+[  +28 ms] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterEngineStamp' is not required, skipping update.
+[        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[   +1 ms] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[  +63 ms] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterEngineStamp' is not required, skipping update.
+[        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[        ] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[  +11 ms] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[  +62 ms] Skipping pub get: version match.
+[  +79 ms] Found plugin url_launcher at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +4 ms] Found plugin url_launcher_windows at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +8 ms] Found plugin url_launcher_web at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +5 ms] Found plugin url_launcher_macos at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +2 ms] Found plugin url_launcher_linux at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +8 ms] Found plugin url_launcher_ios at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_ios-6.3.6/
+[   +2 ms] Found plugin url_launcher_android at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +33 ms] Found plugin shared_preferences at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +2 ms] Found plugin shared_preferences_windows at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +3 ms] Found plugin path_provider_windows at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +6 ms] Found plugin shared_preferences_web at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +1 ms] Found plugin shared_preferences_linux at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +1 ms] Found plugin path_provider_linux at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +2 ms] Found plugin shared_preferences_foundation at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +3 ms] Found plugin shared_preferences_android at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.18/
+[   +3 ms] Found plugin path_provider at /home/harsha/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +3 ms] Found plugin path_provider_foundation at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[  +13 ms] Found plugin path_provider_android at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +2 ms] Found plugin app_links at /home/harsha/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +1 ms] Found plugin app_links_web at /home/harsha/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +2 ms] Found plugin app_links_linux at /home/harsha/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +1 ms] Found plugin gtk at /home/harsha/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[  +11 ms] Found plugin livekit_client at /home/harsha/.pub-cache/hosted/pub.dev/livekit_client-2.6.1/
+[   +8 ms] Found plugin flutter_webrtc at /home/harsha/.pub-cache/hosted/pub.dev/flutter_webrtc-1.2.1/
+[   +7 ms] Found plugin device_info_plus at /home/harsha/.pub-cache/hosted/pub.dev/device_info_plus-12.3.0/
+[   +8 ms] Found plugin connectivity_plus at /home/harsha/.pub-cache/hosted/pub.dev/connectivity_plus-7.0.0/
+[  +11 ms] Found plugin flutter_background at /home/harsha/.pub-cache/hosted/pub.dev/flutter_background-1.3.0+1/
+[   +7 ms] Found plugin file_picker at /home/harsha/.pub-cache/hosted/pub.dev/file_picker-10.3.8/
+[   +2 ms] Found plugin flutter_plugin_android_lifecycle at /home/harsha/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[   +3 ms] Found plugin bitsdojo_window at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window-0.1.6/
+[   +1 ms] Found plugin bitsdojo_window_windows at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_windows-0.1.6/
+[   +2 ms] Found plugin bitsdojo_window_macos at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_macos-0.1.4/
+[   +5 ms] Found plugin bitsdojo_window_linux at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_linux-0.1.4/
+[  +56 ms] Found plugin url_launcher at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +1 ms] Found plugin url_launcher_windows at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +5 ms] Found plugin url_launcher_web at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +3 ms] Found plugin url_launcher_macos at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +1 ms] Found plugin url_launcher_linux at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +1 ms] Found plugin url_launcher_ios at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_ios-6.3.6/
+[   +1 ms] Found plugin url_launcher_android at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +33 ms] Found plugin shared_preferences at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +1 ms] Found plugin shared_preferences_windows at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +1 ms] Found plugin path_provider_windows at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +5 ms] Found plugin shared_preferences_web at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +1 ms] Found plugin shared_preferences_linux at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +2 ms] Found plugin path_provider_linux at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +2 ms] Found plugin shared_preferences_foundation at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +1 ms] Found plugin shared_preferences_android at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.18/
+[   +1 ms] Found plugin path_provider at /home/harsha/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +1 ms] Found plugin path_provider_foundation at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[  +10 ms] Found plugin path_provider_android at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +1 ms] Found plugin app_links at /home/harsha/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +1 ms] Found plugin app_links_web at /home/harsha/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +2 ms] Found plugin app_links_linux at /home/harsha/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +1 ms] Found plugin gtk at /home/harsha/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[   +8 ms] Found plugin livekit_client at /home/harsha/.pub-cache/hosted/pub.dev/livekit_client-2.6.1/
+[   +4 ms] Found plugin flutter_webrtc at /home/harsha/.pub-cache/hosted/pub.dev/flutter_webrtc-1.2.1/
+[   +5 ms] Found plugin device_info_plus at /home/harsha/.pub-cache/hosted/pub.dev/device_info_plus-12.3.0/
+[   +3 ms] Found plugin connectivity_plus at /home/harsha/.pub-cache/hosted/pub.dev/connectivity_plus-7.0.0/
+[   +6 ms] Found plugin flutter_background at /home/harsha/.pub-cache/hosted/pub.dev/flutter_background-1.3.0+1/
+[   +3 ms] Found plugin file_picker at /home/harsha/.pub-cache/hosted/pub.dev/file_picker-10.3.8/
+[   +2 ms] Found plugin flutter_plugin_android_lifecycle at /home/harsha/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[   +2 ms] Found plugin bitsdojo_window at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window-0.1.6/
+[   +1 ms] Found plugin bitsdojo_window_windows at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_windows-0.1.6/
+[   +1 ms] Found plugin bitsdojo_window_macos at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_macos-0.1.4/
+[   +1 ms] Found plugin bitsdojo_window_linux at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_linux-0.1.4/
+[  +33 ms] Skipping generating web_plugin_registrant.dart because it is up-to-date.
+[  +27 ms] Found plugin url_launcher at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +1 ms] Found plugin url_launcher_windows at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +2 ms] Found plugin url_launcher_web at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +3 ms] Found plugin url_launcher_macos at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +1 ms] Found plugin url_launcher_linux at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +1 ms] Found plugin url_launcher_ios at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_ios-6.3.6/
+[   +1 ms] Found plugin url_launcher_android at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +16 ms] Found plugin shared_preferences at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +1 ms] Found plugin shared_preferences_windows at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +1 ms] Found plugin path_provider_windows at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +4 ms] Found plugin shared_preferences_web at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +1 ms] Found plugin shared_preferences_linux at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[        ] Found plugin path_provider_linux at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +1 ms] Found plugin shared_preferences_foundation at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +1 ms] Found plugin shared_preferences_android at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.18/
+[   +1 ms] Found plugin path_provider at /home/harsha/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[   +1 ms] Found plugin path_provider_foundation at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[   +8 ms] Found plugin path_provider_android at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +1 ms] Found plugin app_links at /home/harsha/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +1 ms] Found plugin app_links_web at /home/harsha/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +1 ms] Found plugin app_links_linux at /home/harsha/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +1 ms] Found plugin gtk at /home/harsha/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[   +7 ms] Found plugin livekit_client at /home/harsha/.pub-cache/hosted/pub.dev/livekit_client-2.6.1/
+[   +4 ms] Found plugin flutter_webrtc at /home/harsha/.pub-cache/hosted/pub.dev/flutter_webrtc-1.2.1/
+[   +2 ms] Found plugin device_info_plus at /home/harsha/.pub-cache/hosted/pub.dev/device_info_plus-12.3.0/
+[   +2 ms] Found plugin connectivity_plus at /home/harsha/.pub-cache/hosted/pub.dev/connectivity_plus-7.0.0/
+[   +5 ms] Found plugin flutter_background at /home/harsha/.pub-cache/hosted/pub.dev/flutter_background-1.3.0+1/
+[   +3 ms] Found plugin file_picker at /home/harsha/.pub-cache/hosted/pub.dev/file_picker-10.3.8/
+[   +1 ms] Found plugin flutter_plugin_android_lifecycle at /home/harsha/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[   +2 ms] Found plugin bitsdojo_window at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window-0.1.6/
+[        ] Found plugin bitsdojo_window_windows at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_windows-0.1.6/
+[   +1 ms] Found plugin bitsdojo_window_macos at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_macos-0.1.4/
+[        ] Found plugin bitsdojo_window_linux at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_linux-0.1.4/
+[   +4 ms] Generating /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
+[   +1 ms] Skipping generating GeneratedPluginRegistrant.java because it is up-to-date.
+[   +5 ms] Skipping generating generated_plugin_registrant.h because it is up-to-date.
+[  +21 ms] Skipping generating generated_plugin_registrant.cc because it is up-to-date.
+[  +14 ms] Skipping generating generated_plugins.cmake because it is up-to-date.
+[   +1 ms] Skipping generating generated_plugin_registrant.h because it is up-to-date.
+[        ] Skipping generating generated_plugin_registrant.cc because it is up-to-date.
+[   +1 ms] Skipping generating generated_plugins.cmake because it is up-to-date.
+[   +4 ms] Skipping generating GeneratedPluginRegistrant.h because it is up-to-date.
+[   +1 ms] Skipping generating GeneratedPluginRegistrant.m because it is up-to-date.
+[   +1 ms] Skipping generating GeneratedPluginRegistrant.swift because it is up-to-date.
+[  +59 ms] Initializing file store
+[   +1 ms] Done initializing file store
+[  +25 ms] Skipping target: gen_localizations
+[   +1 ms] gen_dart_plugin_registrant: Starting due to {InvalidatedReasonKind.inputChanged: The following inputs have updated contents: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/.dart_tool/package_config.json,/home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/.dart_tool/flutter_build/dart_plugin_registrant.dart}
+[  +35 ms] Found plugin url_launcher at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher-6.3.2/
+[   +1 ms] Found plugin url_launcher_windows at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_windows-3.1.5/
+[   +5 ms] Found plugin url_launcher_web at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_web-2.4.2/
+[   +1 ms] Found plugin url_launcher_macos at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_macos-3.2.5/
+[   +1 ms] Found plugin url_launcher_linux at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_linux-3.2.2/
+[   +1 ms] Found plugin url_launcher_ios at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_ios-6.3.6/
+[   +2 ms] Found plugin url_launcher_android at /home/harsha/.pub-cache/hosted/pub.dev/url_launcher_android-6.3.28/
+[  +17 ms] Found plugin shared_preferences at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences-2.5.4/
+[   +1 ms] Found plugin shared_preferences_windows at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_windows-2.4.1/
+[   +1 ms] Found plugin path_provider_windows at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_windows-2.3.0/
+[   +4 ms] Found plugin shared_preferences_web at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_web-2.4.3/
+[   +1 ms] Found plugin shared_preferences_linux at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_linux-2.4.1/
+[   +1 ms] Found plugin path_provider_linux at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_linux-2.2.1/
+[   +1 ms] Found plugin shared_preferences_foundation at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_foundation-2.5.6/
+[   +1 ms] Found plugin shared_preferences_android at /home/harsha/.pub-cache/hosted/pub.dev/shared_preferences_android-2.4.18/
+[   +1 ms] Found plugin path_provider at /home/harsha/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
+[        ] Found plugin path_provider_foundation at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_foundation-2.6.0/
+[   +9 ms] Found plugin path_provider_android at /home/harsha/.pub-cache/hosted/pub.dev/path_provider_android-2.2.22/
+[   +1 ms] Found plugin app_links at /home/harsha/.pub-cache/hosted/pub.dev/app_links-6.4.1/
+[   +1 ms] Found plugin app_links_web at /home/harsha/.pub-cache/hosted/pub.dev/app_links_web-1.0.4/
+[   +1 ms] Found plugin app_links_linux at /home/harsha/.pub-cache/hosted/pub.dev/app_links_linux-1.0.3/
+[   +1 ms] Found plugin gtk at /home/harsha/.pub-cache/hosted/pub.dev/gtk-2.1.0/
+[   +4 ms] Found plugin livekit_client at /home/harsha/.pub-cache/hosted/pub.dev/livekit_client-2.6.1/
+[   +6 ms] Found plugin flutter_webrtc at /home/harsha/.pub-cache/hosted/pub.dev/flutter_webrtc-1.2.1/
+[   +2 ms] Found plugin device_info_plus at /home/harsha/.pub-cache/hosted/pub.dev/device_info_plus-12.3.0/
+[   +2 ms] Found plugin connectivity_plus at /home/harsha/.pub-cache/hosted/pub.dev/connectivity_plus-7.0.0/
+[   +5 ms] Found plugin flutter_background at /home/harsha/.pub-cache/hosted/pub.dev/flutter_background-1.3.0+1/
+[   +5 ms] Found plugin file_picker at /home/harsha/.pub-cache/hosted/pub.dev/file_picker-10.3.8/
+[   +1 ms] Found plugin flutter_plugin_android_lifecycle at /home/harsha/.pub-cache/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.33/
+[   +2 ms] Found plugin bitsdojo_window at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window-0.1.6/
+[        ] Found plugin bitsdojo_window_windows at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_windows-0.1.6/
+[   +1 ms] Found plugin bitsdojo_window_macos at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_macos-0.1.4/
+[        ] Found plugin bitsdojo_window_linux at /home/harsha/.pub-cache/hosted/pub.dev/bitsdojo_window_linux-0.1.4/
+[   +7 ms] Skipping generating dart_plugin_registrant.dart because it is up-to-date.
+[        ] gen_dart_plugin_registrant: Complete
+[   +2 ms] Skipping target: _composite
+[   +2 ms] complete
+[   +3 ms] Launching lib/main.dart on Linux in debug mode...
+[   +3 ms] /home/harsha/flutter/bin/cache/dart-sdk/bin/dartaotruntime /home/harsha/flutter/bin/cache/dart-sdk/bin/snapshots/frontend_server_aot.dart.snapshot --sdk-root /home/harsha/flutter/bin/cache/artifacts/engine/common/flutter_patched_sdk/ --incremental --target=flutter --experimental-emit-debug-metadata -DFLUTTER_VERSION=3.38.5 -DFLUTTER_CHANNEL=stable -DFLUTTER_GIT_URL=https://github.com/flutter/flutter.git -DFLUTTER_FRAMEWORK_REVISION=f6ff1529fd -DFLUTTER_ENGINE_REVISION=1527ae0ec5 -DFLUTTER_DART_VERSION=3.10.4 --output-dill /tmp/flutter_tools.YCOZRJ/flutter_tool.CMNCOX/app.dill --packages /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/.dart_tool/package_config.json -Ddart.vm.profile=false -Ddart.vm.product=false --enable-asserts --track-widget-creation --filesystem-scheme org-dartlang-root --initialize-from-dill build/6ab642d2d29d49c7c5f5a6d85fcef46b.cache.dill.track.dill --source file:///home/harsha/Downloads/projects/LIveKIt/version%202/v2/agent-starter-flutter-main/.dart_tool/flutter_build/dart_plugin_registrant.dart --source package:flutter/src/dart_plugin_registrant.dart -Dflutter.dart_plugin_registrant=file:///home/harsha/Downloads/projects/LIveKIt/version%202/v2/agent-starter-flutter-main/.dart_tool/flutter_build/dart_plugin_registrant.dart --verbosity=error --enable-experiment=alternative-invalidation-strategy
+[  +24 ms] Building Linux application...
+[   +7 ms] <- compile package:voice_assistant/main.dart
+[   +2 ms] executing: [/home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/] cmake -G Ninja -DCMAKE_BUILD_TYPE=Debug -DFLUTTER_TARGET_PLATFORM=linux-x64 /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux
+[+1917 ms] -- Configuring done (1.7s)
+[ +293 ms] -- Generating done (0.3s)
+[ +145 ms] -- Build files have been written to: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug
+[  +17 ms] executing: ninja -C /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug install
+[  +25 ms] ninja: Entering directory `/home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug'
+[+17418 ms] [1/31] Generating /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/libflutter_linux_gtk.so, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_basic_message_channel.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_binary_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_binary_messenger.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_dart_project.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_engine.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_json_message_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_json_method_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_message_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_method_call.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_method_channel.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_method_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_method_response.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_plugin_registrar.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_plugin_registry.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_standard_message_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_standard_method_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_string_codec.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_value.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/fl_view.h, /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/linux/flutter/ephemeral/flutter_linux/flutter_linux.h, _phony_
+[        ] [  +27 ms] Unable to locate an Android SDK.
+[        ] [   +3 ms] executing: uname -m
+[        ] [   +4 ms] Exit code 0 from: uname -m
+[        ] [        ] x86_64
+[        ] [   +9 ms] Artifact Instance of 'MaterialFonts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'GradleWrapper' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterSdk' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FontSubsetArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'PubDependencies' is not required, skipping update.
+[        ] [   +8 ms] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterEngineStamp' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[        ] [   +1 ms] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LinuxEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[        ] [  +41 ms] Artifact Instance of 'MaterialFonts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'GradleWrapper' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'AndroidGenSnapshotArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'AndroidInternalBuildArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IOSEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterWebSdk' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterEngineStamp' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'LegacyCanvasKitRemover' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterSdk' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'WindowsEngineArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'MacOSEngineArtifacts' is not required, skipping update.
+[        ] [   +1 ms] Artifact Instance of 'LinuxFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'MacOSFuchsiaSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterRunnerSDKArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FlutterRunnerDebugSymbols' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'IosUsbArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'FontSubsetArtifacts' is not required, skipping update.
+[        ] [        ] Artifact Instance of 'PubDependencies' is not required, skipping update.
+[        ] [  +15 ms] Initializing file store
+[        ] [  +55 ms] Done initializing file store
+[        ] [ +477 ms] Skipping target: dart_build
+[        ] [   +1 ms] Skipping target: gen_dart_plugin_registrant
+[        ] [+10688 ms] Skipping target: unpack_linux
+[        ] [        ] Skipping target: install_code_assets
+[        ] [        ] Skipping target: gen_localizations
+[        ] [+3718 ms] Skipping target: kernel_snapshot_program
+[        ] [+1840 ms] Skipping target: debug_bundle_linux-x64_assets
+[        ] [        ] Persisting file store
+[        ] [  +13 ms] Done persisting file store
+[        ] [  +43 ms] build succeeded.
+[        ] [   +1 ms] "flutter assemble" took 16,910ms.
+[        ] [  +18 ms] Running 1 shutdown hook
+[        ] [   +1 ms] Shutdown hooks complete
+[        ] [        ] exiting with code 0
+[ +152 ms] [2/8] Linking CXX shared library plugins/bitsdojo_window_linux/libbitsdojo_window_linux_plugin.so
+[  +50 ms] [3/8] Linking CXX shared library plugins/gtk/libgtk_plugin.so
+[  +74 ms] [4/8] Linking CXX shared library plugins/url_launcher_linux/liburl_launcher_linux_plugin.so
+[+1990 ms] [5/8] Linking CXX shared library plugins/flutter_webrtc/libflutter_webrtc_plugin.so
+[ +690 ms] [6/8] Linking CXX shared library plugins/livekit_client/liblivekit_client_plugin.so
+[ +319 ms] [7/8] Linking CXX executable intermediates_do_not_run/voice_assistant
+[        ] [7/8] Install the project...
+[   +7 ms] -- Install configuration: "Debug"
+[  +16 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/voice_assistant
+[        ] -- Set non-toolchain portion of runtime path of "/home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/voice_assistant" to "$ORIGIN/lib"
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/icudtl.dat
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/libflutter_linux_gtk.so
+[  +71 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/libbitsdojo_window_linux_plugin.so
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/libflutter_webrtc_plugin.so
+[   +9 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/libwebrtc.so
+[ +380 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/libgtk_plugin.so
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/liblivekit_client_plugin.so
+[   +3 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib/liburl_launcher_linux_plugin.so
+[        ] -- Up-to-date: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/lib
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/shaders
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/shaders/ink_sparkle.frag
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/shaders/stretch_effect.frag
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/version.json
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/AssetManifest.bin
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/NOTICES.Z
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/cupertino_icons
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/cupertino_icons/assets
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/cupertino_icons/assets/CupertinoIcons.ttf
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/flutter_sficon
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/flutter_sficon/lib
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/flutter_sficon/lib/fonts
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/flutter_sficon/lib/fonts/sficons.ttf
+[   +6 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/font_awesome_flutter
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/font_awesome_flutter/lib
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/font_awesome_flutter/lib/fonts
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/font_awesome_flutter/lib/fonts/Font-Awesome-7-Free-Solid-900.otf
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/font_awesome_flutter/lib/fonts/Font-Awesome-7-Brands-Regular-400.otf
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/packages/font_awesome_flutter/lib/fonts/Font-Awesome-7-Free-Regular-400.otf
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/.env
+[   +1 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/FontManifest.json
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/NativeAssetsManifest.json
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/fonts
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/fonts/MaterialIcons-Regular.otf
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/kernel_blob.bin
+[  +69 ms] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/assets
+[        ] -- Installing: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/build/linux/x64/debug/bundle/data/flutter_assets/assets/terminal.png
+[   +4 ms] Building Linux application... (completed in 23.7s)
+[   +2 ms] ✓ Built build/linux/x64/debug/bundle/voice_assistant
+[ +882 ms] VM Service URL on device: http://127.0.0.1:45989/czqoAH0oeBE=/
+[   +4 ms] Caching compiled dill
+[+1567 ms] Connecting to service protocol: http://127.0.0.1:45989/czqoAH0oeBE=/
+[   +6 ms] INFO: 2026-01-24 16:32:42.849486: Initializing Supabase...
+[        ] INFO: 2026-01-24 16:32:42.918761: ***** Supabase init completed *****
+[        ] supabase.supabase_flutter: INFO: ***** Supabase init completed ***** 
+[        ] INFO: 2026-01-24 16:32:42.920645: Supabase initialized successfully
+[        ] SupabaseService: INFO: Supabase initialized successfully 
+[        ] [Main] Starting Python agent backend...
+[        ] [16:32:43] [AgentManager] Starting Python agent...
+[        ] [16:32:43] [AgentManager] Agent process started (PID: 20452)
+[        ] [Main] Agent backend started successfully.
+[ +114 ms] Launching a Dart Developer Service (DDS) instance at http://127.0.0.1:0, connecting to VM service at http://127.0.0.1:45989/czqoAH0oeBE=/.
+[  +87 ms] Successfully connected to service protocol: http://127.0.0.1:45989/czqoAH0oeBE=/
+[  +10 ms] DevFS: Creating new filesystem on the device (null)
+[  +52 ms] DevFS: Created new filesystem on the device (file:///tmp/agent-starter-flutter-mainLUANNO/agent-starter-flutter-main/)
+[   +2 ms] Updating assets
+[        ] runHooks() with {TargetFile: /home/harsha/Downloads/projects/LIveKIt/version 2/v2/agent-starter-flutter-main/lib/main.dart, BuildMode: debug} and TargetPlatform.linux_x64
+[        ] runHooks() - will perform dart build
+[   +2 ms] Initializing file store
+[   +1 ms] Done initializing file store
+[  +10 ms] Skipping target: dart_build
+[        ] Persisting file store
+[   +1 ms] Done persisting file store
+[   +3 ms] runHooks() - done
+[+1035 ms] Syncing files to device Linux...
+[   +2 ms] Compiling dart to kernel with 0 updated files
+[        ] Processing bundle.
+[   +1 ms] <- recompile package:voice_assistant/main.dart d5b12fca-e425-4d37-9abb-0d104e80ca83
+[        ] <- d5b12fca-e425-4d37-9abb-0d104e80ca83
+[   +5 ms] Bundle processing done.
+[ +172 ms] Updating files.
+[        ] Pending asset builds completed. Writing dirty entries.
+[        ] DevFS: Sync finished
+[        ] Syncing files to device Linux... (completed in 182ms)
+[        ] Synced 0.0MB.
+[   +1 ms] <- accept
+[   +1 ms] Connected to _flutterView/0x64738ccaa130.
+[   +2 ms] Flutter run key commands.
+[   +1 ms] r Hot reload. 🔥🔥🔥
+[        ] R Hot restart.
+[        ] h List all available interactive commands.
+[        ] d Detach (terminate "flutter run" but leave application running).
+[        ] c Clear the screen
+[        ] q Quit (terminate the application on the device).
+[        ] A Dart VM Service on Linux is available at: http://127.0.0.1:39439/sE2jfG9JokM=/
+[   +1 ms] The Flutter DevTools debugger and profiler on Linux is available at: http://127.0.0.1:39439/sE2jfG9JokM=/devtools/?uri=ws://127.0.0.1:39439/sE2jfG9JokM=/ws
+[  +54 ms] INFO: 2026-01-24 16:32:45.663529: Auth state changed: AuthChangeEvent.initialSession
+[        ] AuthProvider: INFO: Auth state changed: AuthChangeEvent.initialSession 
+[ +639 ms] INFO: 2026-01-24 16:32:46.303404: App State: InitState.appBoot
+[   +1 ms] AppInitController: INFO: App State: InitState.appBoot 
+[  +89 ms] WARNING: 2026-01-24 16:32:46.393672: Failed to fetch server config from API: ClientException with SocketException: Connection refused (OS Error: Connection refused, errno = 111), address = localhost, port = 35242, uri=http://localhost:3000/api/settings
+[        ] SettingsService: WARNING: Failed to fetch server config from API: ClientException with SocketException: Connection refused (OS Error: Connection refused, errno = 111), address = localhost, port = 35242, uri=http://localhost:3000/api/settings 
+[  +13 ms] [16:32:46] [Agent ERR] /home/harsha/Downloads/projects/LIveKIt/version 2/v2/Agent/venv/lib/python3.12/site-packages/livekit/agents/cli/cli.py:1537: DeprecationWarning: There is no current event loop
+[        ] [16:32:46] [Agent ERR]   loop = asyncio.get_event_loop()
+[        ] [16:32:46] [Agent ERR] DEBUG:asyncio:Using selector: EpollSelector
+[        ] [16:32:46] [Agent ERR] DEV:livekit.agents:Watching /home/harsha/Downloads/projects/LIveKIt/version 2/v2/Agent
+[   +5 ms] [16:32:46] [Agent]     16:32:46.403 DEBUG  asyncio            Using selector: EpollSelector  
+[        ] [16:32:46] [Agent]     16:32:46.405 DEV    livekit.agents     Watching                             
+[   +3 ms] [16:32:46] [Agent]                                            /home/harsha/Downloads/projects/LI…  
+[        ] [16:32:46] [Agent]                                            2/v2/Agent                           
+[ +388 ms] INFO: 2026-01-24 16:32:46.805129: App State: InitState.backendInit
+[        ] AppInitController: INFO: App State: InitState.backendInit 
+[ +508 ms] INFO: 2026-01-24 16:32:47.314378: App State: InitState.authRestore
+[        ] AppInitController: INFO: App State: InitState.authRestore 
+[        ] INFO: 2026-01-24 16:32:47.314644: App State: InitState.sessionInit
+[        ] AppInitController: INFO: App State: InitState.sessionInit 
+[  +12 ms] (com.livekit.example.voice_assistant:20407): Gdk-CRITICAL **: 16:32:47.329: gdk_device_get_source: assertion 'GDK_IS_DEVICE (device)' failed
+[  +91 ms] WARNING: 2026-01-24 16:32:47.420045: Failed to fetch server config from API: ClientException with SocketException: Connection refused (OS Error: Connection refused, errno = 111), address = localhost, port = 35244, uri=http://localhost:3000/api/settings
+[   +2 ms] SettingsService: WARNING: Failed to fetch server config from API: ClientException with SocketException: Connection refused (OS Error: Connection refused, errno = 111), address = localhost, port = 35244, uri=http://localhost:3000/api/settings 
+[ +192 ms] INFO: 2026-01-24 16:32:47.614381: App State: InitState.agentInit
+[   +1 ms] AppInitController: INFO: App State: InitState.agentInit 
+[        ] INFO: 2026-01-24 16:32:47.615584: App State: InitState.uiReady
+[   +1 ms] AppInitController: INFO: App State: InitState.uiReady 
+[ +829 ms] INFO: 2026-01-24 16:32:48.432402: App State: InitState.orbAppear
+[        ] AppInitController: INFO: App State: InitState.orbAppear 
+[+1198 ms] INFO: 2026-01-24 16:32:49.646584: App State: InitState.orbActive
+[        ] AppInitController: INFO: App State: InitState.orbActive 
+[ +112 ms] INFO: 2026-01-24 16:32:49.760098: Connection state: SessionConnectionState.connecting
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.connecting 
+[   +2 ms] INFO: 2026-01-24 16:32:49.763482: Creating LiveKit room...
+[   +1 ms] SessionProvider: INFO: Creating LiveKit room... 
+[   +7 ms] INFO: 2026-01-24 16:32:49.772320: Creating LiveKit session for room: voice-assistant-1769252569772
+[        ] SessionProvider: INFO: Creating LiveKit session for room: voice-assistant-1769252569772 
+[        ] INFO: 2026-01-24 16:32:49.773668: Creating session for room: voice-assistant-1769252569772, participant: user_1769252569772
+[        ] LiveKitService: INFO: Creating session for room: voice-assistant-1769252569772, participant: user_1769252569772 
+[ +194 ms] INFO: 2026-01-24 16:32:49.967965: ✅ Token received from server
+[   +2 ms] LiveKitService: INFO: ✅ Token received from server 
+[        ] INFO: 2026-01-24 16:32:49.968279: Connecting to LiveKit server: wss://onetry-embmzlra.livekit.cloud
+[        ] LiveKitService: INFO: Connecting to LiveKit server: wss://onetry-embmzlra.livekit.cloud 
+[   +1 ms] INFO: 2026-01-24 16:32:49.972659: Starting session...
+[        ] SessionProvider: INFO: Starting session... 
+[ +118 ms] [16:32:50] [Agent ERR] DEBUG:asyncio:Using selector: EpollSelector
+[   +1 ms] [16:32:50] [Agent]     16:32:50.090 DEBUG  asyncio            Using selector: EpollSelector  
+[  +15 ms] [16:32:50] [Agent ERR] /home/harsha/Downloads/projects/LIveKIt/version 2/v2/Agent/venv/lib/python3.12/site-packages/livekit/agents/utils/http_server.py:13: DeprecationWarning: loop argument is deprecated
+[        ] [16:32:50] [Agent ERR]   self._app = web.Application(loop=self._loop)
+[        ] [16:32:50] [Agent ERR] INFO:livekit.agents:starting worker
+[        ] [16:32:50] [Agent]     16:32:50.107 INFO   livekit.agents     starting worker  
+[        ] [16:32:50] [Agent]                                          {"version": "1.3.11", "rtc-version": 
+[        ] [16:32:50] [Agent] "1.0.23"}
+[        ] [16:32:50] [Agent ERR] INFO:livekit.agents:preloading plugins
+[   +1 ms] [16:32:50] [Agent]     16:32:50.109 INFO   livekit.agents     preloading plugins  
+[        ] [16:32:50] [Agent]                                          {"packages": ["livekit.plugins.silero",
+[        ] [16:32:50] [Agent] "livekit.plugins.openai", "livekit.plugins.groq", "livekit.plugins.cartesia", 
+[        ] [16:32:50] [Agent] "av"]}
+[  +23 ms] [16:32:50] [Agent ERR] /home/harsha/Downloads/projects/LIveKIt/version 2/v2/Agent/venv/lib/python3.12/site-packages/livekit/agents/utils/http_server.py:30: DeprecationWarning: Application.make_handler(...) is deprecated, use AppRunner API instead
+[        ] [16:32:50] [Agent ERR]   handler = self._app.make_handler()
+[        ] [16:32:50] [Agent ERR] INFO:livekit.agents:HTTP server listening on :38611
+[        ] [16:32:50] [Agent]     16:32:50.133 INFO   livekit.agents     HTTP server listening on :38611  
+[ +112 ms] INFO: 2026-01-24 16:32:50.248139: Starting audio renderer with rendererId: 029e2170-c46a-4cf7-b5f9-c842bb37b532
+[        ] livekit: INFO: Starting audio renderer with rendererId: 029e2170-c46a-4cf7-b5f9-c842bb37b532 
+[   +4 ms] WARNING: 2026-01-24 16:32:50.252705: startAudioRenderer did throw MissingPluginException(No implementation found for method startAudioRenderer on channel livekit_client)
+[        ] livekit: WARNING: startAudioRenderer did throw MissingPluginException(No implementation found for method startAudioRenderer on channel livekit_client) 
+[   +1 ms] SEVERE: 2026-01-24 16:32:50.253076: [Preconnect audio] Bad state: Failed to start native audio renderer (false)
+[        ] livekit: SEVERE: [Preconnect audio] Bad state: Failed to start native audio renderer (false) 
+[   +1 ms] INFO: 2026-01-24 16:32:50.255088: [Preconnect audio] stopped recording
+[        ] livekit: INFO: [Preconnect audio] stopped recording 
+[        ] [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: Bad state: Failed to start native audio renderer (false)
+[        ] INFO: 2026-01-24 16:32:50.257297: Connection state: SessionConnectionState.disconnected
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.disconnected 
+[  +24 ms] WARNING: 2026-01-24 16:32:50.281302: Session.start() failed: Bad state: Failed to start native audio renderer (false)
+[        ] livekit: WARNING: Session.start() failed: Bad state: Failed to start native audio renderer (false) Bad state: Failed to start native audio renderer (false)
+[        ] INFO: 2026-01-24 16:32:50.281894: Session state changed
+[        ] SessionProvider: INFO: Session state changed 
+[        ] INFO: 2026-01-24 16:32:50.282380: Connection state: SessionConnectionState.connected
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.connected 
+[        ] INFO: 2026-01-24 16:32:50.282613: Session connected successfully
+[        ] SessionProvider: INFO: Session connected successfully 
+[+1612 ms] INFO: 2026-01-24 16:32:51.896401: Sidebar collapsed
+[        ] UIProvider: INFO: Sidebar collapsed 
+[ +851 ms] (com.livekit.example.voice_assistant:20407): Gdk-CRITICAL **: 16:32:52.747: gdk_device_get_source: assertion 'GDK_IS_DEVICE (device)' failed
+[ +483 ms] [16:32:53] [Agent ERR] INFO:livekit.agents:registered worker
+[   +6 ms] [16:32:53] [Agent]     16:32:53.230 INFO   livekit.agents     registered worker  
+[        ] [16:32:53] [Agent]                                          {"agent_name": "", "id": 
+[        ] [16:32:53] [Agent] "AW_kaewjEVBCuDz", "url": "wss://onetry-embmzlra.livekit.cloud", "region": 
+[        ] [16:32:53] [Agent] "India South", "protocol": 16}
+[+5895 ms] (com.livekit.example.voice_assistant:20407): Gdk-CRITICAL **: 16:32:59.134: gdk_device_get_source: assertion 'GDK_IS_DEVICE (device)' failed
+[+12557 ms] (com.livekit.example.voice_assistant:20407): Gdk-CRITICAL **: 16:33:11.692: gdk_device_get_source: assertion 'GDK_IS_DEVICE (device)' failed
+[+1393 ms] INFO: 2026-01-24 16:33:13.085227: Connection state: SessionConnectionState.disconnecting
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.disconnecting 
+[        ] INFO: 2026-01-24 16:33:13.085557: Disconnecting from session...
+[        ] SessionProvider: INFO: Disconnecting from session... 
+[   +4 ms] INFO: 2026-01-24 16:33:13.089764: [Preconnect audio] reset
+[        ] livekit: INFO: [Preconnect audio] reset 
+[   +1 ms] INFO: 2026-01-24 16:33:13.091722: [Preconnect audio] reset
+[        ] livekit: INFO: [Preconnect audio] reset 
+[        ] INFO: 2026-01-24 16:33:13.091894: [Preconnect audio] disposed
+[        ] livekit: INFO: [Preconnect audio] disposed 
+[        ] INFO: 2026-01-24 16:33:13.092981: Connection state: SessionConnectionState.disconnected
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.disconnected 
+[        ] INFO: 2026-01-24 16:33:13.093454: Session disconnected
+[        ] SessionProvider: INFO: Session disconnected 
+[ +976 ms] INFO: 2026-01-24 16:33:14.069733: Connection state: SessionConnectionState.connecting
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.connecting 
+[        ] INFO: 2026-01-24 16:33:14.069999: Creating LiveKit room...
+[        ] SessionProvider: INFO: Creating LiveKit room... 
+[        ] INFO: 2026-01-24 16:33:14.070638: Creating LiveKit session for room: voice-assistant-1769252594070
+[        ] SessionProvider: INFO: Creating LiveKit session for room: voice-assistant-1769252594070 
+[        ] INFO: 2026-01-24 16:33:14.070894: Creating session for room: voice-assistant-1769252594070, participant: user_1769252594070
+[        ] LiveKitService: INFO: Creating session for room: voice-assistant-1769252594070, participant: user_1769252594070 
+[   +4 ms] INFO: 2026-01-24 16:33:14.076302: ✅ Token received from server
+[        ] LiveKitService: INFO: ✅ Token received from server 
+[        ] INFO: 2026-01-24 16:33:14.076516: Connecting to LiveKit server: wss://onetry-embmzlra.livekit.cloud
+[        ] LiveKitService: INFO: Connecting to LiveKit server: wss://onetry-embmzlra.livekit.cloud 
+[        ] INFO: 2026-01-24 16:33:14.076719: Starting session...
+[        ] SessionProvider: INFO: Starting session... 
+[  +16 ms] INFO: 2026-01-24 16:33:14.094105: Starting audio renderer with rendererId: 5f648691-201f-4961-b1ee-61da79f6a2ef
+[        ] livekit: INFO: Starting audio renderer with rendererId: 5f648691-201f-4961-b1ee-61da79f6a2ef 
+[   +2 ms] WARNING: 2026-01-24 16:33:14.095994: startAudioRenderer did throw MissingPluginException(No implementation found for method startAudioRenderer on channel livekit_client)
+[        ] livekit: WARNING: startAudioRenderer did throw MissingPluginException(No implementation found for method startAudioRenderer on channel livekit_client) 
+[        ] SEVERE: 2026-01-24 16:33:14.096500: [Preconnect audio] Bad state: Failed to start native audio renderer (false)
+[        ] livekit: SEVERE: [Preconnect audio] Bad state: Failed to start native audio renderer (false) 
+[        ] INFO: 2026-01-24 16:33:14.096669: [Preconnect audio] stopped recording
+[        ] livekit: INFO: [Preconnect audio] stopped recording 
+[        ] INFO: 2026-01-24 16:33:14.096837: Connection state: SessionConnectionState.disconnected
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.disconnected 
+[   +1 ms] [ERROR:flutter/runtime/dart_vm_initializer.cc(40)] Unhandled Exception: Bad state: Failed to start native audio renderer (false)
+[  +17 ms] WARNING: 2026-01-24 16:33:14.117226: Session.start() failed: Bad state: Failed to start native audio renderer (false)
+[   +1 ms] livekit: WARNING: Session.start() failed: Bad state: Failed to start native audio renderer (false) Bad state: Failed to start native audio renderer (false)
+[   +1 ms] INFO: 2026-01-24 16:33:14.119195: Session state changed
+[        ] SessionProvider: INFO: Session state changed 
+[        ] INFO: 2026-01-24 16:33:14.119452: Connection state: SessionConnectionState.connected
+[        ] SessionProvider: INFO: Connection state: SessionConnectionState.connected 
+[        ] INFO: 2026-01-24 16:33:14.119552: Session connected successfully
+[        ] SessionProvider: INFO: Session connected successfully 
+[+1263 ms] (com.livekit.example.voice_assistant:20407): Gdk-CRITICAL **: 16:33:15.384: gdk_device_get_source: assertion 'GDK_IS_DEVICE (device)' failed
+[+51874 ms] Skipping target: gen_dart_plugin_registrant
+[        ] Skipping target: gen_localizations
+[        ] Skipping target: _composite
+[        ] complete
+[        ] Performing hot reload...
+[ +104 ms] Scanned through 696 files in 13ms
+[        ] Syncing files to device Linux...
+[        ] Compiling dart to kernel with 1 updated files
+[        ] Processing bundle.
+[        ] <- recompile package:voice_assistant/main.dart 4b0c589d-6e1d-4c36-a278-56d094f020ec
+[        ] package:voice_assistant/core/services/livekit_service.dart
+[        ] <- 4b0c589d-6e1d-4c36-a278-56d094f020ec
+[        ] Bundle processing done.
+[  +31 ms] lib/core/services/livekit_service.dart:76:9: Error: No named parameter with the name 'preconnectOptions'.
+[   +2 ms]         preconnectOptions: null,
+[        ]         ^^^^^^^^^^^^^^^^^
+[        ] ../../../../../../.pub-cache/hosted/pub.dev/livekit_client-2.6.1/lib/src/agent/session_options.dart:33:3: Context: Found this candidate, but the arguments don't match.
+[        ]   SessionOptions({
+[        ]   ^^^^^^^^^^^^^^
+[  +21 ms] Syncing files to device Linux... (completed in 58ms)
+[        ] Synced 0.0MB.
+[        ] Performing hot reload... (completed in 163ms)
+[        ] Try again after fixing the above error(s).
+[+42767 ms] DevFS: Deleting filesystem on the device (file:///tmp/agent-starter-flutter-mainLUANNO/agent-starter-flutter-main/)
+[  +18 ms] DevFS: Deleted filesystem on the device (file:///tmp/agent-starter-flutter-mainLUANNO/agent-starter-flutter-main/)
+[  +11 ms] Application finished.
+[   +1 ms] "flutter run" took 153,364ms.
+[   +2 ms] Running 3 shutdown hooks
+[   +1 ms] Shutdown hooks complete
+[        ] exiting with code 0
