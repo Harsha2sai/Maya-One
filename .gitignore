@@ -1,0 +1,42 @@
+# Maya-One Root .gitignore
+
+# --- Python / Agent ---
+Agent/venv/
+Agent/__pycache__/
+Agent/.env
+Agent/*.pyc
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Flutter / App ---
+agent-starter-flutter-main/build/
+agent-starter-flutter-main/.dart_tool/
+agent-starter-flutter-main/.flutter-plugins
+agent-starter-flutter-main/.flutter-plugins-dependencies
+agent-starter-flutter-main/.packages
+agent-starter-flutter-main/.pub-cache/
+agent-starter-flutter-main/.pub/
+agent-starter-flutter-main/.idea/
+agent-starter-flutter-main/.vscode/
+agent-starter-flutter-main/coverage/
+agent-starter-flutter-main/.env
+agent-starter-flutter-main/.env.local
+agent-starter-flutter-main/*.lock
+agent-starter-flutter-main/pubspec.lock
+
+# --- General / OS ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
