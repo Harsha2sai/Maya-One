@@ -1,0 +1,10 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+[user]
+	email = agent@antigravity.com
+	name = Antigravity Agent
+[coderabbit]
+	defaultBranch = main

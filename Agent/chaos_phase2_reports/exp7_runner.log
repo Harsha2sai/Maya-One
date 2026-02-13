@@ -1,0 +1,220 @@
+[23:10:32] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:10:32] ⏳ Waiting for agent startup...
+[23:11:12] ❌ Failed to start agent. Output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x745f72da05e0>, <function build_strict_openai_schema at 0x745f72da0680>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:10:33,996 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:10:33,996 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:10:33,998 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:10:33,998 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:10:34,991 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:10:44,854 - chaos.fault_injection - WARNING - 🔥 CHAOS ENABLED: {'enabled': False}
+2026-02-12 23:10:44,854 - chaos.fault_injection - WARNING - 🔥 CHAOS: Loaded config from environment: {'enabled': False}
+2026-02-12 23:10:44,998 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:10:44,998 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-02-12 23:10:54,055 - core.intelligence.rag_engine - INFO - 🧠 RAG Engine initialized with model: all-MiniLM-L6-v2
+2026-02-12 23:10:54,129 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py:236: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+[0m2026-02-12 23:10:54,144 - __main__ - INFO - 🏥 Executing pre-flight health checks...
+2026-02-12 23:10:54,144 - providers.llmprovider - INFO - 🤖 Initializing LLM provider: groq
+2026-02-12 23:10:54,144 - providers.llmprovider - INFO - ✅ Using Groq model: llama-3.1-8b-instant
+2026-02-12 23:10:54,171 - providers.factory - INFO - ✅ LLM initialized: groq
+2026-02-12 23:11:07,869 - mem0.vector_stores.qdrant - INFO - Inserting 1 vectors into collection mem0migrations
+2026-02-12 23:11:07,958 - core.memory.local_engine - INFO - ✅ Local Memory Engine initialized at ./data/memory_qdrant
+2026-02-12 23:11:07,959 - core.memory.summarizer - INFO - ✅ Summarizer initialized with Groq (Llama 3.1)
+2026-02-12 23:11:08,010 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+
+[36m============================================================[0m
+[0m[36m🏥 RUNNING STARTUP HEALTH CHECKS[0m
+[0m[36m============================================================[0m
+[0m
+[0m[34m🔍 Checking: LLM Connectivity...[0m[0m [0m2026-02-12 23:11:08,012 - utils.schema_fixer - WARNING - 🔧 PATCH: Forcing strict_tool_schema=False for LLMStream (was True)
+2026-02-12 23:11:08,012 - core.memory.cloud_sync - INFO - 🔄 Cloud Sync started (interval: 60s)
+
+[23:11:12] Cleaning up...
+[23:15:47] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:15:47] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:16:47] ❌ Failed to start agent. Output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x77e93e2ac5e0>, <function build_strict_openai_schema at 0x77e93e2ac680>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:15:48,811 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:15:48,811 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:15:48,813 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:15:48,813 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:15:49,791 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:15:59,696 - chaos.fault_injection - WARNING - 🔥 CHAOS ENABLED: {'enabled': False}
+2026-02-12 23:15:59,696 - chaos.fault_injection - WARNING - 🔥 CHAOS: Loaded config from environment: {'enabled': False}
+2026-02-12 23:15:59,842 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:15:59,842 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+
+[23:16:47] Cleaning up...
+[23:18:51] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:18:51] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:20:52] ❌ Failed to start agent. Output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7b03023a05e0>, <function build_strict_openai_schema at 0x7b03023a0680>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:18:53,180 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:18:53,180 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:18:53,182 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:18:53,182 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:18:54,161 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:19:04,031 - chaos.fault_injection - WARNING - 🔥 CHAOS ENABLED: {'enabled': False}
+2026-02-12 23:19:04,031 - chaos.fault_injection - WARNING - 🔥 CHAOS: Loaded config from environment: {'enabled': False}
+2026-02-12 23:19:04,177 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:19:04,178 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+'(MaxRetryError('HTTPSConnectionPool(host=\'huggingface.co\', port=443): Max retries exceeded with url: /sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json (Caused by NameResolutionError("HTTPSConnection(host=\'huggingface.co\', port=443): Failed to resolve \'huggingface.co\' ([Errno -3] Temporary failure in name resolution)"))'), '(Request ID: a4df77ec-0d7d-4a09-94ea-a758656d8ea8)')' thrown while requesting HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/./modules.json
+2026-02-12 23:19:14,189 - huggingface_hub.utils._http - WARNING - '(MaxRetryError('HTTPSConnectionPool(host=\'huggingface.co\', port=443): Max retries exceeded with url: /sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json (Caused by NameResolutionError("HTTPSConnection(host=\'huggingface.co\', port=443): Failed to resolve \'huggingface.co\' ([Errno -3] Temporary failure in name resolution)"))'), '(Request ID: a4df77ec-0d7d-4a09-94ea-a758656d8ea8)')' thrown while requesting HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/./modules.json
+Retrying in 1s [Retry 1/5].
+2026-02-12 23:19:14,190 - huggingface_hub.utils._http - WARNING - Retrying in 1s [Retry 1/5].
+'(MaxRetryError('HTTPSConnectionPool(host=\'huggingface.co\', port=443): Max retries exceeded with url: /sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json (Caused by NameResolutionError("HTTPSConnection(host=\'huggingface.co\', port=443): Failed to resolve \'huggingface.co\' ([Errno -3] Temporary failure in name resolution)"))'), '(Request ID: 490401d0-d2cd-4170-bdb0-7ac28ad63138)')' thrown while requesting HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/./modules.json
+2026-02-12 23:19:25,203 - huggingface_hub.utils._http - WARNING - '(MaxRetryError('HTTPSConnectionPool(host=\'huggingface.co\', port=443): Max retries exceeded with url: /sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json (Caused by NameResolutionError("HTTPSConnection(host=\'huggingface.co\', port=443): Failed to resolve \'huggingface.co\' ([Errno -3] Temporary failure in name resolution)"))'), '(Request ID: 490401d0-d2cd-4170-bdb0-7ac28ad63138)')' thrown while requesting HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/./modules.json
+Retrying in 2s [Retry 2/5].
+2026-02-12 23:19:25,203 - huggingface_hub.utils._http - WARNING - Retrying in 2s [Retry 2/5].
+
+[23:20:52] Cleaning up...
+[23:22:31] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:22:31] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:22:52] 🗣️ Turn 1/30: Sending 'Hello'
+[23:22:52] ✅ Received response for turn 1
+[23:22:52] 🗣️ Turn 2/30: Sending 'How are you?'
+[23:23:22] ❌ Timeout/Crash at turn 2. Partial output: m    stt = ProviderFactory.get_stt([0m
+[31m          ^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[31mTypeError: ProviderFactory.get_stt() missing 1 required positional argument: [0m
+[31m'model'[0m[0m
+[0m
+[23:23:22] 🏁 Experiment Complete
+[23:23:22] Cleaning up...
+[23:24:10] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:24:10] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:24:30] 🗣️ Turn 1/30: Sending 'Hello'
+[23:24:30] ✅ Received response for turn 1
+[23:24:30] 🗣️ Turn 2/30: Sending 'How are you?'
+[23:25:00] ❌ Timeout/Crash at turn 2. Partial output:             [0m[0m[2K[1A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+[2m   ? for shortcuts                      [0m[0m
+[23:25:00] 🏁 Experiment Complete
+[23:25:00] Cleaning up...
+[23:28:20] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:28:20] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:28:41] 🗣️ Turn 1/30: Sending 'Hello'
+[23:28:41] ✅ Received response for turn 1
+[23:28:41] 🗣️ Turn 2/30: Sending 'How are you?'
+[23:29:11] ❌ Timeout/Crash at turn 2. Partial output: ault  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+   [1;2mCtrl+T[0m[2m  text mode[0m                    
+   [1;2mCtrl+C[0m[2m  exit[0m                         
+[23:29:11] 🏁 Experiment Complete
+[23:29:11] Cleaning up...
+[23:30:08] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:30:08] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:32:44] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:32:44] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:33:05] 🗣️ Turn 1/30: Sending 'Hello'
+[23:33:06] ✅ Received response for turn 1
+[23:33:06] 🗣️ Turn 2/30: Sending 'How are you?'
+[23:33:08] ❌ Failed to start agent. Output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7280948a05e0>, <function build_strict_openai_schema at 0x7280948a0680>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:30:10,087 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:30:10,087 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:30:10,088 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:30:10,088 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:30:11,064 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:30:21,084 - chaos.fault_injection - WARNING - 🔥 CHAOS ENABLED: {'enabled': False}
+2026-02-12 23:30:21,084 - chaos.fault_injection - WARNING - 🔥 CHAOS: Loaded config from environment: {'enabled': False}
+2026-02-12 23:30:21,230 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:30:21,230 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-02-12 23:30:21,341 - core.intelligence.rag_engine - INFO - 🧠 RAG Engine initialized with model: all-MiniLM-L6-v2
+2026-02-12 23:30:21,397 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py:238: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+[0m2026-02-12 23:30:21,412 - __main__ - INFO - 🏥 Executing pre-flight health checks...
+2026-02-12 23:30:21,412 - providers.llmprovider - INFO - 🤖 Initializing LLM provider: groq
+2026-02-12 23:30:21,412 - providers.llmprovider - INFO - ✅ Using Groq model: llama-3.1-8b-instant
+2026-02-12 23:30:21,438 - providers.factory - INFO - ✅ LLM initialized: groq
+2026-02-12 23:30:21,766 - mem0.vector_stores.qdrant - INFO - Inserting 1 vectors into collection mem0migrations
+2026-02-12 23:30:21,854 - core.memory.local_engine - INFO - ✅ Local Memory Engine initialized at ./data/memory_qdrant
+2026-02-12 23:30:21,854 - core.memory.summarizer - INFO - ✅ Summarizer initialized with Groq (Llama 3.1)
+2026-02-12 23:30:21,905 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+
+[36m============================================================[0m
+[0m[36m🏥 RUNNING STARTUP HEALTH CHECKS[0m
+[0m[36m============================================================[0m
+[0m
+[0m[34m🔍 Checking: LLM Connectivity...[0m[0m [0m2026-02-12 23:30:21,907 - utils.schema_fixer - WARNING - 🔧 PATCH: Forcing strict_tool_schema=False for LLMStream (was True)
+2026-02-12 23:30:21,907 - core.memory.cloud_sync - INFO - 🔄 Cloud Sync started (interval: 60s)
+2026-02-12 23:30:32,040 - livekit.agents - WARNING - failed to generate LLM completion, retrying in 0.1s
+Traceback (most recent call last):
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/llm/llm.py", line 206, in _main_task
+    return await self._run()
+           ^^^^^^^^^^^^^^^^^
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/inference/llm.py", line 344, in _run
+    raise APITimeoutError(retryable=retryable) from None
+livekit.agents._exceptions.APITimeoutError: Request timed out. (body=None, retryable=True)
+[31m❌ FAIL[0m[0m
+[0m[31m   └─ LLM response timeout (>15s)[0m[0m
+[0m2026-02-12 23:30:36,912 - health.startup_checks - ERROR - Health check 'LLM Connectivity' failed: LLM response timeout (>15s)
+[34m🔍 Checking: Tool Schema Validation...[0m[0m [0m[32m✅ PASS[0m (No tools registered (OK))[0m
+[0m2026-02-12 23:30:36,912 - health.startup_checks - INFO - Health check 'Tool Schema Validation' passed: No tools registered (OK)
+[34m🔍 Checking: ChatContext Contract...[0m[0m [0m[32m✅ PASS[0m (ChatContext contract validated)[0m
+[0m2026-02-12 23:30:36,913 - health.startup_checks - INFO - Health check 'ChatContext Contract' passed: ChatContext contract validated
+[34m🔍 Checking: Memory Layer...[0m[0m [0m[32m✅ PASS[0m (Memory layer operational (with summarizer))[0m
+[0m2026-02-12 23:30:36,913 - health.startup_checks - INFO - Health check 'Memory Layer' passed: Memory layer operational (with summarizer)
+[34m🔍 Checking: STT Pipeline...[0m[0m [0m2026-02-12 23:30:36,913 - providers.sttprovider - INFO - 🎙️ Initializing STT provider: deepgram
+2026-02-12 23:30:36,914 - providers.sttprovider - INFO - ✅ Using Deepgram STT model: nova-2, language: en-US
+2026-02-12 23:30:36,914 - providers.factory - INFO - ✅ STT initialized: deepgram
+[32m✅ PASS[0m (STT pipeline initialized)[0m
+[0m2026-02-12 23:30:36,914 - health.startup_checks - INFO - Health check 'STT Pipeline' passed: STT pipeline initialized
+[34m🔍 Checking: TTS Pipeline...[0m[0m [0m2026-02-12 23:30:36,914 - providers.ttsprovider - INFO - 🔊 Initializing TTS provider: edge_tts
+2026-02-12 23:30:36,935 - providers.ttsprovider - INFO - ✅ Using Edge-TTS (FREE), voice: en-IN-NeerjaNeural
+2026-02-12 23:30:36,935 - providers.edge_tts_provider - INFO - ✅ EdgeTTS initialized - Voice: en-IN-NeerjaNeural, Rate: +0%, Volume: +0%, Pitch: +0Hz
+2026-02-12 23:30:36,936 - providers.factory - INFO - ✅ TTS initialized: edge_tts
+2026-02-12 23:30:51,806 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[32m✅ PASS[0m (TTS pipeline operational)[0m
+[0m2026-02-12 23:30:59,214 - health.startup_checks - INFO - Health check 'TTS Pipeline' passed: TTS pipeline operational
+
+[36m============================================================[0m[0m
+[0m[31m❌ HEALTH CHECKS FAILED (5/6 passed)[0m[0m
+[0m
+[31mFailed checks:[0m[0m
+[0m[31m  • LLM Connectivity: LLM response timeout (>15s)[0m[0m
+[0m
+[36m============================================================[0m
+[0m
+[0m[31m🚫 AGENT STARTUP ABORTED - FIX ISSUES ABOVE[0m
+[0m
+[0m2026-02-12 23:30:59,216 - __main__ - ERROR - ❌ Pre-flight health checks failed. Aborting.
+
+[23:33:08] Cleaning up...
+[23:34:06] ❌ Timeout/Crash at turn 2. Partial output: A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+   [1;2mCtrl+T[0m[2m  text mode[0m                    
+   [1;2mCtrl+C[0m[2m  exit[0m                         [0m[2K[1A[2K[1A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+   [1;2mCtrl+T[0m[2m  text mode[0m                    
+   [1;2mCtrl+C[0m[2m  exit[0m                         [0m
+[23:34:06] 🏁 Experiment Complete
+[23:34:06] Cleaning up...
+[23:51:58] 🚀 Starting Experiment 7: Long Real Session (30-turn stress test)
+[23:51:58] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:52:18] 🗣️ Turn 1/30: Sending 'Hello'
+[23:52:18] ✅ Received response for turn 1
+[23:52:18] 🗣️ Turn 2/30: Sending 'How are you?'
+[23:53:18] ❌ Timeout/Crash at turn 2. Partial output: K[1A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+   [1;2mCtrl+T[0m[2m  text mode[0m                    
+   [1;2mCtrl+C[0m[2m  exit[0m                         [0m[2K[1A[2K[1A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+   [1;2mCtrl+T[0m[2m  text mode[0m                    
+   [1;2mCtrl+C[0m[2m  exit[0m                         
+[23:53:18] 🏁 Experiment Complete
+[23:53:18] Cleaning up...

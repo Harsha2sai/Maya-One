@@ -1,0 +1,39 @@
+[21:58:46] 🚀 Starting Experiment 4: Internet Loss (Offline Survival)
+[21:58:46] Agent process started (PID: 132592)
+[21:58:46] ⏳ Waiting for agent startup...
+[21:59:01] Startup output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x74de856b8680>, <function build_strict_op...
+[21:59:01] 🗣️ Phase 1: Baseline Check
+[21:59:18] Baseline Response: Hello
+
+[21:59:18] 🔥 Phase 2: Waiting for Fault Injection...
+[21:59:18] ⚠️  PLEASE DISCONNECT INTERNET NOW (Unplug cable / Turn off Wi-Fi) THEN CREATE 'verification/faults/fault.trigger'
+[22:44:33] 🚀 Starting Experiment 4: Internet Loss (Offline Survival)
+[22:44:33] Agent process started (PID: 10109)
+[22:44:33] ⏳ Waiting for agent startup...
+[22:44:48] Startup output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x73e3a73a8680>, <function build_strict_op...
+[22:44:48] 🗣️ Phase 1: Baseline Check
+[22:45:05] Baseline Response: Hello
+
+[22:45:05] 🔥 Phase 2: Waiting for Fault Injection...
+[22:45:05] ⚠️  PLEASE DISCONNECT INTERNET NOW (Unplug cable / Turn off Wi-Fi) THEN CREATE 'verification/faults/fault.trigger'
+[22:48:35] ✅ Fault Trigger Detected.
+[22:48:35] 🗣️ Phase 3: Testing during outage
+[22:48:35] Outage Response: =================================================[0m
+[0m
+[0m[31m🚫 AGENT STARTUP ABORTED - FIX ISSUES ABOVE[0m
+[0m
+[0m❌ Startup health checks failed. Exiting.
+[0m[0mCan you hear me now?
+
+[22:48:35] 💊 Phase 4: Waiting for Restoration...
+[22:48:35] ⚠️  PLEASE RECONNECT INTERNET NOW THEN CREATE 'verification/faults/restore.trigger'
+[22:55:01] ✅ Restore Trigger Detected.
+[22:55:01] 🗣️ Phase 5: Recovery Check
+[22:55:01] ⏳ Waiting 10s for network to stabilize...
+[22:55:11] Recovery Response: None
+[22:55:11] 🏁 Experiment Complete
+[22:55:11] Cleaning up...

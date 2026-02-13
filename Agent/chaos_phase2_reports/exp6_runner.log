@@ -1,0 +1,74 @@
+[23:08:33] 🚀 Starting Experiment 6: Persistence Failure (Database Unavailability)
+[23:08:33] ⏳ Waiting for agent startup...
+[23:09:08] ❌ Failed to start agent. Output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7cae251ac5e0>, <function build_strict_openai_schema at 0x7cae251ac680>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:08:34,804 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:08:34,804 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:08:34,806 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:08:34,806 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:08:35,796 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:08:45,858 - chaos.fault_injection - WARNING - 🔥 CHAOS ENABLED: {'enabled': True, 'persistence_failure_rate': 1.0, 'experiment_id': 'exp_persistence_fail', 'experiment_type': 'infrastructure'}
+2026-02-12 23:08:45,859 - chaos.fault_injection - WARNING - 🔥 CHAOS: Loaded config from environment: {'enabled': True, 'persistence_failure_rate': 1.0, 'experiment_id': 'exp_persistence_fail', 'experiment_type': 'infrastructure'}
+2026-02-12 23:08:46,005 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:08:46,005 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-02-12 23:08:50,812 - core.intelligence.rag_engine - INFO - 🧠 RAG Engine initialized with model: all-MiniLM-L6-v2
+2026-02-12 23:08:50,897 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py:236: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+[0m2026-02-12 23:08:50,911 - __main__ - INFO - 🏥 Executing pre-flight health checks...
+2026-02-12 23:08:50,911 - providers.llmprovider - INFO - 🤖 Initializing LLM provider: groq
+2026-02-12 23:08:50,912 - providers.llmprovider - INFO - ✅ Using Groq model: llama-3.1-8b-instant
+2026-02-12 23:08:50,938 - providers.factory - INFO - ✅ LLM initialized: groq
+2026-02-12 23:08:55,797 - mem0.vector_stores.qdrant - INFO - Inserting 1 vectors into collection mem0migrations
+2026-02-12 23:08:55,891 - core.memory.local_engine - INFO - ✅ Local Memory Engine initialized at ./data/memory_qdrant
+2026-02-12 23:08:55,891 - core.memory.summarizer - INFO - ✅ Summarizer initialized with Groq (Llama 3.1)
+2026-02-12 23:08:55,934 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+
+[36m============================================================[0m
+[0m[36m🏥 RUNNING STARTUP HEALTH CHECKS[0m
+[0m[36m============================================================[0m
+[0m
+[0m[34m🔍 Checking: LLM Connectivity...[0m[0m [0m2026-02-12 23:08:55,936 - utils.schema_fixer - WARNING - 🔧 PATCH: Forcing strict_tool_schema=False for LLMStream (was True)
+2026-02-12 23:08:55,936 - core.memory.cloud_sync - INFO - 🔄 Cloud Sync started (interval: 60s)
+2026-02-12 23:09:06,127 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[32m✅ PASS[0m (LLM streaming operational)[0m
+[0m2026-02-12 23:09:06,145 - health.startup_checks - INFO - Health check 'LLM Connectivity' passed: LLM streaming operational
+[34m🔍 Checking: Tool Schema Validation...[0m[0m [0m[32m✅ PASS[0m (No tools registered (OK))[0m
+[0m2026-02-12 23:09:06,145 - health.startup_checks - INFO - Health check 'Tool Schema Validation' passed: No tools registered (OK)
+[34m🔍 Checking: ChatContext Contract...[0m[0m [0m[32m✅ PASS[0m (ChatContext contract validated)[0m
+[0m2026-02-12 23:09:06,146 - health.startup_checks - INFO - Health check 'ChatContext Contract' passed: ChatContext contract validated
+[34m🔍 Checking: Memory Layer...[0m[0m [0m[32m✅ PASS[0m (Memory layer operational (with summarizer))[0m
+[0m2026-02-12 23:09:06,146 - health.startup_checks - INFO - Health check 'Memory Layer' passed: Memory layer operational (with summarizer)
+[34m🔍 Checking: STT Pipeline...[0m[0m [0m[31m❌ FAIL[0m[0m
+[0m[31m   └─ STT pipeline check failed: ProviderFactory.get_stt() missing 2 required positional arguments: 'language' and 'model'[0m[0m
+[0m2026-02-12 23:09:06,146 - health.startup_checks - ERROR - Health check 'STT Pipeline' failed: STT pipeline check failed: ProviderFactory.get_stt() missing 2 required positional arguments: 'language' and 'model'
+[34m🔍 Checking: TTS Pipeline...[0m[0m [0m[31m❌ FAIL[0m[0m
+[0m[31m   └─ TTS pipeline check failed: ProviderFactory.get_tts() missing 2 required positional arguments: 'voice' and 'model'[0m[0m
+[0m2026-02-12 23:09:06,147 - health.startup_checks - ERROR - Health check 'TTS Pipeline' failed: TTS pipeline check failed: ProviderFactory.get_tts() missing 2 required positional arguments: 'voice' and 'model'
+
+[36m============================================================[0m[0m
+[0m[31m❌ HEALTH CHECKS FAILED (4/6 passed)[0m[0m
+[0m
+[31mFailed checks:[0m[0m
+[0m[31m  • STT Pipeline: STT pipeline check failed: ProviderFactory.get_stt() missing 2 required positional arguments: 'language' and 'model'[0m[0m
+[0m[31m  • TTS Pipeline: TTS pipeline check failed: ProviderFactory.get_tts() missing 2 required positional arguments: 'voice' and 'model'[0m[0m
+[0m
+[36m============================================================[0m
+[0m
+[0m[31m🚫 AGENT STARTUP ABORTED - FIX ISSUES ABOVE[0m
+[0m
+[0m2026-02-12 23:09:06,147 - __main__ - ERROR - ❌ Pre-flight health checks failed. Aborting.
+[0m
+[23:09:08] Cleaning up...
+[23:09:29] 🚀 Starting Experiment 6: Persistence Failure (Database Unavailability)
+[23:09:29] ⏳ Waiting for agent startup...
+[23:10:02] 🗣️ Phase 1: Interaction during Persistence Failure
+[23:10:04] Agent Response: time": 0.0}[0m
+[0m    [2;36m23:10:02.047[0m[2;36m [0m[36mDEBUG…[0m asyncio            Using selector: EpollSelector [2m [0m
+[0m2026-02-12 23:10:02,082 - __main__ - INFO - 🔌 Initializing session...
+    [2;36m23:10:02.082[0m[2;36m [0m[32mINFO …[0m __main__           🔌 Initializing 
+[23:10:04] 🏁 Experiment Complete
+[23:10:04] Cleaning up...

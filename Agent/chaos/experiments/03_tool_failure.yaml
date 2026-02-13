@@ -1,0 +1,25 @@
+id: exp_tool_failure
+type: tool_failure
+description: Inject tool execution failures and verify fallback to LLM
+
+faults:
+  tool_failure_rate: 0.7
+
+turns:
+  baseline: 3
+  chaos: 6
+  recovery: 3
+
+conversation_script:
+  - "What time is it?"
+  - "Set an alarm for 6 AM"
+  - "What's the weather?"
+  - "List my alarms"
+  - "Hello, how are you?"
+  - "Thanks"
+
+success_criteria:
+  system_survival: true
+  fallback_to_llm: true
+  max_recovery_turns: 1
+  probe_violations: 0

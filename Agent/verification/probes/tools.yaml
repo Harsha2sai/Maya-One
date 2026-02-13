@@ -1,0 +1,47 @@
+# Verification Probe: Time Query
+name: time_query
+input: "What time is it?"
+expected:
+  intent: TOOL_ACTION
+  tool: get_current_datetime
+  llm_called: true  # Router expects LLM to finalize the tool result
+
+---
+
+# Verification Probe: Weather Query
+name: weather_query
+input: "What's the weather like in San Francisco?"
+expected:
+  intent: TOOL_ACTION
+  tool: get_weather
+  llm_called: true
+
+---
+
+# Verification Probe: List Alarms
+name: list_alarms_query
+input: "Show me my alarms"
+expected:
+  intent: TOOL_ACTION
+  tool: list_alarms
+  llm_called: true
+
+---
+
+# Verification Probe: Conversational Query
+name: conversational_query
+input: "Tell me a joke"
+expected:
+  intent: CONVERSATION
+  tool: null
+  llm_called: true
+
+---
+
+# Verification Probe: Email Tool
+name: send_email_query
+input: "Send an email to john@example.com saying hello"
+expected:
+  intent: TOOL_ACTION
+  tool: send_email
+  llm_called: true

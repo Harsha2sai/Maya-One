@@ -1,0 +1,45 @@
+# LiveKit Core
+livekit-agents
+
+# LLM Plugins
+livekit-plugins-openai       # OpenAI, Azure OpenAI, Together, Mistral, Perplexity, DeepSeek, Qwen, Ollama, vLLM
+livekit-plugins-groq         # Groq (Llama 3, Gemma, Mixtral)
+livekit-plugins-google       # Google Gemini
+livekit-plugins-anthropic    # Anthropic Claude
+livekit-plugins-aws          # AWS Polly TTS, Bedrock
+
+# STT Plugins  
+livekit-plugins-deepgram     # Deepgram STT
+# livekit-plugins-assemblyai # AssemblyAI (uncomment if needed)
+livekit-plugins-azure         # Azure Speech
+# livekit-plugins-azure      # Azure Speech (uncommented above)
+
+# TTS Plugins
+livekit-plugins-cartesia     # Cartesia TTS
+livekit-plugins-elevenlabs   # ElevenLabs TTS
+edge-tts                     # Microsoft Edge TTS (FREE - no API key needed!)
+
+# Voice/Audio Plugins
+livekit-plugins-silero       # VAD (Voice Activity Detection)
+livekit-plugins-noise-cancellation
+
+# Memory & Tools
+mem0ai
+duckduckgo-search
+langchain_community
+requests
+python-dotenv
+pydantic-ai-slim[openai,mcp]
+python-dateutil
+supabase
+
+# Phase 4: RAG (AI)
+sentence-transformers
+torch
+
+# Core Services & Testing
+aiohttp
+pytest
+qdrant-client
+llama-index-core
+llama-index-llms-groq

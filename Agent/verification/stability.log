@@ -1,0 +1,546 @@
+[17:20:04] 🚀 Starting Stability Run for 600 seconds...
+[AGENT_OUT] 🔍 DEBUG: apply_schema_patch() called
+[17:20:06] ⚠️ Test interrupted by user.
+[17:20:06] 🛑 Terminating agent process...
+[17:26:44] 🚀 Starting Stability Run for 600 seconds...
+[AGENT_OUT] 🔍 DEBUG: apply_schema_patch() called
+[AGENT_OUT] 🔍 DEBUG: Imported livekit.agents.llm.utils
+[AGENT_OUT] 🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7d0898f54680>, <function build_strict_openai_schema at 0x7d0898f54720>
+[AGENT_OUT] ✅ DEBUG: Patched functions assigned to utils module
+[AGENT_OUT] ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+[AGENT_ERR] ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+[17:27:44] pinging agent...
+[AGENT_ERR] /media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py:406: DeprecationWarning: There is no current event loop
+[AGENT_ERR] loop = asyncio.get_event_loop()
+[AGENT_OUT] ============================================================
+[AGENT_OUT] 🏥 RUNNING STARTUP HEALTH CHECKS
+[AGENT_OUT] ============================================================
+[AGENT_ERR] 🔧 PATCH: Forcing strict_tool_schema=False for LLMStream (was True)
+[AGENT_OUT] 🔍 Checking: LLM Connectivity... ✅ PASS (LLM streaming operational)
+[AGENT_OUT] 🔍 Checking: Tool Schema Validation... ✅ PASS (All 20 tools have valid schemas)
+[AGENT_OUT] 🔍 Checking: ChatContext Contract... ✅ PASS (ChatContext contract validated)
+[AGENT_OUT] 🔍 Checking: Memory Layer... ✅ PASS (Memory layer operational (with summarizer))
+[AGENT_OUT] 🔍 Checking: STT Pipeline... ✅ PASS (STT pipeline initialized)
+[17:28:44] pinging agent...
+[AGENT_OUT] 🔍 Checking: TTS Pipeline... ✅ PASS (TTS pipeline operational)
+[AGENT_OUT] ============================================================
+[AGENT_OUT] ✅ ALL HEALTH CHECKS PASSED (6/6)
+[AGENT_OUT] ============================================================
+[AGENT_OUT] Agents   Starting console mode 🚀
+[AGENT_OUT] 17:28:51.603 DEBUG… asyncio            Using selector: EpollSelector
+[AGENT_ERR] /media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/utils/http_server.py:13: DeprecationWarning: loop argument is deprecated
+[AGENT_ERR] self._app = web.Application(loop=self._loop)
+[AGENT_OUT] 17:28:51.682 INFO … livekit.agents     starting worker
+[AGENT_OUT] {"version": "1.4.1", "rtc-version":
+[AGENT_OUT] "1.0.25"}
+[AGENT_OUT] 17:28:51.686 INFO … livekit.agents     preloading plugins
+[AGENT_OUT] {"packages": ["livekit.plugins.silero",
+[AGENT_OUT] "livekit.plugins.openai", "livekit.plugins.groq", "livekit.plugins.google",
+[AGENT_OUT] "livekit.plugins.anthropic", "livekit.plugins.aws", "livekit.plugins.deepgram",
+[AGENT_OUT] "livekit.plugins.azure", "livekit.plugins.elevenlabs",
+[AGENT_OUT] "livekit.plugins.cartesia", "av"]}
+[AGENT_ERR] /media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/utils/http_server.py:30: DeprecationWarning: Application.make_handler(...) is deprecated, use AppRunner API instead
+[AGENT_ERR] handler = self._app.make_handler()
+[AGENT_OUT] 17:28:51.740 INFO … livekit.agents     HTTP server listening on :36371
+[AGENT_OUT] 17:28:51.773 INFO … livekit.agents     initializing job runner
+[AGENT_OUT] {"tid": 85690}
+[AGENT_OUT] 17:28:51.779 DEBUG… asyncio            Using selector: EpollSelector
+[AGENT_OUT] 17:28:51.783 INFO … livekit.agents     job runner initialized
+[AGENT_OUT] {"tid": 85690, "elapsed_time": 0.01}
+[AGENT_OUT] 17:28:51.994 INFO … __main__           🔌 Starting orchestrated agent
+[AGENT_OUT] session...
+[AGENT_OUT] 17:28:52.002 WARNI… core.orchestrator  ⚠️ Failed to parse metadata: the
+[AGENT_OUT] JSON object must be str, bytes or
+[AGENT_OUT] bytearray, not MagicMock
+[AGENT_OUT] 17:28:52.069 INFO … core.sys…e_manager ✅ Supabase Client Initialized
+[AGENT_OUT] 17:28:52.072 INFO … provider…tprovider 🎙️ Initializing STT provider:
+[AGENT_OUT] deepgram
+[AGENT_OUT] 17:28:52.075 INFO … provider…tprovider ✅ Using Deepgram STT model:
+[AGENT_OUT] nova-2, language: en-US
+[AGENT_OUT] 17:28:52.078 INFO … providers.factory  ✅ STT initialized: deepgram
+[AGENT_OUT] 17:28:52.080 INFO … provider…mprovider 🤖 Initializing LLM provider: groq
+[AGENT_OUT] 17:28:52.083 INFO … provider…mprovider ✅ Using Groq model:
+[AGENT_OUT] llama-3.1-8b-instant
+[AGENT_OUT] 17:28:52.132 INFO … providers.factory  ✅ LLM initialized: groq
+[AGENT_OUT] 17:28:52.133 INFO … provider…sprovider 🔊 Initializing TTS provider:
+[AGENT_OUT] edge_tts
+[AGENT_OUT] 17:28:52.134 INFO … provider…sprovider ✅ Using Edge-TTS (FREE), voice:
+[AGENT_OUT] en-IN-NeerjaNeural
+[AGENT_OUT] 17:28:52.136 INFO … provider…_provider ✅ EdgeTTS initialized - Voice:
+[AGENT_OUT] en-IN-NeerjaNeural, Rate: +0%,
+[AGENT_OUT] Volume: +0%, Pitch: +0Hz
+[AGENT_OUT] 17:28:52.138 INFO … providers.factory  ✅ TTS initialized: edge_tts
+[AGENT_ERR] '(ReadTimeoutError("HTTPSConnectionPool(host='huggingface.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 37b71091-e911-4e32-a7fb-74e393a723d6)')' thrown while requesting HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json
+[AGENT_OUT] 17:29:02.660 WARNI… huggingf…ils._http '(ReadTimeoutError("HTTPSConnectio…
+[AGENT_OUT] port=443): Read timed out. (read
+[AGENT_OUT] timeout=10)"), '(Request ID:
+[AGENT_OUT] 37b71091-e911-4e32-a7fb-74e393a723…
+[AGENT_OUT] thrown while requesting HEAD
+[AGENT_OUT] https://huggingface.co/api/resolve…
+[AGENT_ERR] Retrying in 1s [Retry 1/5].
+[AGENT_OUT] 17:29:02.663 WARNI… huggingf…ils._http Retrying in 1s [Retry 1/5].
+[AGENT_ERR] '(MaxRetryError('HTTPSConnectionPool(host=\'huggingface.co\', port=443): Max retries exceeded with url: /api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json (Caused by NameResolutionError("HTTPSConnection(host=\'huggingface.co\', port=443): Failed to resolve \'huggingface.co\' ([Errno -3] Temporary failure in name resolution)"))'), '(Request ID: 79cdd619-a1c1-4211-a159-3aa6c66e0446)')' thrown while requesting HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/c9745ed1d9f207416be6d2e6f8de32d1f16199bf/modules.json
+[AGENT_OUT] 17:29:13.679 WARNI… huggingf…ils._http '(MaxRetryError('HTTPSConnectionPo…
+[AGENT_OUT] port=443): Max retries exceeded
+[AGENT_OUT] with url:
+[AGENT_OUT] /api/resolve-cache/models/sentence…
+[AGENT_OUT] (Caused by
+[AGENT_OUT] NameResolutionError("HTTPSConnecti…
+[AGENT_OUT] port=443): Failed to resolve
+[AGENT_OUT] \'huggingface.co\' ([Errno -3]
+[AGENT_OUT] Temporary failure in name
+[AGENT_OUT] resolution)"))'), '(Request ID:
+[AGENT_OUT] 79cdd619-a1c1-4211-a159-3aa6c66e04…
+[AGENT_OUT] thrown while requesting HEAD
+[AGENT_OUT] https://huggingface.co/api/resolve…
+[AGENT_ERR] Retrying in 2s [Retry 2/5].
+[AGENT_OUT] 17:29:13.693 WARNI… huggingf…ils._http Retrying in 2s [Retry 2/5].
+[AGENT_OUT] 17:29:21.691 INFO … mem0.vec…es.qdrant Inserting 1 vectors into collection
+[AGENT_OUT] mem0migrations
+[AGENT_OUT] 17:29:21.765 INFO … core.mem…al_engine ✅ Local Memory Engine initialized
+[AGENT_OUT] at ./data/memory_qdrant
+[AGENT_OUT] 17:29:21.773 INFO … core.mem…ummarizer ✅ Summarizer initialized with Gro…
+[AGENT_OUT] (Llama 3.1)
+[AGENT_OUT] 17:29:21.884 INFO … core.sys…e_manager ✅ Supabase Client Initialized
+[AGENT_OUT] 17:29:22.387 INFO … core.mem…y_manager 🔍 Searching local memories for
+[AGENT_OUT] user: mock_user
+[AGENT_OUT] 17:29:22.820 INFO … core.mem…y_manager ℹ️ No memories found for user
+[AGENT_OUT] mock_user
+[AGENT_OUT] 17:29:22.822 INFO … __main__           👤 User: mock_user | Role: GUEST
+[AGENT_OUT] 17:29:22.823 INFO … core.too…l_manager 🌐 Configured MCP Server:
+[AGENT_OUT] http://localhost:5678/mcp/agent-mcp
+[AGENT_OUT] 17:29:22.825 INFO … mcp-agent-tools    Connecting to MCP server: SSE MCP
+[AGENT_OUT] Server...
+[AGENT_OUT] 17:29:22.858 INFO … core.mem…loud_sync 🔄 Cloud Sync started (interval:
+[AGENT_OUT] 60s)
+[AGENT_OUT] 17:29:22.861 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[AGENT_OUT] 17:29:22.864 ERROR… mcp_client.server  Error initializing MCP server:
+[AGENT_OUT] unhandled errors in a TaskGroup (1
+[AGENT_OUT] sub-exception)
+[AGENT_OUT] 17:29:22.866 INFO … mcp_client.server  Cleaned up MCP server: SSE MCP
+[AGENT_OUT] Server
+[AGENT_OUT] 17:29:22.867 WARNI… mcp-agent-tools    ⚠️ Failed to connect to MCP server
+[AGENT_OUT] SSE MCP Server: unhandled errors in
+[AGENT_OUT] a TaskGroup (1 sub-exception).
+[AGENT_OUT] Skipping.
+[AGENT_OUT] 17:29:22.870 INFO … mcp-agent-tools    Fetching tools from MCP server: SSE
+[AGENT_OUT] MCP Server
+[AGENT_OUT] 17:29:22.872 ERROR… mcp-agent-tools    Failed to fetch tools from SSE MCP
+[AGENT_OUT] Server: Server not initialized.
+[AGENT_OUT] Make sure you call connect() first.
+[AGENT_OUT] 17:29:22.874 WARNI… mcp-agent-tools    No tools were found to register
+[AGENT_OUT] with the agent
+[AGENT_OUT] 17:29:22.876 DEBUG… core.reg…_registry Registered tool: get_weather
+[AGENT_OUT] 17:29:22.877 DEBUG… core.reg…_registry Registered tool: search_web
+[AGENT_OUT] 17:29:22.879 DEBUG… core.reg…_registry Registered tool:
+[AGENT_OUT] get_current_datetime
+[AGENT_OUT] 17:29:22.880 DEBUG… core.reg…_registry Registered tool: send_email
+[AGENT_OUT] 17:29:22.885 DEBUG… core.reg…_registry Registered tool: set_alarm
+[AGENT_OUT] 17:29:22.886 DEBUG… core.reg…_registry Registered tool: list_alarms
+[AGENT_OUT] 17:29:22.889 DEBUG… core.reg…_registry Registered tool: delete_alarm
+[AGENT_OUT] 17:29:22.891 DEBUG… core.reg…_registry Registered tool: set_reminder
+[AGENT_OUT] 17:29:22.892 DEBUG… core.reg…_registry Registered tool: create_note
+[AGENT_OUT] 17:29:22.893 DEBUG… core.reg…_registry Registered tool: read_note
+[AGENT_OUT] 17:29:22.897 DEBUG… core.reg…_registry Registered tool:
+[AGENT_OUT] create_calendar_event
+[AGENT_OUT] 17:29:22.900 DEBUG… core.reg…_registry Registered tool: open_app
+[AGENT_OUT] 17:29:22.902 DEBUG… core.reg…_registry Registered tool: close_app
+[AGENT_OUT] 17:29:22.904 INFO … core.reg…_registry ✅ Registered 13 tools from MCP
+[AGENT_OUT] 17:29:22.905 INFO … core.age….registry 📝 Registered agent: research
+[AGENT_OUT] 17:29:22.907 INFO … core.age….registry 📝 Registered agent:
+[AGENT_OUT] system_operator
+[AGENT_OUT] 17:29:22.908 INFO … core.age….registry 📝 Registered agent: planner
+[AGENT_OUT] 17:29:22.909 INFO … core.age….registry ✅ Registered 3 specialized agents
+[AGENT_OUT] 17:29:22.910 INFO … core.too…l_manager ✅ Router configured with 13 tools
+[AGENT_OUT] 17:29:22.911 INFO … core.orchestrator  📡 Event handlers successfully
+[AGENT_OUT] registered
+[AGENT_OUT] 17:29:22.916 DEBUG… livekit.agents     http_session(): creating a new
+[AGENT_OUT] httpclient ctx
+[AGENT_OUT] 17:29:22.920 DEBUG… livekit.agents     using audio io: `Console` ->
+[AGENT_OUT] `AgentSession` ->
+[AGENT_OUT] `TranscriptSynchronizer` ->
+[AGENT_OUT] `Console`
+[AGENT_OUT] 17:29:22.923 DEBUG… livekit.agents     using transcript io: `AgentSession`
+[AGENT_OUT] -> `TranscriptSynchronizer`
+[AGENT_ERR] Exception in thread Thread-7 (_listen_for_keys):
+[AGENT_ERR] Traceback (most recent call last):
+[AGENT_ERR] File "/usr/lib/python3.12/threading.py", line 1073, in _bootstrap_inner
+[AGENT_ERR] self.run()
+[AGENT_ERR] File "/usr/lib/python3.12/threading.py", line 1010, in run
+[AGENT_ERR] self._target(*self._args, **self._kwargs)
+[AGENT_ERR] File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/cli/cli.py", line 1246, in _listen_for_keys
+[AGENT_OUT] 17:29:23.039 DEBUG… core.llm.smart_llm 🔧 Passing 13 tools to base LLM
+[AGENT_OUT] 17:29:23.041 WARNI… utils.schema_fixer 🔧 PATCH: Forcing
+[AGENT_OUT] strict_tool_schema=False for
+[AGENT_OUT] LLMStream (was True)
+[AGENT_OUT] 17:29:23.045 INFO … core.llm.smart_llm 🧠 SmartLLM: starting stream
+[AGENT_ERR] ch = readkey()
+[AGENT_ERR] ^^^^^^^^^
+[AGENT_ERR] File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/cli/readchar.py", line 198, in _posix_readkey
+[AGENT_ERR] c1 = _posix_readchar()
+[AGENT_ERR] ^^^^^^^^^^^^^^^^^
+[AGENT_ERR] File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/livekit/agents/cli/readchar.py", line 168, in _posix_readchar
+[AGENT_ERR] old_settings = termios.tcgetattr(fd)
+[AGENT_ERR] ^^^^^^^^^^^^^^^^^^^^^
+[AGENT_ERR] termios.error: (25, 'Inappropriate ioctl for device')
+[AGENT_OUT] 17:29:27.398 DEBUG… livekit.….deepgram Established new Deepgram STT
+[AGENT_OUT] WebSocket connection:
+[AGENT_OUT] {"headers": {"dg-project-id":
+[AGENT_OUT] "9ed3c048-e068-4607-9098-4c7ab498cc9b", "dg-request-id":
+[AGENT_OUT] "c64dbfc9-146b-4465-ac96-39f6c83d4bed", "Date": "Thu, 12 Feb 2026 11:59:27
+[AGENT_OUT] GMT"}}
+[AGENT_OUT] DEBUG: SmartLLMStream error: Stream timeout: No chunks received within 10.0s
+[AGENT_OUT] 17:29:33.048 ERROR… core.llm.smart_llm SmartLLM stream error: Stream
+[AGENT_OUT] timeout: No chunks received within
+[AGENT_OUT] 10.0s
+[AGENT_OUT] 17:29:33.065 INFO … telemetr…n_monitor 📊 Request Metrics:
+[AGENT_OUT] RequestMetrics(tokens_in=0,
+[AGENT_OUT] tokens_out=0, context_size=207.75,
+[AGENT_OUT] llm_latency=0.0,
+[AGENT_OUT] stream_first_chunk_latency=0.0,
+[AGENT_OUT] tool_calls_count=0, retry_count=0,
+[AGENT_OUT] probe_failures=1,
+[AGENT_OUT] memory_retrieval_count=0,
+[AGENT_OUT] experiment_id=None,
+[AGENT_OUT] experiment_type=None, phase=None,
+[AGENT_OUT] turn_number=0,
+[AGENT_OUT] system_recovery_turns=0)
+[AGENT_OUT] 17:29:33.262 ERROR… livekit.agents     Error in _llm_inference_task
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/llm/llm.py", line 361, in __anext__
+[AGENT_OUT] val = await self._event_aiter.__anext__()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] StopAsyncIteration
+[AGENT_OUT] During handling of the above exception, another exception occurred:
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/ope
+[AGENT_OUT] ntelemetry/util/_decorator.py", line 71, in async_wrapper
+[AGENT_OUT] return await func(*args, **kwargs)  # type: ignore
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/voice/generation.py", line 135, in _llm_inference_task
+[AGENT_OUT] async for chunk in llm_node:
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/voice/agent.py", line 423, in llm_node
+[AGENT_OUT] async for chunk in stream:
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/llm/llm.py", line 364, in __anext__
+[AGENT_OUT] raise exc  # noqa: B904
+[AGENT_OUT] ^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/llm/llm.py", line 187, in _traceable_main_task
+[AGENT_OUT] await self._main_task()
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/llm/llm.py", line 206, in _main_task
+[AGENT_OUT] return await self._run()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/core/llm/smart_llm.py", line 231, in
+[AGENT_OUT] _run
+[AGENT_OUT] raise e
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/core/llm/smart_llm.py", line 185, in
+[AGENT_OUT] _run
+[AGENT_OUT] async for chunk in probed_stream:
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/probes/runtime/probe_engine.py", line
+[AGENT_OUT] 238, in __anext__
+[AGENT_OUT] raise StreamError(f"Stream timeout: No chunks received within
+[AGENT_OUT] {self.timeout_seconds}s")
+[AGENT_OUT] probes.runtime.probe_engine.StreamError: Stream timeout: No chunks received
+[AGENT_OUT] within 10.0s
+[AGENT_OUT] 17:29:44.527 ERROR… livekit.….deepgram Error in recv_task
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 542, in recv_task
+[AGENT_OUT] raise APIStatusError(
+[AGENT_OUT] livekit.agents._exceptions.APIStatusError: deepgram connection closed
+[AGENT_OUT] unexpectedly (status_code=1006, request_id=None, body=msg.data=1011
+[AGENT_OUT] msg.extra='Deepgram did not receive audio data or a text message within the
+[AGENT_OUT] timeout window. See https://dpgr.am/net0001', retryable=True)
+[AGENT_OUT] 17:29:44.561 ERROR… livekit.….deepgram Error in send_task
+[17:29:44] pinging agent...
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 515, in send_task
+[AGENT_OUT] await ws.send_bytes(frame.data.tobytes())
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/client_ws.py", line 252, in send_bytes
+[AGENT_OUT] await self._writer.send_frame(data, WSMsgType.BINARY, compress=compress)
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/_websocket/writer.py", line 79, in send_frame
+[AGENT_OUT] raise ClientConnectionResetError("Cannot write to closing transport")
+[AGENT_OUT] aiohttp.client_exceptions.ClientConnectionResetError: Cannot write to closing
+[AGENT_OUT] transport
+[AGENT_OUT] 17:29:44.903 WARNI… livekit.agents     failed to recognize speech,
+[AGENT_OUT] retrying in 0.1s
+[AGENT_OUT] {"tts":
+[AGENT_OUT] "livekit.plugins.deepgram.stt.STT", "attempt": 0, "streamed": true}
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/stt/stt.py", line 318, in _main_task
+[AGENT_OUT] return await self._run()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 578, in _run
+[AGENT_OUT] task.result()
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 542, in recv_task
+[AGENT_OUT] raise APIStatusError(
+[AGENT_OUT] livekit.agents._exceptions.APIStatusError: deepgram connection closed
+[AGENT_OUT] unexpectedly (status_code=1006, request_id=None, body=msg.data=1011
+[AGENT_OUT] msg.extra='Deepgram did not receive audio data or a text message within the
+[AGENT_OUT] timeout window. See https://dpgr.am/net0001', retryable=True)
+[AGENT_OUT] 17:29:55.138 WARNI… livekit.agents     failed to recognize speech,
+[AGENT_OUT] retrying in 2.0s
+[AGENT_OUT] {"tts":
+[AGENT_OUT] "livekit.plugins.deepgram.stt.STT", "attempt": 1, "streamed": true}
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/usr/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+[AGENT_OUT] return await fut
+[AGENT_OUT] ^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/client.py", line 1076, in _ws_connect
+[AGENT_OUT] resp = await self.request(
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/client.py", line 779, in _request
+[AGENT_OUT] resp = await handler(req)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/client.py", line 734, in _connect_and_send_request
+[AGENT_OUT] conn = await self._connector.connect(
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/connector.py", line 672, in connect
+[AGENT_OUT] proto = await self._create_connection(req, traces, timeout)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/connector.py", line 1239, in _create_connection
+[AGENT_OUT] _, proto = await self._create_direct_connection(req, traces, timeout)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/connector.py", line 1562, in _create_direct_connection
+[AGENT_OUT] hosts = await self._resolve_host(host, port, traces=traces)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/connector.py", line 1178, in _resolve_host
+[AGENT_OUT] return await asyncio.shield(resolved_host_task)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] asyncio.exceptions.CancelledError
+[AGENT_OUT] The above exception was the direct cause of the following exception:
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 623, in _connect_ws
+[AGENT_OUT] ws = await asyncio.wait_for(
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/usr/lib/python3.12/asyncio/tasks.py", line 519, in wait_for
+[AGENT_OUT] async with timeouts.timeout(timeout):
+[AGENT_OUT] File "/usr/lib/python3.12/asyncio/timeouts.py", line 115, in __aexit__
+[AGENT_OUT] raise TimeoutError from exc_val
+[AGENT_OUT] TimeoutError
+[AGENT_OUT] The above exception was the direct cause of the following exception:
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/stt/stt.py", line 318, in _main_task
+[AGENT_OUT] return await self._run()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 561, in _run
+[AGENT_OUT] ws = await self._connect_ws()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 638, in _connect_ws
+[AGENT_OUT] raise APIConnectionError("failed to connect to deepgram") from e
+[AGENT_OUT] livekit.agents._exceptions.APIConnectionError: failed to connect to deepgram
+[AGENT_OUT] (body=None, retryable=True)
+[AGENT_OUT] 17:29:58.105 DEBUG… livekit.….deepgram Established new Deepgram STT
+[AGENT_OUT] WebSocket connection:
+[AGENT_OUT] {"headers": {"dg-project-id":
+[AGENT_OUT] "9ed3c048-e068-4607-9098-4c7ab498cc9b", "dg-request-id":
+[AGENT_OUT] "e3a406d7-49a0-47ab-a2de-11035aecb6ec", "Date": "Thu, 12 Feb 2026 11:59:57
+[AGENT_OUT] GMT"}}
+[AGENT_OUT] 17:30:22.863 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[17:30:44] pinging agent...
+[AGENT_OUT] 17:31:22.866 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[AGENT_OUT] 17:31:28.249 ERROR… livekit.….deepgram Error in recv_task
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 542, in recv_task
+[AGENT_OUT] raise APIStatusError(
+[AGENT_OUT] livekit.agents._exceptions.APIStatusError: deepgram connection closed
+[AGENT_OUT] unexpectedly (status_code=1006, request_id=None, body=msg.data=None
+[AGENT_OUT] msg.extra=None, retryable=True)
+[AGENT_OUT] 17:31:28.273 ERROR… livekit.….deepgram Error in send_task
+[AGENT_OUT] aiohttp.client_exceptions.ClientOSError: [Errno 104] Connection reset by peer
+[AGENT_OUT] The above exception was the direct cause of the following exception:
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 515, in send_task
+[AGENT_OUT] await ws.send_bytes(frame.data.tobytes())
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/client_ws.py", line 252, in send_bytes
+[AGENT_OUT] await self._writer.send_frame(data, WSMsgType.BINARY, compress=compress)
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/_websocket/writer.py", line 122, in send_frame
+[AGENT_OUT] await self.protocol._drain_helper()
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/aio
+[AGENT_OUT] http/base_protocol.py", line 100, in _drain_helper
+[AGENT_OUT] await asyncio.shield(waiter)
+[AGENT_OUT] ConnectionError: Connection lost
+[AGENT_OUT] 17:31:28.328 WARNI… livekit.agents     failed to recognize speech,
+[AGENT_OUT] retrying in 2.0s
+[AGENT_OUT] {"tts":
+[AGENT_OUT] "livekit.plugins.deepgram.stt.STT", "attempt": 2, "streamed": true}
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/stt/stt.py", line 318, in _main_task
+[AGENT_OUT] return await self._run()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 578, in _run
+[AGENT_OUT] task.result()
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 542, in recv_task
+[AGENT_OUT] raise APIStatusError(
+[AGENT_OUT] livekit.agents._exceptions.APIStatusError: deepgram connection closed
+[AGENT_OUT] unexpectedly (status_code=1006, request_id=None, body=msg.data=None
+[AGENT_OUT] msg.extra=None, retryable=True)
+[AGENT_OUT] 17:31:32.386 DEBUG… livekit.….deepgram Established new Deepgram STT
+[AGENT_OUT] WebSocket connection:
+[AGENT_OUT] {"headers": {"dg-project-id":
+[AGENT_OUT] "9ed3c048-e068-4607-9098-4c7ab498cc9b", "dg-request-id":
+[AGENT_OUT] "6bb46227-8021-4ea8-8776-50db58900543", "Date": "Thu, 12 Feb 2026 12:01:32
+[AGENT_OUT] GMT"}}
+[17:31:44] pinging agent...
+[AGENT_OUT] 17:32:22.868 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[AGENT_OUT] 17:32:25.858 ERROR… livekit.….deepgram Error in recv_task
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 542, in recv_task
+[AGENT_OUT] raise APIStatusError(
+[AGENT_OUT] livekit.agents._exceptions.APIStatusError: deepgram connection closed
+[AGENT_OUT] unexpectedly (status_code=1006, request_id=None, body=msg.data=None
+[AGENT_OUT] msg.extra=None, retryable=True)
+[AGENT_OUT] 17:32:25.862 ERROR… livekit.agents     AgentSession is closing due to
+[AGENT_OUT] unrecoverable error
+[AGENT_OUT] Traceback (most recent call last):
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/stt/stt.py", line 318, in _main_task
+[AGENT_OUT] return await self._run()
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 578, in _run
+[AGENT_OUT] task.result()
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/agents/utils/log.py", line 17, in async_fn_logs
+[AGENT_OUT] return await fn(*args, **kwargs)
+[AGENT_OUT] ^^^^^^^^^^^^^^^^^^^^^^^^^
+[AGENT_OUT] File "/media/harsha/New
+[AGENT_OUT] Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/liv
+[AGENT_OUT] ekit/plugins/deepgram/stt.py", line 542, in recv_task
+[AGENT_OUT] raise APIStatusError(
+[AGENT_OUT] livekit.agents._exceptions.APIStatusError: deepgram connection closed
+[AGENT_OUT] unexpectedly (status_code=1006, request_id=None, body=msg.data=None
+[AGENT_OUT] msg.extra=None, retryable=True)
+[AGENT_OUT] 17:32:25.868 DEBUG… livekit.agents     session closed
+[AGENT_OUT] {"reason": "error", "error":
+[AGENT_OUT] "type='stt_error' timestamp=1770897745.8622975
+[AGENT_OUT] label='livekit.plugins.deepgram.stt.STT' error=APIStatusError('deepgram
+[AGENT_OUT] connection closed unexpectedly') recoverable=False"}
+[17:32:44] pinging agent...
+[AGENT_OUT] 17:33:22.873 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[17:33:44] pinging agent...
+[AGENT_OUT] 17:34:22.879 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[17:34:45] pinging agent...
+[AGENT_OUT] 17:35:22.891 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[17:35:45] pinging agent...
+[AGENT_OUT] 17:36:22.905 DEBUG… core.mem…loud_sync ☁️ Checking for new memories to
+[AGENT_OUT] sync...
+[17:36:45] ✅ Stability run duration reached!
+[17:36:45] 🛑 Terminating agent process...

@@ -1,0 +1,27 @@
+id: exp_latency_injection
+type: latency
+description: Inject LLM latency and measure recovery time
+
+faults:
+  llm_latency_multiplier: 3.0
+
+turns:
+  baseline: 3
+  chaos: 8
+  recovery: 5
+
+conversation_script:
+  - "Hello, how are you?"
+  - "What time is it?"
+  - "Tell me a joke"
+  - "Remember I like tea"
+  - "What's the weather like?"
+  - "Set an alarm for 5 PM"
+  - "Do you remember my preference?"
+  - "Thanks for your help"
+
+success_criteria:
+  system_survival: true
+  max_latency_seconds: 8.0
+  max_recovery_turns: 3
+  probe_violations: 0

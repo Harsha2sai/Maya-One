@@ -1,0 +1,44 @@
+🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x73e688b54680>, <function build_strict_openai_schema at 0x73e688b54720>
+✅ DEBUG: Patched functions assigned to utils module
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+Traceback (most recent call last):
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py", line 33, in <module>
+    from core.memory import MemoryManager
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/core/memory/__init__.py", line 1, in <module>
+    from .memory_manager import MemoryManager
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/core/memory/memory_manager.py", line 7, in <module>
+    from .summarizer import Summarizer
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/core/memory/summarizer.py", line 7, in <module>
+    from llama_index.llms.groq import Groq
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/llama_index/llms/groq/__init__.py", line 1, in <module>
+    from llama_index.llms.groq.base import Groq
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/llama_index/llms/groq/base.py", line 4, in <module>
+    from llama_index.llms.openai_like import OpenAILike
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/llama_index/llms/openai_like/__init__.py", line 1, in <module>
+    from llama_index.llms.openai_like.base import OpenAILike
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/llama_index/llms/openai_like/base.py", line 21, in <module>
+    from transformers import AutoTokenizer
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/transformers/__init__.py", line 27, in <module>
+    from . import dependency_versions_check
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/transformers/dependency_versions_check.py", line 16, in <module>
+    from .utils.versions import require_version, require_version_core
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/transformers/utils/__init__.py", line 24, in <module>
+    from .auto_docstring import (
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/transformers/utils/auto_docstring.py", line 30, in <module>
+    from .generic import ModelOutput
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/transformers/utils/generic.py", line 51, in <module>
+    import torch
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/torch/__init__.py", line 2350, in <module>
+    from torch import masked as masked
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/torch/masked/__init__.py", line 1, in <module>
+    from torch.masked._ops import (
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/torch/masked/_ops.py", line 11, in <module>
+    from torch.masked.maskedtensor.core import is_masked_tensor, MaskedTensor
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/torch/masked/maskedtensor/__init__.py", line 3, in <module>
+    from .binary import _apply_native_binary, _is_native_binary
+  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/venv/lib/python3.12/site-packages/torch/masked/maskedtensor/binary.py", line 183, in <module>
+    getattr(torch.ops.aten, name): _torch_inplace_binary(name)
+KeyboardInterrupt

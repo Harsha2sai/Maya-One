@@ -1,0 +1,20 @@
+
+probes:
+  - name: missing_tool_param
+    description: "Verify handling of missing tool parameters"
+    # The Router correctly identifies the tool even if parameters are missing.
+    # The Agent/LLM layer is responsible for the follow-up, which we aren't testing here.
+    steps:
+      - input: "Set an alarm" 
+        expected:
+           intent: "TOOL_ACTION" 
+           tool: "set_alarm"
+           llm_called: true
+
+  - name: unknown_intent
+    description: "Verify handling of gibberish"
+    steps:
+      - input: "asdflkjhasdf"
+        expected:
+          intent: "CONVERSATION"
+          llm_called: true

@@ -1,0 +1,27 @@
+[21:36:35] 🚀 Starting Experiment 3: TTS Provider Failure (Edge TTS)
+[21:36:35] Agent process started (PID: 128701)
+[21:36:35] ⏳ Waiting for agent startup...
+[21:36:50] Startup output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7c812bf50680>, <function build_strict_op...
+[21:36:50] 🗣️ Phase 1: Baseline Check
+[21:37:07] Baseline Response: q", "livekit.plugins.google", [0m
+[2m"livekit.plugins.anthropic", "livekit.plugins.aws", "livekit.plugins.deepgram", [0m
+[2m"livekit.plugins.azure", "livekit.plugins.elevenlabs", [0m
+[2m"live
+[21:37:07] 🔥 Phase 2: Waiting for Fault Injection...
+[21:37:07] ⚠️  PLEASE RUN 'sudo ./verification/faults/block_tts.sh' THEN CREATE 'verification/faults/fault.trigger'
+[21:52:13] ✅ Fault Trigger Detected.
+[21:52:13] 🗣️ Phase 3: Testing during outage
+[21:52:13] Outage Response: nner initialized [2m [0m
+[0m[2m                                         {"tid": 128893, "elapsed_time": 0.0}[0m
+[0m    [2;36m21:37:07.861[0m[2;36m [0m[32mINFO …[0m __main__           🔌 S
+[21:52:13] 💊 Phase 4: Waiting for Restoration...
+[21:52:13] ⚠️  PLEASE RUN 'sudo ./verification/faults/restore_tts.sh' THEN CREATE 'verification/faults/restore.trigger'
+[21:57:49] ✅ Restore Trigger Detected.
+[21:57:49] 🗣️ Phase 5: Recovery Check
+[21:58:14] Recovery Response:             [0m[0m[2K[1A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+[2m   ? for shortcuts                      [0m[0m
+[21:58:14] 🏁 Experiment Complete
+[21:58:14] Cleaning up...

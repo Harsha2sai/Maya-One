@@ -1,0 +1,32 @@
+[
+  {
+    "id": "exp_latency_injection",
+    "status": "success",
+    "exit_code": 0,
+    "log_snippet": "\ud83d\udd0d DEBUG: apply_schema_patch() called\r\nHello, how are you?\r\nWhat time is it?\r\nTell me a joke\r\nRemember I like tea\r\n\ud83d\udd0d DEBUG: Imported livekit.agents.llm.utils\r\n\ud83d\udd0d DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7d84eccb8680>, <function build_strict_openai_schema at 0x7d84eccb8720>\r\n\u2705 DEBUG: Patched functions assigned to utils module\r\n\u2705 Applied LiveKit schema patch for strict JSON Schema compliance\r\nWhat's the weather like?\r\n\u26a0\ufe0f Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.\r\nSet an alarm for 5 PM\r\nDo you remember my preference?\r\nThanks for your help\r\nHello, how are you?\r\nWhat time is it?\r\nTell me a joke\r\nRemember I like tea\r\nWhat's the weather like?\r\nSet an alarm for 5 PM\r\nDo you remember my preference?\r\nThanks for your help\r\n"
+  },
+  {
+    "id": "exp_rate_limit",
+    "status": "success",
+    "exit_code": 0,
+    "log_snippet": "Hello\r\nWhat's the time?\r\nTell me about the weather\r\n\ud83d\udd0d DEBUG: apply_schema_patch() called\r\nSet a reminder\r\nWhat did I just ask?\r\nThanks\r\nHello\r\nWhat's the time?\r\nTell me about the weather\r\nSet a reminder\r\nWhat did I just ask?\r\nThanks\r\nHello\r\nWhat's the time?\r\n"
+  },
+  {
+    "id": "exp_tool_failure",
+    "status": "success",
+    "exit_code": 0,
+    "log_snippet": "What time is it?\r\nSet an alarm for 6 AM\r\nWhat's the weather?\r\n\ud83d\udd0d DEBUG: apply_schema_patch() called\r\nList my alarms\r\nHello, how are you?\r\nThanks\r\nWhat time is it?\r\nSet an alarm for 6 AM\r\nWhat's the weather?\r\nList my alarms\r\nHello, how are you?\r\nThanks\r\n"
+  },
+  {
+    "id": "exp_memory_pressure",
+    "status": "success",
+    "exit_code": 0,
+    "log_snippet": "Remember my name is Alice\r\nI prefer coffee over tea\r\nMy favorite color is blue\r\nWhat do you remember about me?\r\n\ud83d\udd0d DEBUG: apply_schema_patch() called\r\nTell me a long story\r\nWhat was my name again?\r\nDo I like tea or coffee?\r\nWhat's my favorite color?\r\nRemember my name is Alice\r\nI prefer coffee over tea\r\nMy favorite color is blue\r\nWhat do you remember about me?\r\nTell me a long story\r\nWhat was my name again?\r\nDo I like tea or coffee?\r\nWhat's my favorite color?\r\n"
+  },
+  {
+    "id": "exp_long_session_drift",
+    "status": "success",
+    "exit_code": 0,
+    "log_snippet": "Hello\r\nWhat time is it?\r\nTell me about yourself\r\nWhat's the weather?\r\nRemember I like pizza\r\nSet an alarm for 7 AM\r\n\ud83d\udd0d DEBUG: apply_schema_patch() called\r\nWhat did I just tell you?\r\nTell me a joke\r\nWhat's my favorite food?\r\nThanks for chatting\r\nHello\r\nWhat time is it?\r\nTell me about yourself\r\nWhat's the weather?\r\nRemember I like pizza\r\nSet an alarm for 7 AM\r\nWhat did I just tell you?\r\nTell me a joke\r\nWhat's my favorite food?\r\nThanks for chatting\r\nHello\r\nWhat time is it?\r\nTell me about yourself\r\nWhat's the weather?\r\nRemember I like pizza\r\nSet an alarm for 7 AM\r\n"
+  }
+]

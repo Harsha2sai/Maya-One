@@ -1,0 +1,26 @@
+[20:39:35] 🚀 Starting Experiment 2: STT Provider Failure (Deepgram)
+[20:39:35] Agent process started (PID: 121020)
+[20:39:35] ⏳ Waiting for agent startup...
+[20:39:50] Startup output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7d6954164680>, <function build_strict_op...
+[20:39:50] 🗣️ Phase 1: Baseline Check
+[20:40:07] Baseline Response: Hello
+
+[20:40:07] 🔥 Phase 2: Waiting for Fault Injection...
+[20:40:07] ⚠️  PLEASE RUN 'sudo ./verification/faults/block_deepgram.sh' THEN CREATE 'verification/faults/fault.trigger'
+[21:33:38] ✅ Fault Trigger Detected.
+[21:33:38] 🗣️ Phase 3: Testing during outage
+[21:33:38] Outage Response: [0m    [2;36m20:40:35.711[0m[2;36m [0m[32mINFO …[0m livekit.agents     initializing job runner [2m [0m
+[0m[2m                                         {"tid": 121273}[0m
+[0m    [2;36m20
+[21:33:38] 💊 Phase 4: Waiting for Restoration...
+[21:33:38] ⚠️  PLEASE RUN 'sudo ./verification/faults/restore_deepgram.sh' THEN CREATE 'verification/faults/restore.trigger'
+[21:35:30] ✅ Restore Trigger Detected.
+[21:35:30] 🗣️ Phase 5: Recovery Check
+[21:35:55] Recovery Response:   [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+   [1;2mCtrl+T[0m[2m  text mode[0m                    
+   [1;2mCtrl+C[0m[2m  exit[0m                         [0m
+[21:35:55] 🏁 Experiment Complete
+[21:35:55] Cleaning up...

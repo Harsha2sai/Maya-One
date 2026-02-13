@@ -1,0 +1,19 @@
+
+probes:
+  - name: switch_to_direct_mode
+    description: "Verify mode switching to direct"
+    steps:
+      - input: "Switch to direct mode"
+        expected:
+          # This might trigger a tool or just be handled conversationally depending on implementation.
+          # Assuming conversation for now as mode switching is often handled by context.
+          intent: "CONVERSATION"
+          llm_called: true
+
+  - name: switch_to_auto_mode
+    description: "Verify mode switching to auto"
+    steps:
+      - input: "Switch to auto mode"
+        expected:
+          intent: "CONVERSATION"
+          llm_called: true

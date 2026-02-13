@@ -1,0 +1,156 @@
+[22:55:48] 🚀 Starting Experiment 5: Process Kill (Crash Recovery)
+[22:55:48] ⏳ Starting first instance...
+[22:55:48] ⏳ Waiting for agent startup...
+[22:56:08] ❌ Failed to start agent. Output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7523c691c680>, <function build_strict_openai_schema at 0x7523c691c720>
+✅ DEBUG: Patched functions assigned to utils module
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+
+[22:56:08] Cleaning up...
+[23:02:57] 🚀 Starting Experiment 5: Process Kill (Crash Recovery)
+[23:02:57] ⏳ Starting first instance...
+[23:02:57] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:03:18] ❌ Failed to start agent. Output: 2026-02-12 23:02:57,975 - __main__ - INFO - 🎬 Agent process starting (DEBUG TRACE 1)
+2026-02-12 23:02:57,976 - __main__ - INFO - 🎬 Applying schema patch (DEBUG TRACE 2)
+🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x79b2a45a8680>, <function build_strict_openai_schema at 0x79b2a45a8720>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:02:59,042 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:02:59,043 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:02:59,043 - __main__ - INFO - 🎬 Schema patch applied (DEBUG TRACE 3)
+2026-02-12 23:02:59,043 - __main__ - INFO - 🎬 Agent process starting...
+2026-02-12 23:02:59,044 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:02:59,044 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:02:59,570 - __main__ - INFO - 🎬 Imports trace 1 (LiveKit)
+2026-02-12 23:03:00,026 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:03:00,027 - __main__ - INFO - 🎬 Imports trace 2 (Tools)
+2026-02-12 23:03:04,044 - __main__ - INFO - 🎬 Imports trace 3 (Providers)
+2026-02-12 23:03:04,044 - __main__ - INFO - 🎬 Imports trace 3.1 (Settings)
+2026-02-12 23:03:09,901 - __main__ - INFO - 🎬 Imports trace 3.2 (MemoryManager)
+2026-02-12 23:03:10,047 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:03:10,047 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-02-12 23:03:16,254 - core.intelligence.rag_engine - INFO - 🧠 RAG Engine initialized with model: all-MiniLM-L6-v2
+2026-02-12 23:03:16,337 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+2026-02-12 23:03:16,345 - __main__ - INFO - 🎬 Imports trace 3.3 (ToolManager)
+2026-02-12 23:03:16,345 - __main__ - INFO - 🎬 Imports trace 3.4 (Orchestrator)
+2026-02-12 23:03:16,345 - __main__ - INFO - 🎬 Imports trace 4 (Core Layers)
+2026-02-12 23:03:16,346 - __main__ - INFO - 🎬 Imports trace 5 (Governance/Planner/Supabase)
+2026-02-12 23:03:16,349 - __main__ - INFO - 🎬 Imports trace 6 (Final imports)
+[0mTraceback (most recent call last):
+[0m[0m  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py", line 77, in <module>
+[0m[0m    [0mclass Assistant(agents.Agent):[0m
+[0m[0m  File "/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py", line 92, in Assistant
+[0m[0m    [0masync def llm_node(self, chat_ctx: ChatContext, msg: ChatMessage, model_settings: Any, *args, **kwargs):[0m
+[0m[0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m [0m^[0m^[0m^[0m
+[0m[0mNameError[0m: [0mname 'Any' is not defined[0m. Did you mean: 'any'?[0m
+[0m[0m
+[23:03:18] Cleaning up...
+[23:03:39] 🚀 Starting Experiment 5: Process Kill (Crash Recovery)
+[23:03:39] ⏳ Starting first instance...
+[23:03:39] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:04:19] ❌ Failed to start agent. Output: 2026-02-12 23:03:39,226 - __main__ - INFO - 🎬 Agent process starting (DEBUG TRACE 1)
+2026-02-12 23:03:39,227 - __main__ - INFO - 🎬 Applying schema patch (DEBUG TRACE 2)
+🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x753f0d9b0680>, <function build_strict_openai_schema at 0x753f0d9b0720>
+✅ DEBUG: Patched functions assigned to utils module
+2026-02-12 23:03:40,308 - utils.schema_fixer - INFO - ✅ Applied LLMStream patch to force strict_tool_schema=False
+✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:03:40,308 - utils.schema_fixer - INFO - ✅ Applied LiveKit schema patch for strict JSON Schema compliance
+2026-02-12 23:03:40,308 - __main__ - INFO - 🎬 Schema patch applied (DEBUG TRACE 3)
+2026-02-12 23:03:40,308 - __main__ - INFO - 🎬 Agent process starting...
+2026-02-12 23:03:40,309 - livekit - INFO - livekit_ffi::server:139:livekit_ffi::server - initializing ffi server v0.12.44
+2026-02-12 23:03:40,310 - livekit - INFO - livekit_ffi::cabi:50:livekit_ffi::cabi - initializing ffi server v0.12.44
+2026-02-12 23:03:40,834 - __main__ - INFO - 🎬 Imports trace 1 (LiveKit)
+2026-02-12 23:03:41,291 - core.system_control.supabase_manager - WARNING - ⚠️ Supabase credentials (SUPABASE_URL, SUPABASE_SERVICE_KEY) not found. Persistence disabled.
+2026-02-12 23:03:41,292 - __main__ - INFO - 🎬 Imports trace 2 (Tools)
+2026-02-12 23:03:45,289 - __main__ - INFO - 🎬 Imports trace 3 (Providers)
+2026-02-12 23:03:45,289 - __main__ - INFO - 🎬 Imports trace 3.1 (Settings)
+2026-02-12 23:03:51,105 - __main__ - INFO - 🎬 Imports trace 3.2 (MemoryManager)
+2026-02-12 23:03:51,251 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: cpu
+2026-02-12 23:03:51,251 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: all-MiniLM-L6-v2
+2026-02-12 23:03:58,060 - core.intelligence.rag_engine - INFO - 🧠 RAG Engine initialized with model: all-MiniLM-L6-v2
+2026-02-12 23:03:58,144 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+2026-02-12 23:03:58,152 - __main__ - INFO - 🎬 Imports trace 3.3 (ToolManager)
+2026-02-12 23:03:58,152 - __main__ - INFO - 🎬 Imports trace 3.4 (Orchestrator)
+2026-02-12 23:03:58,152 - __main__ - INFO - 🎬 Imports trace 4 (Core Layers)
+2026-02-12 23:03:58,152 - __main__ - INFO - 🎬 Imports trace 5 (Governance/Planner/Supabase)
+2026-02-12 23:03:58,155 - __main__ - INFO - 🎬 Imports trace 6 (Final imports)
+2026-02-12 23:03:58,159 - __main__ - INFO - ⏭️ Skipping token server (console mode)
+2026-02-12 23:03:58,159 - __main__ - INFO - 🔍 Pre-flight health checks starting (DEBUG TRACE 4)
+/media/harsha/New Volume/livekit/v2/Maya-One-phase-0-2/Agent/agent.py:433: DeprecationWarning: There is no current event loop
+  loop = asyncio.get_event_loop()
+[0m2026-02-12 23:03:58,159 - __main__ - INFO - 🔍 Running loop.run_until_complete (DEBUG TRACE 5)
+2026-02-12 23:03:58,159 - __main__ - INFO - 🏥 Running startup health checks...
+2026-02-12 23:03:58,159 - providers.llmprovider - INFO - 🤖 Initializing LLM provider: groq
+2026-02-12 23:03:58,159 - providers.llmprovider - INFO - ✅ Using Groq model: llama-3.1-8b-instant
+2026-02-12 23:03:58,186 - providers.factory - INFO - ✅ LLM initialized: groq
+2026-02-12 23:03:58,187 - core.registry.tool_registry - INFO - ✅ Registered 20 tools from MCP
+2026-02-12 23:04:06,944 - mem0.vector_stores.qdrant - INFO - Inserting 1 vectors into collection mem0migrations
+2026-02-12 23:04:07,035 - core.memory.local_engine - INFO - ✅ Local Memory Engine initialized at ./data/memory_qdrant
+2026-02-12 23:04:07,035 - core.memory.summarizer - INFO - ✅ Summarizer initialized with Groq (Llama 3.1)
+2026-02-12 23:04:07,066 - core.system_control.supabase_manager - INFO - ✅ Supabase Client Initialized
+
+[36m============================================================[0m
+[0m[36m🏥 RUNNING STARTUP HEALTH CHECKS[0m
+[0m[36m============================================================[0m
+[0m
+[0m[34m🔍 Checking: LLM Connectivity...[0m[0m [0m2026-02-12 23:04:07,068 - utils.schema_fixer - WARNING - 🔧 PATCH: Forcing strict_tool_schema=False for LLMStream (was True)
+2026-02-12 23:04:07,068 - core.memory.cloud_sync - INFO - 🔄 Cloud Sync started (interval: 60s)
+[31m❌ FAIL[0m[0m
+[0m[31m   └─ LLM response timeout (>5s)[0m[0m
+[0m2026-02-12 23:04:12,073 - health.startup_checks - ERROR - Health check 'LLM Connectivity' failed: LLM response timeout (>5s)
+[34m🔍 Checking: Tool Schema Validation...[0m[0m [0m[32m✅ PASS[0m (All 20 tools have valid schemas)[0m
+[0m2026-02-12 23:04:12,073 - health.startup_checks - INFO - Health check 'Tool Schema Validation' passed: All 20 tools have valid schemas
+[34m🔍 Checking: ChatContext Contract...[0m[0m [0m[32m✅ PASS[0m (ChatContext contract validated)[0m
+[0m2026-02-12 23:04:12,074 - health.startup_checks - INFO - Health check 'ChatContext Contract' passed: ChatContext contract validated
+[34m🔍 Checking: Memory Layer...[0m[0m [0m[32m✅ PASS[0m (Memory layer operational (with summarizer))[0m
+[0m2026-02-12 23:04:12,074 - health.startup_checks - INFO - Health check 'Memory Layer' passed: Memory layer operational (with summarizer)
+[34m🔍 Checking: STT Pipeline...[0m[0m [0m2026-02-12 23:04:12,074 - providers.sttprovider - INFO - 🎙️ Initializing STT provider: deepgram
+2026-02-12 23:04:12,074 - providers.sttprovider - INFO - ✅ Using Deepgram STT model: nova-2, language: en-US
+2026-02-12 23:04:12,074 - providers.factory - INFO - ✅ STT initialized: deepgram
+[32m✅ PASS[0m (STT pipeline initialized)[0m
+[0m2026-02-12 23:04:12,074 - health.startup_checks - INFO - Health check 'STT Pipeline' passed: STT pipeline initialized
+[34m🔍 Checking: TTS Pipeline...[0m[0m [0m2026-02-12 23:04:12,074 - providers.ttsprovider - INFO - 🔊 Initializing TTS provider: edge_tts
+2026-02-12 23:04:12,088 - providers.ttsprovider - INFO - ✅ Using Edge-TTS (FREE), voice: en-IN-NeerjaNeural
+2026-02-12 23:04:12,088 - providers.edge_tts_provider - INFO - ✅ EdgeTTS initialized - Voice: en-IN-NeerjaNeural, Rate: +0%, Volume: +0%, Pitch: +0Hz
+2026-02-12 23:04:12,088 - providers.factory - INFO - ✅ TTS initialized: edge_tts
+2026-02-12 23:04:12,567 - httpx - INFO - HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+[32m✅ PASS[0m (TTS pipeline operational)[0m
+[0m2026-02-12 23:04:18,850 - health.startup_checks - INFO - Health check 'TTS Pipeline' passed: TTS pipeline operational
+
+[36m============================================================[0m[0m
+[0m[31m❌ HEALTH CHECKS FAILED (5/6 passed)[0m[0m
+[0m
+[31mFailed checks:[0m[0m
+[0m[31m  • LLM Connectivity: LLM response timeout (>5s)[0m[0m
+[0m
+[36m============================================================[0m
+[0m
+[0m[31m🚫 AGENT STARTUP ABORTED - FIX ISSUES ABOVE[0m
+[0m
+[0m2026-02-12 23:04:18,852 - __main__ - ERROR - ❌ Startup health checks failed. Exiting.
+
+[23:04:19] Cleaning up...
+[23:04:40] 🚀 Starting Experiment 5: Process Kill (Crash Recovery)
+[23:04:40] ⏳ Starting first instance...
+[23:04:40] ⏳ Waiting for agent startup (increased timeout for models)...
+[23:05:14] 🗣️ Phase 1: Baseline Check
+[23:05:16] Baseline Response: ": 15597, "elapsed_time": 0.0}[0m
+[0m2026-02-12 23:05:14,396 - __main__ - INFO - 🔌 Starting orchestrated agent session...
+    [2;36m23:05:14.396[0m[2;36m [0m[32mINFO …[0m __main__           
+[23:05:16] 🔥 Phase 2: Killing process 15416 with SIGKILL...
+[23:05:18] ✅ Process killed.
+[23:05:18] ⏳ Phase 3: Restarting agent...
+[23:05:18] ⏳ Waiting for agent restart (increased timeout for models)...
+[23:05:53] 🗣️ Phase 4: Recovery Check (State Verification)
+[23:05:55] Recovery Response: agents     job runner initialized [2m [0m
+[0m[2m                                         {"tid": 15785, "elapsed_time": 0.01}[0m
+[0m2026-02-12 23:05:53,246 - __main__ - INFO - 🔌 Starting orchestrated agent session...
+    [2;36m23:05:53.246[0m[2;36m [0m[32mINFO …[0m __main__           
+[23:05:55] 🏁 Experiment Complete
+[23:05:55] Cleaning up...

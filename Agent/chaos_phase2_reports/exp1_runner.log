@@ -1,0 +1,26 @@
+[20:16:14] 🚀 Starting Experiment 1: LLM Provider Outage
+[20:17:16] 🚀 Starting Experiment 1: LLM Provider Outage
+[20:17:16] Agent process started (PID: 117646)
+[20:17:16] ⏳ Waiting for agent startup...
+[20:17:31] Startup output: 🔍 DEBUG: apply_schema_patch() called
+🔍 DEBUG: Imported livekit.agents.llm.utils
+🔍 DEBUG: Stored original functions: <function build_legacy_openai_schema at 0x7144de598680>, <function build_strict_op...
+[20:17:31] 🗣️ Phase 1: Baseline Check
+[20:17:48] Baseline Response: Hello
+
+[20:17:48] 🔥 Phase 2: Waiting for Fault Injection...
+[20:17:48] ⚠️  PLEASE RUN 'sudo ./verification/faults/block_groq.sh' THEN CREATE 'verification/faults/fault.trigger'
+[20:33:04] ✅ Fault Trigger Detected.
+[20:33:04] 🗣️ Phase 3: Testing during outage
+[20:33:04] Outage Response: [0m    [2;36m20:18:07.269[0m[2;36m [0m[32mINFO …[0m livekit.agents     initializing job runner [2m [0m
+[0m[2m                                         {"tid": 117902}[0m
+[0m    [2;36m20
+[20:33:04] 💊 Phase 4: Waiting for Restoration...
+[20:33:04] ⚠️  PLEASE RUN 'sudo ./verification/faults/restore_groq.sh' THEN CREATE 'verification/faults/restore.trigger'
+[20:37:11] ✅ Restore Trigger Detected.
+[20:37:11] 🗣️ Phase 5: Recovery Check
+[20:37:36] Recovery Response:                 [0m[0m[2K[1A[2K[1A[2K[38;2;143;131;255m   default  [0m ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁ ▁
+                                        
+[2m   ? for shortcuts                      [0m
+[20:37:36] 🏁 Experiment Complete
+[20:37:36] Cleaning up...

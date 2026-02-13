@@ -1,0 +1,25 @@
+
+probes:
+  - name: remember_name
+    description: "Verify memory storage and retrieval"
+    steps:
+      - input: "My name is Harsha"
+        expected:
+          intent: "CONVERSATION"
+          llm_called: true
+      - input: "What is my name?"
+        expected:
+          intent: "CONVERSATION" 
+          llm_called: true
+          # Note: We can't easily check the exact response content here in this probe runner yet,
+          # but we can verify the flow doesn't crash and routing is correct.
+          # Future: Add response_contains assertion to probe runner.
+
+  - name: store_preference
+    description: "Verify preference storage"
+    steps:
+      - input: "I prefer working in Python"
+        expected:
+           intent: "CONVERSATION"
+           llm_called: true
+    
