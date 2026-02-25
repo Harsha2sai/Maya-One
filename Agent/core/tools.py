@@ -5,6 +5,7 @@ from typing import List, Any, Dict
 
 from mcp_client.agent_tools import MCPToolsIntegration
 from mcp_client.server import MCPServerSse
+from plugins.manager import PluginManager
 from tool_registry import get_registry
 from execution_router import get_router
 
@@ -48,6 +49,15 @@ class ToolManager:
                 name="SSE MCP Server"
             ))
             logger.info(f"🌐 Configured MCP Server: {mcp_server_url}")
+
+        # Load dynamic plugins from the plugins directory
+        try:
+            plugin_servers = PluginManager.load_plugins()
+            if plugin_servers:
+                mcp_servers.extend(plugin_servers)
+                logger.info(f"🧩 Loaded {len(plugin_servers)} plugins from directory")
+        except Exception as e:
+            logger.error(f"⚠️ Error loading plugins: {e}")
 
         agent = await MCPToolsIntegration.create_agent_with_tools(
             agent_class=agent_class,

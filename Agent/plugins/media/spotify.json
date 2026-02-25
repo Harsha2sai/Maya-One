@@ -1,0 +1,9 @@
+{
+    "name": "Spotify MCP",
+    "command": "npx",
+    "args": ["-y", "spotify-mcp"],
+    "env": {
+        "SPOTIFY_CLIENT_ID": "",
+        "SPOTIFY_CLIENT_SECRET": ""
+    }
+}

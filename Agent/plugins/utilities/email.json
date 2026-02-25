@@ -1,0 +1,11 @@
+{
+    "name": "Email MCP",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-email"],
+    "env": {
+        "EMAIL_USER": "",
+        "EMAIL_PASSWORD": "",
+        "EMAIL_HOST": "",
+        "EMAIL_PORT": "993"
+    }
+}

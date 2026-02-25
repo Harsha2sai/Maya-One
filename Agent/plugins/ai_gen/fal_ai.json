@@ -1,0 +1,8 @@
+{
+    "name": "Fal.ai MCP",
+    "command": "uvx",
+    "args": ["--from", "fal-mcp-server", "fal-mcp"],
+    "env": {
+        "FAL_KEY": ""
+    }
+}
