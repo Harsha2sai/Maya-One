@@ -16,6 +16,7 @@ from tools import (
     send_email, set_alarm, list_alarms, delete_alarm, set_reminder, 
     list_reminders, delete_reminder, create_note, list_notes, read_note, 
     delete_note, create_calendar_event, list_calendar_events, delete_calendar_event,
+    calculate, wikipedia_search, convert_units, convert_currency,
 )
 from pc_control import open_app, close_app
 from api.server import run_token_server
@@ -97,7 +98,8 @@ async def entrypoint(ctx: agents.JobContext):
     tools_list = [
         get_weather, search_web, get_current_datetime, send_email,
         set_alarm, list_alarms, delete_alarm, set_reminder, 
-        create_note, read_note, create_calendar_event, open_app, close_app
+        create_note, read_note, create_calendar_event, open_app, close_app,
+        calculate, wikipedia_search, convert_units, convert_currency,
     ]
     
     stt = ProviderFactory.get_stt(

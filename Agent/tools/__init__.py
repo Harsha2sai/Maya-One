@@ -8,6 +8,7 @@ from .storage import (
     create_note, list_notes, read_note, delete_note,
     create_calendar_event, list_calendar_events, delete_calendar_event
 )
+from .utilities import calculate, wikipedia_search, convert_units, convert_currency
 
 __all__ = [
     'get_user_id',
@@ -29,5 +30,9 @@ __all__ = [
     'delete_note',
     'create_calendar_event',
     'list_calendar_events',
-    'delete_calendar_event'
+    'delete_calendar_event',
+    'calculate',
+    'wikipedia_search',
+    'convert_units',
+    'convert_currency'
 ]
