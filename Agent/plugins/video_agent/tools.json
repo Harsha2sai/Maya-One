@@ -1,0 +1,6 @@
+{
+  "tools": [
+    {"name": "generate_video_script", "description": "Create a video script"},
+    {"name": "render_video", "description": "Render a video"}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+    "name": "home_assistant",
+    "category": "smart_home",
+    "mode": "wrapped-mcp",
+    "type": "sse",
+    "url": "http://homeassistant.local:8123/api/mcp",
+    "headers": {"Authorization": "Bearer YOUR_TOKEN"}
+}

@@ -1,0 +1,15 @@
+{
+  "tools": [
+    {
+      "name": "play_music",
+      "description": "Play music using Spotify",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type":"string"}
+        },
+        "required":["query"]
+      }
+    }
+  ]
+}

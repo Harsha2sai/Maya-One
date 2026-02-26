@@ -1,9 +1,0 @@
-{
-    "name": "WhatsApp MCP",
-    "command": "uv",
-    "args": ["run", "main.py"],
-    "env": {
-        "WHATSAPP_BRIDGE_URL": "http://localhost:8080"
-    },
-    "note": "Requires the Go bridge from lharries/whatsapp-mcp to be running."
-}

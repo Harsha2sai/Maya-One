@@ -1,8 +1,0 @@
-{
-    "name": "Instagram MCP",
-    "command": "npx",
-    "args": ["-y", "xpoz-mcp"],
-    "env": {
-        "XPOZ_API_KEY": ""
-    }
-}

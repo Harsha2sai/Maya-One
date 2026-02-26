@@ -1,9 +1,0 @@
-{
-    "name": "Home Assistant MCP",
-    "type": "sse",
-    "url": "http://homeassistant.local:8123/api/mcp",
-    "headers": {
-        "Authorization": "Bearer YOUR_LONG_LIVED_ACCESS_TOKEN"
-    },
-    "note": "Requires Home Assistant 2025.2 or later."
-}

@@ -1,0 +1,6 @@
+{
+  "tools": [
+    {"name": "list_telegram_dialogs", "description": "List chats"},
+    {"name": "send_telegram_message", "description": "Send a message"}
+  ]
+}

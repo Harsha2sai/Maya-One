@@ -1,0 +1,6 @@
+{
+  "tools": [
+    {"name": "get_video_transcript"},
+    {"name": "get_video_metadata"}
+  ]
+}

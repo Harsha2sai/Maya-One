@@ -1,0 +1,7 @@
+{
+  "tools": [
+    {"name": "list_emails"},
+    {"name": "get_calendar_events"}
+  ],
+  "confirmation_required": ["send_email", "create_calendar_event"]
+}

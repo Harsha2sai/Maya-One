@@ -1,0 +1,7 @@
+{
+  "tools": [
+    {"name": "turn_on", "description": "Turn on a device"},
+    {"name": "turn_off", "description": "Turn off a device"},
+    {"name": "lock_door", "description": "Lock a door"}
+  ]
+}

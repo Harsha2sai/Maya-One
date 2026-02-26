@@ -51,18 +51,20 @@ class ToolManager:
             logger.info(f"🌐 Configured MCP Server: {mcp_server_url}")
 
         # Load dynamic plugins from the plugins directory
+        plugin_manager = PluginManager()
+        plugin_servers = []
         try:
-            plugin_servers = PluginManager.load_plugins()
-            if plugin_servers:
-                mcp_servers.extend(plugin_servers)
-                logger.info(f"🧩 Loaded {len(plugin_servers)} plugins from directory")
+            plugin_servers = plugin_manager.load_all_plugins()
+            logger.info(f"🧩 Discovered {len(plugin_manager.plugins)} plugins")
         except Exception as e:
             logger.error(f"⚠️ Error loading plugins: {e}")
 
+        # Note: We do NOT pass plugin_servers to create_agent_with_tools
+        # as we want to handle routing through PluginManager/Adapters ourselves.
         agent = await MCPToolsIntegration.create_agent_with_tools(
             agent_class=agent_class,
             agent_kwargs=agent_kwargs,
-            mcp_servers=mcp_servers
+            mcp_servers=mcp_servers # Only original servers (like n8n)
         )
         
         # Build Tool Registry for Intent Matching
@@ -101,6 +103,31 @@ class ToolManager:
         
         async def tool_executor(name: str, params: dict) -> str:
             logger.info(f"🛠️ Executing tool: {name}")
+
+            # 1. Safety Check: Rate Limits & Confirmation
+            safe, reason = plugin_manager.check_safety(name)
+            if not safe:
+                logger.error(f"🚨 Tool execution blocked: {reason}")
+                return f"Error: {reason}"
+            if reason == "Confirmation Required":
+                logger.warning(f"⚠️ Tool {name} requires confirmation. Simulation: User approved.")
+                # In a real app, this would pause and wait for user voice/UI input
+
+            # 2. Routing Logic: Plugin vs Local Tool
+            target_plugin = None
+            for plugin in plugin_manager.plugins.values():
+                if any(t.get("name") == name for t in plugin.tools):
+                    target_plugin = plugin
+                    break
+
+            if target_plugin:
+                try:
+                    return await target_plugin.invoke(name, params)
+                except Exception as e:
+                    logger.error(f"Error invoking plugin tool {name}: {e}")
+                    return f"Error: {str(e)}"
+
+            # Fallback to Local Tool Map
             found_tool = tool_map.get(name.lower())
             
             if found_tool:
@@ -124,6 +151,44 @@ class ToolManager:
                     return f"Error: {str(e)}"
             
             return f"Tool {name} not found."
+
+        # Register Proxy Tools for all discovered plugins
+        # (Must be after tool_executor is defined for the closure to work correctly)
+        from livekit.agents.llm import function_tool
+        import inspect
+
+        proxy_tools = []
+        for plugin_name, plugin in plugin_manager.plugins.items():
+            for tool_def in plugin.tools:
+                t_name = tool_def.get("name")
+                t_desc = tool_def.get("description", f"Tool from {plugin_name} plugin")
+                t_params = tool_def.get("parameters", {}).get("properties", {})
+
+                # Create signature based on parameters
+                sig_params = [inspect.Parameter('ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+                for p_name, p_info in t_params.items():
+                    sig_params.append(inspect.Parameter(
+                        p_name,
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None if p_name not in tool_def.get("parameters", {}).get("required", []) else inspect.Parameter.empty
+                    ))
+
+                # Dynamic Proxy Function
+                async def proxy_func(ctx, t_name=t_name, **kwargs):
+                    # This will be called by LiveKit, we route it to tool_executor
+                    return await tool_executor(t_name, kwargs)
+
+                # Set metadata for LiveKit
+                proxy_func.__name__ = t_name
+                proxy_func.__doc__ = t_desc
+                proxy_func.__signature__ = inspect.Signature(sig_params)
+
+                decorated = function_tool()(proxy_func)
+                proxy_tools.append(decorated)
+
+        if hasattr(agent, '_tools') and isinstance(agent._tools, list):
+            agent._tools.extend(proxy_tools)
+            logger.info(f"✅ Registered {len(proxy_tools)} Proxy Tools from plugins")
 
         router.set_tool_executor(tool_executor)
         logger.info(f"✅ Router configured with {len(tool_map)} tools")

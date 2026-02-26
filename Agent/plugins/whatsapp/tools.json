@@ -1,0 +1,27 @@
+{
+  "tools": [
+    {
+      "name": "send_whatsapp_message",
+      "description": "Send a message via WhatsApp",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": {"type":"string", "description": "Recipient phone number or name"},
+          "message": {"type":"string"}
+        },
+        "required":["to", "message"]
+      }
+    },
+    {
+      "name": "search_whatsapp_contacts",
+      "description": "Search for contacts on WhatsApp",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type":"string"}
+        },
+        "required":["query"]
+      }
+    }
+  ]
+}

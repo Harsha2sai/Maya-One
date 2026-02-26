@@ -1,6 +1,0 @@
-{
-    "name": "Telegram MCP",
-    "command": "mcp-telegram",
-    "args": [],
-    "note": "Requires 'uv tool install mcp-telegram' and 'mcp-telegram login' first."
-}

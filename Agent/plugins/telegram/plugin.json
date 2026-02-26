@@ -1,0 +1,6 @@
+{
+    "name": "telegram",
+    "category": "messaging",
+    "mode": "wrapped-mcp",
+    "command": "mcp-telegram"
+}

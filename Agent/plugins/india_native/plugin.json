@@ -1,0 +1,7 @@
+{
+    "name": "india_native",
+    "category": "india_native",
+    "mode": "local-native",
+    "command": "python3",
+    "args": ["{{PLUGIN_PATH}}/india_services.py"]
+}
