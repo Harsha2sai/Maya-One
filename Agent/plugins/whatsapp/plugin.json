@@ -4,7 +4,7 @@
     "mode": "wrapped-mcp",
     "risk_level": "medium",
     "command": "uv",
-    "args": ["run", "main.py"],
+    "args": ["run", "--directory", "{{PLUGIN_PATH}}/mcp_server", "main.py"],
     "env": {
         "WHATSAPP_BRIDGE_URL": "http://localhost:8080"
     }
