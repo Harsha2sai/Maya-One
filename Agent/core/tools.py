@@ -61,6 +61,15 @@ class ToolManager:
 
         # Note: We do NOT pass plugin_servers to create_agent_with_tools
         # as we want to handle routing through PluginManager/Adapters ourselves.
+        # However, we DO need to manually connect to their MCP processes.
+        for server in plugin_servers:
+            if not getattr(server, 'connected', False):
+                try:
+                    logger.info(f"Connecting to plugin server: {server.name}...")
+                    await asyncio.wait_for(server.connect(), timeout=5.0)
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to connect to plugin server {server.name}: {e}")
+
         agent = await MCPToolsIntegration.create_agent_with_tools(
             agent_class=agent_class,
             agent_kwargs=agent_kwargs,
