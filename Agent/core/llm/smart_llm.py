@@ -485,6 +485,7 @@ class SmartLLMStream(LLMStream):
              # Let's implement _static_stream or a generator.
              pass 
 
+        # Skip diagnostic for now - focusing on core implementation
         base_stream = llm_instance.chat(
             chat_ctx=ctx,
             tools=tools if tools is not None else [], # ⭐ FIX 3: Pass empty list if no tools

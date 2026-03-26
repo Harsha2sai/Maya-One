@@ -1,7 +1,8 @@
 
 import asyncio
 import logging
-from datetime import datetime
+import sqlite3
+from datetime import datetime, timezone
 import pytz
 
 from core.tasks.task_manager import TaskManager
@@ -11,6 +12,7 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 STUCK_THRESHOLD_SECONDS = 300 # 5 minutes
+STUCK_TASK_THRESHOLD_SECONDS = 600  # 10 minutes before watchdog reclaims
 
 class WorkerWatchdog:
     """
@@ -88,7 +90,65 @@ class WorkerWatchdog:
                  logger.warning(f"⚠️ Task {task.id} step {current_step.id} retried {current_step.retry_count} times. Killing.")
                  await self.manager.fail_task(task.id, "Watchdog: Terminated due to excessive step retries.")
 
+        # Reclaim pass: identify and fail tasks stuck beyond threshold
+        await self._reclaim_stuck_tasks()
+
         # Telemetry (Log snapshot)
         running_count = len([t for t in active_tasks if t.status == TaskStatus.RUNNING])
         pending_count = len([t for t in active_tasks if t.status == TaskStatus.PENDING])
         logger.info(f"📊 [Telemetry] Active: {len(active_tasks)} (Running: {running_count}, Pending: {pending_count})")
+
+    async def _reclaim_stuck_tasks(self):
+        """Query for tasks stuck beyond STUCK_TASK_THRESHOLD_SECONDS and transition them to FAILED."""
+        try:
+            db_path = self.manager.store.db_path
+            now = datetime.now(timezone.utc).isoformat()
+            threshold_seconds = STUCK_TASK_THRESHOLD_SECONDS
+            
+            # Calculate cutoff time
+            import datetime as dt_module
+            cutoff_time = (dt_module.datetime.now(timezone.utc) - dt_module.timedelta(seconds=threshold_seconds)).isoformat()
+            
+            with sqlite3.connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                
+                # Find stuck RUNNING tasks
+                cursor = conn.execute(
+                    """
+                    SELECT id, updated_at FROM tasks
+                    WHERE status = 'RUNNING' AND updated_at < ?
+                    """,
+                    (cutoff_time,)
+                )
+                stuck_tasks = cursor.fetchall()
+                
+                for row in stuck_tasks:
+                    task_id = row['id']
+                    updated_at = row['updated_at']
+                    age_seconds = (datetime.fromisoformat(now.replace('Z', '+00:00')) - datetime.fromisoformat(updated_at.replace('Z', '+00:00'))).total_seconds() if 'T' in str(updated_at) else 0
+                    
+                    # Update task to FAILED
+                    conn.execute(
+                        """
+                        UPDATE tasks
+                        SET status = ?, error = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                        ('FAILED', 'stuck_task_reclaimed_by_watchdog', now, task_id)
+                    )
+                    
+                    # Update all running steps to failed
+                    conn.execute(
+                        """
+                        UPDATE task_steps
+                        SET status = ?, error = ?
+                        WHERE task_id = ? AND status = 'running'
+                        """,
+                        ('failed', 'stuck_task_reclaimed_by_watchdog', task_id)
+                    )
+                    
+                    logger.warning(f"🐕 stuck_task_reclaimed task_id={task_id} age_seconds={int(age_seconds)}")
+                
+                conn.commit()
+        except Exception as e:
+            logger.error(f"❌ Error in _reclaim_stuck_tasks: {e}")

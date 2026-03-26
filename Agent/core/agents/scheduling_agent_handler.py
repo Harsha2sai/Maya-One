@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import re
+import asyncio
+import logging
 from typing import Any
 
 from core.agents.base import SpecializedAgent
 from core.agents.contracts import AgentCapabilityMatch, AgentHandoffRequest, AgentHandoffResult
+from core.memory.hybrid_memory_manager import HybridMemoryManager
+
+logger = logging.getLogger(__name__)
 
 
 class SchedulingAgentHandler(SpecializedAgent):
@@ -43,13 +48,21 @@ class SchedulingAgentHandler(SpecializedAgent):
     async def handle(self, request: AgentHandoffRequest) -> AgentHandoffResult:
         parsed = self._parse_request(str(request.user_text or ""))
         if parsed["status"] == "needs_followup":
+            # GAP-S08: Try to retrieve scheduling context from memory before asking user to repeat
+            clarification_msg = str(parsed["message"])
+            enhanced_msg = await self._enhance_with_memory_context(
+                clarification_msg,
+                str(parsed.get("parameters", {}).get("text", "")),
+                request
+            )
+            
             return AgentHandoffResult(
                 handoff_id=request.handoff_id,
                 trace_id=request.trace_id,
                 source_agent=self.name,
                 status="needs_followup",
-                user_visible_text=str(parsed["message"]),
-                voice_text=str(parsed["message"]),
+                user_visible_text=enhanced_msg,
+                voice_text=enhanced_msg,
                 structured_payload=dict(parsed),
                 next_action="respond",
             )
@@ -204,3 +217,57 @@ class SchedulingAgentHandler(SpecializedAgent):
             }
 
         return {"status": "rejected"}
+
+    async def _enhance_with_memory_context(self, clarification_msg: str, reminder_text: str, request: AgentHandoffRequest) -> str:
+        """
+        Try to retrieve scheduling context from memory to enhance the clarification message.
+        If memory retrieval succeeds and finds relevant context, enhance the message.
+        Otherwise, return the original clarification message unchanged.
+        
+        Constraints:
+        - Max 1 query, 2 results, 500ms timeout
+        - Graceful degradation if retrieval fails or times out
+        - Do not change AgentHandoffResult shape
+        """
+        try:
+            if not reminder_text or len(reminder_text) < 3:
+                return clarification_msg
+            
+            # Try memory retrieval with timeout
+            memory_mgr = HybridMemoryManager()
+            retrieval_task = memory_mgr.retrieve_relevant_memories_async(
+                query=f"scheduling reminder {reminder_text}",
+                k=2,
+                user_id=request.metadata.get("user_id"),
+                session_id=request.conversation_id,
+                origin="scheduling"
+            )
+            
+            # Bounded timeout: 500ms max
+            try:
+                memories = await asyncio.wait_for(retrieval_task, timeout=0.5)
+            except asyncio.TimeoutError:
+                logger.warning(f"Memory retrieval timed out for scheduling context")
+                return clarification_msg
+            
+            # No memories found, return original message
+            if not memories:
+                return clarification_msg
+            
+            # Extract context from first memory (if confidence is reasonable)
+            first_memory = memories[0]
+            content = str(first_memory.get("content", ""))
+            
+            if content and len(content) > 0:
+                # Enhance the message to reference what Maya remembers
+                enhanced = f"{clarification_msg} (I see you mentioned: {content[:100].rstrip('.')}. When would you like to set this?)"
+                logger.info(f"gap_s08_scheduling_recall_fallback applied reminder_text={reminder_text[:30]}")
+                return enhanced
+            
+            return clarification_msg
+            
+        except Exception as e:
+            # Gracefully degrade: any error just returns original message
+            logger.debug(f"Memory context enhancement failed (non-critical): {e}")
+            return clarification_msg
+
