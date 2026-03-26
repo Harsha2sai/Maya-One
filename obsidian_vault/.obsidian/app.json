@@ -1,0 +1,6 @@
+{
+  "dailyNotes": {
+    "folder": ".",
+    "templateFile": "Templates/Daily.md"
+  }
+}

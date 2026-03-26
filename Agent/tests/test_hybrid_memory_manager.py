@@ -1,0 +1,112 @@
+import pytest
+import os
+import shutil
+from core.memory.hybrid_memory_manager import HybridMemoryManager
+from core.memory.memory_models import MemorySource
+
+class _FakeEmbeddingModel:
+    _VOCAB = (
+        "python",
+        "javascript",
+        "programming",
+        "language",
+        "web",
+        "data",
+        "processing",
+        "analysis",
+    )
+    _ALIASES = {
+        "coding": "programming",
+        "languages": "language",
+    }
+
+    def encode(self, text: str):
+        lowered = (text or "").lower()
+        tokens = [self._ALIASES.get(token.strip(".,!?"), token.strip(".,!?")) for token in lowered.split()]
+        vector = [0.0] * len(self._VOCAB)
+        for index, term in enumerate(self._VOCAB):
+            vector[index] = float(tokens.count(term))
+        return vector
+
+@pytest.fixture
+def temp_memory_manager(tmp_path, monkeypatch):
+    """Create a temporary memory manager for testing."""
+    # Override default paths to use tmp_path
+    monkeypatch.setenv("HOME", str(tmp_path))
+    manager = HybridMemoryManager()
+    manager.retriever.vector_store._embedding_model = _FakeEmbeddingModel()
+    yield manager
+    # Cleanup
+    if os.path.exists(tmp_path):
+        shutil.rmtree(tmp_path)
+
+def test_memory_manager_initialization(temp_memory_manager):
+    """Test that memory manager initializes correctly."""
+    assert temp_memory_manager.retriever is not None
+
+def test_store_conversation_turn(temp_memory_manager):
+    """Test storing a conversation turn."""
+    success = temp_memory_manager.store_conversation_turn(
+        user_msg="What is Python?",
+        assistant_msg="Python is a high-level programming language.",
+        metadata={"session_id": "test123"}
+    )
+    
+    assert success is True
+    stats = temp_memory_manager.get_stats()
+    assert stats['vector_count'] == 1
+    assert stats['keyword_count'] == 1
+
+def test_store_task_result(temp_memory_manager):
+    """Test storing a task result."""
+    success = temp_memory_manager.store_task_result(
+        task_id="task-123",
+        result="Successfully completed data analysis task",
+        metadata={"duration": "5m"}
+    )
+    
+    assert success is True
+
+def test_store_tool_output(temp_memory_manager):
+    """Test storing tool output."""
+    success = temp_memory_manager.store_tool_output(
+        tool_name="web_search",
+        output="Found 10 relevant articles about AI",
+        metadata={"query": "artificial intelligence"}
+    )
+    
+    assert success is True
+
+def test_retrieve_relevant_memories(temp_memory_manager):
+    """Test retrieving relevant memories."""
+    # Store some memories
+    temp_memory_manager.store_conversation_turn(
+        "Tell me about Python",
+        "Python is a programming language"
+    )
+    temp_memory_manager.store_conversation_turn(
+        "What about JavaScript?",
+        "JavaScript is used for web development"
+    )
+    temp_memory_manager.store_task_result(
+        "task-1",
+        "Completed Python script for data processing"
+    )
+    
+    # Retrieve memories related to Python
+    memories = temp_memory_manager.retrieve_relevant_memories("Python programming", k=2)
+    
+    assert len(memories) > 0
+    assert len(memories) <= 2
+    assert all('rrf_score' in m for m in memories)
+
+def test_get_stats(temp_memory_manager):
+    """Test getting memory statistics."""
+    temp_memory_manager.store_conversation_turn("Hello", "Hi there")
+    temp_memory_manager.store_task_result("task-1", "Done")
+    
+    stats = temp_memory_manager.get_stats()
+    assert 'vector_count' in stats
+    assert 'keyword_count' in stats
+    assert stats['vector_count'] == 2
+    assert stats['keyword_count'] == 2
