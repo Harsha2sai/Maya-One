@@ -1,0 +1,166 @@
+{
+  "name": "phase5_7x14_certification",
+  "version": 1,
+  "examples": [
+    {
+      "id": "ex01",
+      "level": "L1",
+      "difficulty": "L1",
+      "category": "Core functionality",
+      "prompt": "what time is it",
+      "scenario": "time_basic",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["tool_time", "short_answer"]
+    },
+    {
+      "id": "ex02",
+      "level": "L1",
+      "difficulty": "L1",
+      "category": "Tool invocation correctness",
+      "prompt": "tell me today's date",
+      "scenario": "date_basic",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["tool_date", "short_answer"]
+    },
+    {
+      "id": "ex03",
+      "level": "L2",
+      "difficulty": "L2",
+      "category": "Tool invocation correctness",
+      "prompt": "open youtube",
+      "scenario": "open_youtube",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["open_app"]
+    },
+    {
+      "id": "ex04",
+      "level": "L2",
+      "difficulty": "L2",
+      "category": "Tool invocation correctness",
+      "prompt": "open downloads folder",
+      "scenario": "open_downloads",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["open_folder"]
+    },
+    {
+      "id": "ex05",
+      "level": "L3",
+      "difficulty": "L3",
+      "category": "Multi-turn conversational integrity",
+      "prompt": "open youtube and in that search for new telugu songs",
+      "scenario": "youtube_contextual_search",
+      "turns": 2,
+      "mode": "both",
+      "requires_context": true,
+      "expectations": ["context_followup", "youtube_search"]
+    },
+    {
+      "id": "ex06",
+      "level": "L3",
+      "difficulty": "L3",
+      "category": "Multi-turn conversational integrity",
+      "prompt": "open browser and search there for latest ai updates",
+      "scenario": "browser_contextual_search",
+      "turns": 2,
+      "mode": "both",
+      "requires_context": true,
+      "expectations": ["context_followup", "web_search"]
+    },
+    {
+      "id": "ex07",
+      "level": "L4",
+      "difficulty": "L4",
+      "category": "Memory interaction",
+      "prompt": "search github for esp32 air mouse projects",
+      "scenario": "memory_chain_seed",
+      "turns": 1,
+      "mode": "both",
+      "requires_memory": true,
+      "expectations": ["web_search", "memory_store"]
+    },
+    {
+      "id": "ex08",
+      "level": "L4",
+      "difficulty": "L4",
+      "category": "Memory interaction",
+      "prompt": "what did i ask earlier",
+      "scenario": "memory_chain_recall",
+      "turns": 1,
+      "mode": "both",
+      "requires_memory": true,
+      "expectations": ["memory_recall"]
+    },
+    {
+      "id": "ex09",
+      "level": "L5",
+      "difficulty": "L5",
+      "category": "Core functionality",
+      "prompt": "set reminder in 5 minutes to stretch",
+      "scenario": "reminder_create",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["reminder_create"]
+    },
+    {
+      "id": "ex10",
+      "level": "L5",
+      "difficulty": "L5",
+      "category": "Tool invocation correctness",
+      "prompt": "list my reminders",
+      "scenario": "reminder_list",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["reminder_list"]
+    },
+    {
+      "id": "ex11",
+      "level": "L6",
+      "difficulty": "L6",
+      "category": "Failure recovery",
+      "prompt": "open my fless",
+      "scenario": "typo_recovery",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["clarification_or_recover"]
+    },
+    {
+      "id": "ex12",
+      "level": "L6",
+      "difficulty": "L6",
+      "category": "Edge case handling",
+      "prompt": "search there",
+      "scenario": "missing_context",
+      "turns": 1,
+      "mode": "both",
+      "requires_context": true,
+      "expectations": ["clarification"]
+    },
+    {
+      "id": "ex13",
+      "level": "L7",
+      "difficulty": "L7",
+      "category": "Latency stress",
+      "prompt": "search the web for latest llm updates and summarize briefly",
+      "scenario": "endurance_search",
+      "turns": 1,
+      "mode": "both",
+      "expectations": ["stable_latency", "web_search"]
+    },
+    {
+      "id": "ex14",
+      "level": "L7",
+      "difficulty": "L7",
+      "category": "Cross-platform consistency",
+      "prompt": "what were we talking about earlier",
+      "scenario": "endurance_memory_consistency",
+      "turns": 1,
+      "mode": "both",
+      "requires_memory": true,
+      "expectations": ["memory_recall", "consistent_response"]
+    }
+  ]
+}
