@@ -1,0 +1,25 @@
+id: exp_rate_limit
+type: rate_limit
+description: Simulate API rate limiting and measure retry behavior
+
+faults:
+  rate_limit_probability: 0.5
+
+turns:
+  baseline: 3
+  chaos: 6
+  recovery: 5
+
+conversation_script:
+  - "Hello"
+  - "What's the time?"
+  - "Tell me about the weather"
+  - "Set a reminder"
+  - "What did I just ask?"
+  - "Thanks"
+
+success_criteria:
+  system_survival: true
+  max_retries: 5
+  max_recovery_turns: 5
+  probe_violations: 0

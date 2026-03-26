@@ -1,0 +1,29 @@
+id: exp_long_session_drift
+type: long_session
+description: Extended multi-turn conversation to observe metric stability
+
+faults:
+  long_session_mode: true
+
+turns:
+  baseline: 3
+  chaos: 20
+  recovery: 3
+
+conversation_script:
+  - "Hello"
+  - "What time is it?"
+  - "Tell me about yourself"
+  - "What's the weather?"
+  - "Remember I like pizza"
+  - "Set an alarm for 7 AM"
+  - "What did I just tell you?"
+  - "Tell me a joke"
+  - "What's my favorite food?"
+  - "Thanks for chatting"
+
+success_criteria:
+  system_survival: true
+  max_latency_drift: 1.5
+  max_recovery_turns: 0
+  probe_violations: 0

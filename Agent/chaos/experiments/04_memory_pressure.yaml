@@ -1,0 +1,27 @@
+id: exp_memory_pressure
+type: memory_pressure
+description: Inflate context size and measure degradation
+
+faults:
+  memory_inflation_factor: 2.5
+
+turns:
+  baseline: 3
+  chaos: 8
+  recovery: 5
+
+conversation_script:
+  - "Remember my name is Alice"
+  - "I prefer coffee over tea"
+  - "My favorite color is blue"
+  - "What do you remember about me?"
+  - "Tell me a long story"
+  - "What was my name again?"
+  - "Do I like tea or coffee?"
+  - "What's my favorite color?"
+
+success_criteria:
+  system_survival: true
+  max_context_size: 12000
+  max_recovery_turns: 5
+  probe_violations: 0
