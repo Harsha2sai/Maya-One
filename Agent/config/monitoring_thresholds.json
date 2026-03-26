@@ -1,0 +1,7 @@
+{
+  "route_get_time_max_ratio_10m": 0.2,
+  "tts_fallback_rate_max_ratio": 0.1,
+  "memory_write_failed_max_5m": 0,
+  "turn_latency_p95_max_ms": 3000,
+  "bootstrap_ack_max_ms": 2000
+}
