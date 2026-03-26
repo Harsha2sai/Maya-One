@@ -26,7 +26,7 @@ def test_edge_requested_uses_elevenlabs_when_cartesia_fails():
 
     assert resolved is eleven_instance
     providers = [call.kwargs["provider_name"] for call in mock_get_tts.call_args_list]
-    assert providers[:3] == ["edge_tts", "cartesia", "elevenlabs"]
+    assert providers[:3] == ["edge_tts", "elevenlabs", "cartesia"]
 
 
 def test_edge_requested_uses_edge_as_fallback_only():
@@ -45,13 +45,13 @@ def test_edge_requested_uses_edge_as_fallback_only():
 
 def test_edge_requested_can_prefer_premium_when_enabled(monkeypatch):
     monkeypatch.setenv("TTS_EDGE_PREFERS_PREMIUM", "true")
-    cartesia_instance = MagicMock(name="cartesia_tts")
+    elevenlabs_instance = MagicMock(name="elevenlabs_tts")
 
-    with patch("providers.factory.get_tts_provider", return_value=cartesia_instance) as mock_get_tts:
+    with patch("providers.factory.get_tts_provider", return_value=elevenlabs_instance) as mock_get_tts:
         resolved = ProviderFactory.get_tts("edge_tts", "en-US-JennyNeural", "")
 
-    assert resolved is cartesia_instance
-    assert mock_get_tts.call_args_list[0].kwargs["provider_name"] == "cartesia"
+    assert resolved is elevenlabs_instance
+    assert mock_get_tts.call_args_list[0].kwargs["provider_name"] == "elevenlabs"
 
 
 def test_edge_requested_drops_uuid_like_voice_to_default():

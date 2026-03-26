@@ -84,7 +84,7 @@ class TestRoleSeparation(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.display_text, "Task Created")
 
     async def test_routing_multistep_reminder_request(self):
-        """Multi-step reminder phrasing should route to planning, not casual chat."""
+        """Multi-step reminder phrasing should route to chat handling (scheduling domain), not task planning."""
         context_guard = MagicMock()
         context_guard.count_tokens.return_value = 10
         memory_manager = MagicMock()
@@ -95,7 +95,7 @@ class TestRoleSeparation(unittest.IsolatedAsyncioTestCase):
             orch.task_store = AsyncMock()
             orch.task_store.get_active_tasks.return_value = []
 
-            orch._handle_chat_response = AsyncMock()
+            orch._handle_chat_response = AsyncMock(return_value=ResponseFormatter.build_response("Reminder Set"))
             orch._handle_task_request = AsyncMock(return_value="Task Created")
             orch.agent.smart_llm = None
 
@@ -104,9 +104,9 @@ class TestRoleSeparation(unittest.IsolatedAsyncioTestCase):
                 "user123",
             )
 
-            orch._handle_task_request.assert_called_once()
-            orch._handle_chat_response.assert_not_called()
-            self.assertEqual(response.display_text, "Task Created")
+            orch._handle_chat_response.assert_called_once()
+            orch._handle_task_request.assert_not_called()
+            self.assertEqual(response.display_text, "Reminder Set")
 
     async def test_planner_role_usage(self):
         """Test that PlanningEngine uses PLANNER role and NO tools."""

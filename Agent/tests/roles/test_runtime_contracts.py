@@ -104,7 +104,7 @@ class TestRuntimeContracts(unittest.IsolatedAsyncioTestCase):
         system_content = passed_msgs[0].content
         if isinstance(system_content, list):
             system_content = "".join(str(x) for x in system_content)
-        self.assertIn("You MUST output valid JSON", str(system_content)) # Worker config has strict prompt
+        self.assertIn("\"status\": \"done\"", str(system_content)) # Worker overlay config uses JSON response format
         self.assertNotEqual(str(system_content), "Old System Prompt")
 
 if __name__ == "__main__":
