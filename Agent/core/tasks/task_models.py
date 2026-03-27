@@ -1,7 +1,7 @@
 
 from enum import Enum
 from typing import List, Dict, Optional, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from datetime import datetime, timezone
 import uuid
 from core.tasks.task_steps import TaskStep
@@ -51,3 +51,21 @@ class Task(BaseModel):
     error: Optional[str] = None
 
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+    @field_validator('priority', mode='before')
+    @classmethod
+    def coerce_priority(cls, v):
+        """Coerce integer priority values to string enum values for legacy DB rows."""
+        if isinstance(v, int):
+            mapping = {0: 'LOW', 1: 'MEDIUM', 2: 'HIGH'}
+            return mapping.get(v, 'MEDIUM')
+        return v
+
+    @field_validator('priority', mode='before')
+    @classmethod
+    def coerce_priority(cls, v):
+        """Coerce legacy integer priority values to string enum values."""
+        if isinstance(v, int):
+            mapping = {0: 'LOW', 1: 'MEDIUM', 2: 'HIGH'}
+            return mapping.get(v, 'MEDIUM')
+        return v
