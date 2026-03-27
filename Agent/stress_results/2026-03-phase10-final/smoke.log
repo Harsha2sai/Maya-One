@@ -1,0 +1,8 @@
+=== what time is it ===
+INFO:core.orchestrator.agent_orchestrator:🧭 routing_mode=deterministic_fast_path fast_path_intent=get_time fast_path_group=time planner_skipped=true synthesis_skipped=true origin=chat trace_id=6ea3eaba-699b-4d45-be92-f8aac40143c8
+🤖 Maya: The time is 07:16 AM.
+=== my name is Harsha ===
+=== what time is it ===
+INFO:core.orchestrator.agent_orchestrator:🧭 routing_mode=deterministic_fast_path fast_path_intent=get_time fast_path_group=time planner_skipped=true synthesis_skipped=true origin=chat trace_id=741e1d78-9790-4270-9aba-770f80b81475
+🤖 Maya: The time is 07:16 AM.
+=== my name is Harsha ===

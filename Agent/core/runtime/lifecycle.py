@@ -224,6 +224,14 @@ class RuntimeLifecycleManager:
             logger.info(f"🧠 PHASE {self.architecture_phase}: warming GlobalAgentContainer")
             await GlobalAgentContainer.initialize()
             self.memory_ingestor = GlobalAgentContainer.memory_ingestor
+            
+            # Initialize task manager and watchdog for stuck task monitoring
+            from core.tasks.task_manager import TaskManager
+            from core.tasks.worker_watchdog import WorkerWatchdog
+            self.task_manager = TaskManager(user_id='system', memory_manager=GlobalAgentContainer._memory)
+            self.worker_watchdog = WorkerWatchdog(self.task_manager)
+            self._background_tasks.append(asyncio.create_task(self._run_watchdog_loop()))
+            
             print(f"✅ Phase {self.architecture_phase}: global resources ready.")
             logger.info("✅ GlobalAgentContainer warmed successfully")
 
@@ -314,6 +322,15 @@ class RuntimeLifecycleManager:
             logger.warning(f"⚠️ Global Agent Boot failed ({e}). Falling back to Phase 1 runtime path.")
             self.architecture_phase = 1
             print("⚠️ Phase 2 warm-up failed. Falling back to Phase 1.")
+
+    async def _run_watchdog_loop(self):
+        """Background task to periodically check for stuck tasks."""
+        while True:
+            try:
+                await self.worker_watchdog.run_once()
+            except Exception as e:
+                logger.error(f"❌ Watchdog run failed: {e}")
+            await asyncio.sleep(60)  # Check every minute
 
     async def _boot_mode_specific(self, entrypoint_fnc):
         """Strict isolation between Worker and Console paths."""

@@ -1,0 +1,13 @@
+{
+  "tasks_created_total": 0,
+  "tasks_completed_total": 0,
+  "tasks_failed_total": 0,
+  "task_runtime_seconds": [],
+  "task_steps_executed_total": 0,
+  "task_retries_total": 0,
+  "llm_calls_total": 1,
+  "worker_step_failures_total": 0,
+  "memory_stores_total": 1,
+  "memory_queries_total": 1,
+  "memory_hits_total": 0
+}
