@@ -1,0 +1,12 @@
+{
+    "name": "reddit",
+    "category": "messaging",
+    "mode": "mcp",
+    "risk_level": "low",
+    "command": "npx",
+    "args": ["-y", "@lobehub/mcp-server-reddit"],
+    "env": {
+        "REDDIT_CLIENT_ID": "",
+        "REDDIT_CLIENT_SECRET": ""
+    }
+}

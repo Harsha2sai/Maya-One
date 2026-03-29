@@ -1,0 +1,5 @@
+{
+  "tools": [
+    {"name": "brave_search", "description": "Search the web using Brave"}
+  ]
+}

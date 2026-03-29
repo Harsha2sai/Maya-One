@@ -1,0 +1,53 @@
+{
+  "tools": [
+    {
+      "name": "check_pnr_status",
+      "description": "Check Indian Railways PNR status",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "pnr": {"type": "string", "description": "10-digit PNR number"}
+        },
+        "required": ["pnr"]
+      }
+    },
+    {
+      "name": "generate_upi_payment_link",
+      "description": "Create a UPI payment request",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "vpa": {"type": "string", "description": "UPI ID (e.g. user@bank)"},
+          "amount": {"type": "number", "description": "Amount in INR"},
+          "payee_name": {"type": "string", "description": "Name of the recipient"}
+        },
+        "required": ["vpa", "amount"]
+      }
+    },
+    {
+      "name": "check_irctc_train_availability",
+      "description": "Check train availability",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {"type": "string"},
+          "destination": {"type": "string"},
+          "date": {"type": "string", "description": "DD-MM-YYYY"}
+        },
+        "required": ["source", "destination", "date"]
+      }
+    },
+    {
+      "name": "get_tsrtc_bus_info",
+      "description": "Get TSRTC bus timings",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "source": {"type": "string"},
+          "destination": {"type": "string"}
+        },
+        "required": ["source", "destination"]
+      }
+    }
+  ]
+}

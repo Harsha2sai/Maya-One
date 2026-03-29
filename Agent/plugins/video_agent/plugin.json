@@ -1,0 +1,7 @@
+{
+    "name": "video_agent",
+    "category": "ai_gen",
+    "mode": "local-native",
+    "command": "python3",
+    "args": ["{{PLUGIN_PATH}}/video_agent_server.py"]
+}

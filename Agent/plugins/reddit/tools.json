@@ -1,0 +1,6 @@
+{
+  "tools": [
+    {"name": "get_subreddit_posts"},
+    {"name": "search_reddit_posts"}
+  ]
+}

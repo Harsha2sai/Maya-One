@@ -1,0 +1,14 @@
+{
+  "tools": [
+    {
+      "name": "google_maps_search",
+      "description": "Search for places on Google Maps",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

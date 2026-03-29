@@ -1,0 +1,6 @@
+{
+  "tools": [
+    {"name": "search_drive", "description": "Search files in Google Drive"},
+    {"name": "convert_to_markdown", "description": "Convert file to markdown"}
+  ]
+}

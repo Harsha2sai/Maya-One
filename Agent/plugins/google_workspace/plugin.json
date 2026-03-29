@@ -1,0 +1,12 @@
+{
+    "name": "google_workspace",
+    "category": "google_workspace",
+    "mode": "mcp",
+    "risk_level": "medium",
+    "command": "uvx",
+    "args": ["workspace-mcp", "--tool-tier", "core"],
+    "env": {
+        "GOOGLE_OAUTH_CLIENT_ID": "",
+        "GOOGLE_OAUTH_CLIENT_SECRET": ""
+    }
+}

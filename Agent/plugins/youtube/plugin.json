@@ -1,0 +1,8 @@
+{
+    "name": "youtube",
+    "category": "media",
+    "mode": "mcp",
+    "risk_level": "low",
+    "command": "npx",
+    "args": ["-y", "youtube-mcp-server"]
+}

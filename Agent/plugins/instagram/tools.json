@@ -1,0 +1,5 @@
+{
+  "tools": [
+    {"name": "search_instagram", "description": "Search Instagram posts"}
+  ]
+}

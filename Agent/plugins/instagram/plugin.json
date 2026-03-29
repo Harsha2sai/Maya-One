@@ -1,0 +1,8 @@
+{
+    "name": "instagram",
+    "category": "messaging",
+    "mode": "mcp",
+    "command": "npx",
+    "args": ["-y", "xpoz-mcp"],
+    "env": {"XPOZ_API_KEY": ""}
+}

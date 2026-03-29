@@ -1,0 +1,12 @@
+{
+    "name": "spotify",
+    "category": "media",
+    "mode": "mcp",
+    "risk_level": "low",
+    "command": "npx",
+    "args": ["-y", "spotify-mcp"],
+    "env": {
+        "SPOTIFY_CLIENT_ID": "",
+        "SPOTIFY_CLIENT_SECRET": ""
+    }
+}

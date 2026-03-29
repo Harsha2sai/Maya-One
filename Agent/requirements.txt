@@ -30,3 +30,6 @@ requests
 python-dotenv
 pydantic-ai-slim[openai,mcp]
 python-dateutil
+mcp[server]
+praw
+youtube-transcript-api

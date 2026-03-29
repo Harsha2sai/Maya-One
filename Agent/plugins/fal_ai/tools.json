@@ -1,0 +1,14 @@
+{
+  "tools": [
+    {
+      "name": "generate_image",
+      "description": "Generate an image using FLUX",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {"type": "string"}
+        }
+      }
+    }
+  ]
+}

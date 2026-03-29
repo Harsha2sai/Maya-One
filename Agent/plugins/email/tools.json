@@ -1,0 +1,6 @@
+{
+  "tools": [
+    {"name": "list_unread_emails", "description": "Check for new emails"},
+    {"name": "search_emails", "description": "Search for emails"}
+  ]
+}

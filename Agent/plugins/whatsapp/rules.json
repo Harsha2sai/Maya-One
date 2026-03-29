@@ -1,0 +1,5 @@
+{
+  "confirmation_required": ["send_whatsapp_message", "send_media"],
+  "rate_limit": 5,
+  "destructive": false
+}
