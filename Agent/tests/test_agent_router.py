@@ -427,7 +427,7 @@ def test_fastpath_group_count_contract() -> None:
         if isinstance(group_arg, ast.Constant) and isinstance(group_arg.value, str):
             groups.add(group_arg.value)
 
-    assert groups == {"time", "app", "media", "youtube"}
+    assert groups == {"time", "app", "media", "youtube", "notes"}
 
 
 @pytest.mark.asyncio

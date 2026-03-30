@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import MagicMock
 from core.llm.smart_llm import SmartLLM
 import asyncio
+from livekit.agents.llm import ChatChunk, ChoiceDelta
 
 class TestToolInjection(unittest.TestCase):
     def test_tools_passed_to_chat(self):
@@ -14,10 +15,7 @@ class TestToolInjection(unittest.TestCase):
             mock_llm_provider.provider = "test-provider"
 
             async def _empty_stream():
-                chunk = MagicMock()
-                chunk.delta = MagicMock()
-                chunk.delta.content = "ok"
-                chunk.delta.tool_calls = []
+                chunk = ChatChunk(id="test-id", delta=ChoiceDelta(content="ok", tool_calls=[]))
                 chunk.usage = None
                 yield chunk
 
