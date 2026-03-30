@@ -60,12 +60,3 @@ class Task(BaseModel):
             mapping = {0: 'LOW', 1: 'MEDIUM', 2: 'HIGH'}
             return mapping.get(v, 'MEDIUM')
         return v
-
-    @field_validator('priority', mode='before')
-    @classmethod
-    def coerce_priority(cls, v):
-        """Coerce legacy integer priority values to string enum values."""
-        if isinstance(v, int):
-            mapping = {0: 'LOW', 1: 'MEDIUM', 2: 'HIGH'}
-            return mapping.get(v, 'MEDIUM')
-        return v
