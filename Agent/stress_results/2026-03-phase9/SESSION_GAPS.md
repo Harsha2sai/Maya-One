@@ -21,3 +21,7 @@
 - Implementation committed in b1b261c
 - Never validated with a real stuck-task scenario
 - Add integration test: insert stuck task, run watchdog, confirm FAILED transition
+
+### Status Update (2026-03-30)
+- P11-01 resolved: ProviderSupervisor wiring verified live in runtime logs (`provider_supervisor_configured`) during console agent validation.
+- Next active priority: P11-02 (Chroma PersistentClient decision/fix).
