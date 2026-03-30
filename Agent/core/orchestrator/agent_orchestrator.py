@@ -2271,7 +2271,12 @@ class AgentOrchestrator:
         text = (message or "").strip().lower()
         if not text:
             return False
-        return bool(re.search(r"\b(what(?:'s| is)\s+my\s+name|do you know my name)\b", text))
+        return bool(
+            re.search(
+                r"\b(what(?:'s| is)\s+my\s+name|do you know my name|what do you know about me|what have i told you about me)\b",
+                text,
+            )
+        )
 
     @staticmethod
     def _extract_name_from_memory_messages(messages: List[Any]) -> Optional[str]:
@@ -3378,7 +3383,9 @@ class AgentOrchestrator:
                 self.memory.store_conversation_turn(
                     user_msg=user_text,
                     assistant_msg=response,
-                    metadata={"source": "conversation", "role": "planner"}
+                    metadata={"source": "conversation", "role": "planner"},
+                    user_id=user_id,
+                    session_id=memory_session_id,
                 )
             except Exception as mem_err:
                 logger.warning(f"⚠️ Failed to store planner turn in memory: {mem_err}")
@@ -3471,7 +3478,16 @@ class AgentOrchestrator:
                             ),
                             "informational",
                         )
-                    await self._store_chat_turn_memory(queued_message, response, user_id=queued_user_id)
+                    queued_session_id = (
+                        getattr(queued_tool_ctx, "session_id", None)
+                        or session_key
+                    )
+                    await self._store_chat_turn_memory(
+                        queued_message,
+                        response,
+                        user_id=queued_user_id,
+                        session_id=queued_session_id,
+                    )
                     if not queued_future.done():
                         queued_future.set_result(response)
 
@@ -3491,7 +3507,13 @@ class AgentOrchestrator:
         )
         return self._tag_response_with_routing_type(response, "informational")
 
-    async def _store_chat_turn_memory(self, user_text: str, response: Any, user_id: str = "console_user") -> None:
+    async def _store_chat_turn_memory(
+        self,
+        user_text: str,
+        response: Any,
+        user_id: str = "console_user",
+        session_id: str | None = None,
+    ) -> None:
         """Best-effort chat memory write for every chat response path."""
         response_text = ""
         if isinstance(response, AgentResponse):
@@ -3510,7 +3532,9 @@ class AgentOrchestrator:
                 assistant_msg=response_text,
                 metadata={"source": "conversation", "role": "chat"},
                 user_id=user_id,
+                session_id=session_id,
             )
+            logger.info("chat_turn_memory_stored user_id=%s session_id=%s", user_id, session_id or "none")
         except Exception as mem_err:
             logger.warning("chat_turn_memory_store_failed error=%s", mem_err)
 

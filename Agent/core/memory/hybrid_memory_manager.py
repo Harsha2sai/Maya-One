@@ -29,6 +29,7 @@ class HybridMemoryManager:
         assistant_msg: str,
         metadata: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
     ) -> bool:
         """
         Store a conversation turn as memory.
@@ -38,6 +39,8 @@ class HybridMemoryManager:
             combined_metadata = metadata or {}
             if user_id:
                 combined_metadata = {**combined_metadata, "user_id": user_id}
+            if session_id:
+                combined_metadata = {**combined_metadata, "session_id": session_id}
             memory = MemoryItem(
                 text=text,
                 source=MemorySource.CONVERSATION,

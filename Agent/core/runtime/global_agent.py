@@ -226,10 +226,14 @@ class GlobalAgentContainer:
         from core.runtime.headless import HeadlessJobContext
 
         # Create SmartLLM wrapper with warmed components
-        # Context builder returns empty context + tools for console mode
+        # Context builder must preserve orchestrator-built context for console mode.
         async def console_context_builder(user_msg, chat_ctx=None):
             from livekit.agents.llm import ChatMessage
-            # Return user message so RoleLLM/SmartLLM has content. Content must be a list.
+            if chat_ctx is not None:
+                messages = chat_ctx.messages() if callable(chat_ctx.messages) else chat_ctx.messages
+                if messages:
+                    return (list(messages), cls._tools)
+            # Fallback when no context exists yet.
             return ([ChatMessage(role="user", content=[user_msg])], cls._tools)
 
         cls._smart_llm = SmartLLM(

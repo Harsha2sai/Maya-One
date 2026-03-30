@@ -344,13 +344,26 @@ class SmartLLMStream(LLMStream):
             + str([{"role": m.role, "content_type": type(m.content).__name__,
                     "content_preview": str(m.content)[:120]} for m in constructed_messages])
         )
-        _memory_count = sum(
-            1 for m in constructed_messages
-            if "[Memory]" in str(getattr(m, "content", ""))
+        memory_markers = (
+            "[memory]",
+            "[memory from previous conversations:]",
+            "relevant past memories:",
+            "## retrieved memories",
         )
+        memory_msgs = 0
+        memory_chars = 0
+        for m in constructed_messages:
+            content_text = str(getattr(m, "content", "") or "")
+            lowered = content_text.lower()
+            if any(marker in lowered for marker in memory_markers):
+                memory_msgs += 1
+                memory_chars += len(content_text)
         logger.info(
-            "smart_llm_context_audit memory_msgs=%d total_msgs=%d",
-            _memory_count, len(constructed_messages)
+            "smart_llm_context_audit memory_present=%s memory_msgs=%d memory_chars=%d total_msgs=%d",
+            memory_msgs > 0,
+            memory_msgs,
+            memory_chars,
+            len(constructed_messages),
         )
         new_ctx = ChatContext(constructed_messages)
 
