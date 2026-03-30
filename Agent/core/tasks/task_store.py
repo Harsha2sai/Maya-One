@@ -181,6 +181,7 @@ class SQLiteTaskStore(BaseTaskStore):
         self.db_path = db_path
         try:
             with sqlite3.connect(self.db_path) as conn:
+                self._configure_conn(conn)
                 conn.execute("SELECT 1")
             self._create_tables()
             self._validate_schema()
@@ -304,7 +305,14 @@ class SQLiteTaskStore(BaseTaskStore):
             logger.error(f"Schema validation failed: {e}")
 
     def _get_conn(self):
-        return sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path)
+        self._configure_conn(conn)
+        return conn
+
+    def _configure_conn(self, conn: sqlite3.Connection) -> None:
+        # Use WAL for better concurrency and NORMAL sync for pragmatic durability/perf.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
 
     async def create_task(self, task: Task) -> bool:
         try:

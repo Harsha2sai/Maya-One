@@ -1,4 +1,7 @@
 import logging
+import os
+import sqlite3
+import asyncio
 from datetime import datetime
 from typing import Annotated, Optional
 from livekit.agents import function_tool, RunContext
@@ -9,6 +12,107 @@ logger = logging.getLogger(__name__)
 
 # Initialize Manager
 db = SupabaseManager()
+
+
+def _get_db_path() -> str:
+    return os.getenv("MAYA_NOTES_DB_PATH", os.path.join("data", "notes.db"))
+
+
+def _connect_sqlite(db_path: str) -> sqlite3.Connection:
+    use_uri = db_path.startswith("file:")
+    conn = sqlite3.connect(db_path, uri=use_uri, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+async def _ensure_notes_table(db_path: Optional[str] = None) -> None:
+    db_path = db_path or _get_db_path()
+
+    def _op() -> None:
+        if not db_path.startswith("file:"):
+            os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        with _connect_sqlite(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_notes_user_title ON notes(user_id, title)"
+            )
+
+    await asyncio.to_thread(_op)
+
+
+async def _create_note_record(db_path: str, user_id: str, title: str, content: str) -> int:
+    await _ensure_notes_table(db_path)
+
+    def _op() -> int:
+        with _connect_sqlite(db_path) as conn:
+            cursor = conn.execute(
+                "INSERT INTO notes(user_id, title, content) VALUES (?, ?, ?)",
+                (user_id, title, content),
+            )
+            return int(cursor.lastrowid)
+
+    return await asyncio.to_thread(_op)
+
+
+async def _find_notes_by_title(db_path: str, user_id: str, title: str) -> list[sqlite3.Row]:
+    await _ensure_notes_table(db_path)
+
+    def _op() -> list[sqlite3.Row]:
+        with _connect_sqlite(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, title, content, created_at
+                FROM notes
+                WHERE user_id = ? AND title = ?
+                ORDER BY id ASC
+                """,
+                (user_id, title),
+            ).fetchall()
+            return list(rows)
+
+    return await asyncio.to_thread(_op)
+
+
+async def _list_note_rows(db_path: str, user_id: str) -> list[sqlite3.Row]:
+    await _ensure_notes_table(db_path)
+
+    def _op() -> list[sqlite3.Row]:
+        with _connect_sqlite(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, title, content, created_at
+                FROM notes
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT 10
+                """,
+                (user_id,),
+            ).fetchall()
+            return list(rows)
+
+    return await asyncio.to_thread(_op)
+
+
+async def _delete_note_by_id(db_path: str, note_id: int) -> bool:
+    await _ensure_notes_table(db_path)
+
+    def _op() -> bool:
+        with _connect_sqlite(db_path) as conn:
+            cursor = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+            return cursor.rowcount == 1
+
+    return await asyncio.to_thread(_op)
+
 
 # --- Alarms ---
 @function_tool()
@@ -119,36 +223,56 @@ async def create_note(
 ) -> str:
     """Create a note."""
     user_id = get_user_id(context)
-    success = await db.create_note(user_id, title, content)
-    
-    if success:
-        return f"Note '{title}' created."
-    return "Failed to create note."
+    db_path = _get_db_path()
+    await _create_note_record(db_path, user_id, title, content)
+    return f"Note '{title}' created."
 
 @function_tool()
 async def list_notes(context: RunContext) -> str:
     """List recent notes."""
     user_id = get_user_id(context)
-    notes = await db.get_notes(user_id)
-    
+    db_path = _get_db_path()
+    notes = await _list_note_rows(db_path, user_id)
     if not notes:
         return "You have no notes."
-    
+
     return "Recent Notes:\n" + "\n".join(
-        [f"- {n['title']}: {n['content'][:50]}..." for n in notes]
+        [f"- {n['title']}: {n['content']}" for n in notes]
     )
 
 @function_tool()
 async def read_note(context: RunContext, title: str) -> str:
-    """Read a specific note (placeholder)."""
-    del context, title
-    return "Note reading is not yet available."
+    """Read a specific note by exact title."""
+    user_id = get_user_id(context)
+    db_path = _get_db_path()
+    matches = await _find_notes_by_title(db_path, user_id, title)
+    if not matches:
+        return f"No note found with title '{title}'."
+    if len(matches) > 1:
+        return (
+            f"needs_followup: Found multiple notes titled '{title}'. "
+            "Please specify which one."
+        )
+    note = matches[0]
+    return f"Note '{note['title']}': {note['content']}"
 
 @function_tool()
 async def delete_note(context: RunContext, title: str) -> str:
-    """Delete a note (placeholder)."""
-    del context, title
-    return "Note deletion is not yet available."
+    """Delete a specific note by exact title."""
+    user_id = get_user_id(context)
+    db_path = _get_db_path()
+    matches = await _find_notes_by_title(db_path, user_id, title)
+    if not matches:
+        return f"No note found with title '{title}'."
+    if len(matches) > 1:
+        return (
+            f"needs_followup: Found multiple notes titled '{title}'. "
+            "Please specify which one."
+        )
+    deleted = await _delete_note_by_id(db_path, int(matches[0]["id"]))
+    if deleted:
+        return f"Deleted note '{title}'."
+    return f"Failed to delete note '{title}'."
 
 # --- Calendar (Placeholder) ---
 @function_tool()
