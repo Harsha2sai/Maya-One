@@ -3471,7 +3471,7 @@ class AgentOrchestrator:
                             ),
                             "informational",
                         )
-                    self._store_chat_turn_memory(queued_message, response)
+                    self._store_chat_turn_memory(queued_message, response, user_id=queued_user_id)
                     if not queued_future.done():
                         queued_future.set_result(response)
 
@@ -3491,7 +3491,7 @@ class AgentOrchestrator:
         )
         return self._tag_response_with_routing_type(response, "informational")
 
-    def _store_chat_turn_memory(self, user_text: str, response: Any) -> None:
+    def _store_chat_turn_memory(self, user_text: str, response: Any, user_id: str = "console_user") -> None:
         """Best-effort chat memory write for every chat response path."""
         response_text = ""
         if isinstance(response, AgentResponse):
@@ -3509,7 +3509,7 @@ class AgentOrchestrator:
                 user_msg=user_text,
                 assistant_msg=response_text,
                 metadata={"source": "conversation", "role": "chat"},
-                user_id=self.user_id if hasattr(self, "user_id") else "runtime_user",
+                user_id=user_id,
             )
         except Exception as mem_err:
             logger.warning("chat_turn_memory_store_failed error=%s", mem_err)
