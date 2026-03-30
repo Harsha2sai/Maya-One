@@ -363,6 +363,14 @@ class SmartLLMStream(LLMStream):
             + str([{"role": m.role, "content_type": type(m.content).__name__,
                     "content_preview": str(m.content)[:120]} for m in constructed_messages])
         )
+        _memory_count = sum(
+            1 for m in constructed_messages
+            if "[Memory]" in str(getattr(m, "content", ""))
+        )
+        logger.info(
+            "smart_llm_context_audit memory_msgs=%d total_msgs=%d",
+            _memory_count, len(constructed_messages)
+        )
         new_ctx = ChatContext(constructed_messages)
 
         # 3.1 Telemetry: Record Context Size
