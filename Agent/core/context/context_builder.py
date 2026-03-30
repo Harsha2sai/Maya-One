@@ -121,17 +121,12 @@ CRITICAL TOOL USAGE:
                 summary += "..."
             system_content += f"\n\n## Session Summary\n{summary}"
 
-        # 5. Retrieved Memories (k=1, max 2 lines per memory)
+        # 5. Retrieved Memories (k=4, full content — no truncation)
         if self.memory_manager and self.user_id:
             try:
-                memories = await self.memory_manager.get_user_context(self.user_id, k=1)
+                memories = await self.memory_manager.get_user_context(self.user_id, k=4)
                 if memories:
-                     # Truncate to 2 lines max
-                     memory_lines = memories.split('\n')
-                     if len(memory_lines) > 2:
-                         memories = "\n".join(memory_lines[:2]) + "\n...(truncated)"
-                     
-                     system_content += f"\n\n## Retrieved Memories\n{memories}"
+                    system_content += f"\n\n## Retrieved Memories\n{memories}"
             except Exception as e:
                 logger.warning(f"Failed to inject memories: {e}")
 
