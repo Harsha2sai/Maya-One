@@ -27,27 +27,27 @@ class HybridMemoryManager:
         self,
         user_msg: str,
         assistant_msg: str,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """
         Store a conversation turn as memory.
         """
         try:
-            # Combine user and assistant messages
             text = f"User: {user_msg}\nAssistant: {assistant_msg}"
-            
+            combined_metadata = metadata or {}
+            if user_id:
+                combined_metadata = {**combined_metadata, "user_id": user_id}
             memory = MemoryItem(
                 text=text,
                 source=MemorySource.CONVERSATION,
-                metadata=metadata or {}
+                metadata=combined_metadata,
             )
-            
             success = self.retriever.add_memory(memory)
             if success:
                 logger.info(f"Stored conversation memory: {memory.id}")
                 RuntimeMetrics.increment("memory_stores_total")
             return success
-            
         except Exception as e:
             logger.error(f"Failed to store conversation turn: {e}")
             return False
@@ -122,7 +122,7 @@ class HybridMemoryManager:
             # Use the existing retrieve_relevant_memories method
             # Query with user_id to get user-specific memories
             memories = self.retrieve_relevant_memories(
-                query=f"user_id:{user_id}",
+                query="user information name preferences background context",
                 k=k,
                 user_id=user_id,
                 origin="chat",

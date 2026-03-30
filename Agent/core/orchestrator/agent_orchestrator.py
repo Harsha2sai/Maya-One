@@ -3509,6 +3509,7 @@ class AgentOrchestrator:
                 user_msg=user_text,
                 assistant_msg=response_text,
                 metadata={"source": "conversation", "role": "chat"},
+                user_id=self.user_id if hasattr(self, "user_id") else "runtime_user",
             )
         except Exception as mem_err:
             logger.warning("chat_turn_memory_store_failed error=%s", mem_err)
