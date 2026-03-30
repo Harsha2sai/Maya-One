@@ -277,6 +277,25 @@ class SmartLLMStream(LLMStream):
             if isinstance(res, tuple):
                 # LRCS returns (messages, tools)
                 constructed_messages, dynamic_tools = res
+                # Merge prepared chat context memory markers on success path.
+                # Context builder can omit these messages, which breaks recall prompts.
+                if self._chat_ctx:
+                    chat_messages = self._chat_ctx.messages
+                    if callable(chat_messages):
+                        chat_messages = chat_messages()
+                    existing_ids = {id(m) for m in constructed_messages}
+                    existing_contents = {str(getattr(m, "content", "")) for m in constructed_messages}
+                    for msg in chat_messages:
+                        if getattr(msg, "role", "") == "system":
+                            continue
+                        msg_content = str(getattr(msg, "content", ""))
+                        if "[Memory]" not in msg_content:
+                            continue
+                        if id(msg) in existing_ids or msg_content in existing_contents:
+                            continue
+                        constructed_messages.append(msg)
+                        existing_ids.add(id(msg))
+                        existing_contents.add(msg_content)
                 # Respect explicitly provided tools (e.g. RoleLLM phase allowlists).
                 if dynamic_tools and self._provided_tools is None:
                     limit_tools = dynamic_tools

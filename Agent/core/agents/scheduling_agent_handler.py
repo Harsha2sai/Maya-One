@@ -216,6 +216,25 @@ class SchedulingAgentHandler(SpecializedAgent):
                 "confirmation_text": f"I've created the calendar event {calendar_match.group('title').strip()}.",
             }
 
+        calendar_match2 = re.search(
+            r"create (?:a )?calendar event (?:for|on)\s+(?P<start>.+?)\s+(?:called|titled|named)\s+(?P<title>.+?)(?:\s+to\s+(?P<end>.+?))?[\.\!\?]?$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if calendar_match2:
+            return {
+                "status": "completed",
+                "action_type": "create_calendar_event",
+                "tool_name": "create_calendar_event",
+                "parameters": {
+                    "title": calendar_match2.group("title").strip(),
+                    "start_time": calendar_match2.group("start").strip(),
+                    "end_time": (calendar_match2.group("end") or "").strip(),
+                    "description": "",
+                },
+                "confirmation_text": f"I've created the calendar event {calendar_match2.group('title').strip()}.",
+            }
+
         return {"status": "rejected"}
 
     async def _enhance_with_memory_context(self, clarification_msg: str, reminder_text: str, request: AgentHandoffRequest) -> str:
@@ -270,4 +289,3 @@ class SchedulingAgentHandler(SpecializedAgent):
             # Gracefully degrade: any error just returns original message
             logger.debug(f"Memory context enhancement failed (non-critical): {e}")
             return clarification_msg
-

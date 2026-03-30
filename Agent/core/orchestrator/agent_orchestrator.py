@@ -2267,6 +2267,32 @@ class AgentOrchestrator:
             return False
         return bool(re.search(r"\b(who\s+(?:made|created|built)\s+you|who\s+is\s+your\s+creator)\b", text))
 
+    def _is_user_name_recall_query(self, message: str) -> bool:
+        text = (message or "").strip().lower()
+        if not text:
+            return False
+        return bool(re.search(r"\b(what(?:'s| is)\s+my\s+name|do you know my name)\b", text))
+
+    @staticmethod
+    def _extract_name_from_memory_messages(messages: List[Any]) -> Optional[str]:
+        pattern = re.compile(r"\bmy name is\s+([A-Za-z][A-Za-z0-9' -]{0,40})", re.IGNORECASE)
+        for message in messages or []:
+            source = ""
+            content: Any = ""
+            if isinstance(message, dict):
+                source = str(message.get("source", "")).lower()
+                content = message.get("content", "")
+            else:
+                source = str(getattr(message, "source", "")).lower()
+                content = getattr(message, "content", "")
+            if source != "memory" and "[memory" not in str(content).lower():
+                continue
+            content_text = content if isinstance(content, str) else str(content)
+            match = pattern.search(content_text)
+            if match:
+                return match.group(1).strip().strip(".,!?;:\"'")
+        return None
+
     def _summarize_task_start(self, user_text: str, steps: List[Any]) -> str:
         first_desc = ""
         if steps:
@@ -2320,6 +2346,46 @@ class AgentOrchestrator:
         )
         if any(re.search(p, text) for p in date_patterns):
             return DirectToolIntent("get_date", {}, "Here's today's date.", "time")
+
+        raw_message = (message or "").strip()
+        note_create_match = re.match(
+            r"^\s*create\s+(?:a\s+)?note(?:\s+titled)?\s+(?P<title>.+?)\s+with\s+content\s+(?P<content>.+)\s*$",
+            raw_message,
+            re.IGNORECASE,
+        )
+        if note_create_match:
+            title = note_create_match.group("title").strip().strip("\"'")
+            content = note_create_match.group("content").strip().strip("\"'")
+            if title and content:
+                return DirectToolIntent(
+                    "create_note",
+                    {"title": title, "content": content},
+                    f"I've created note '{title}'.",
+                    "notes",
+                )
+
+        note_read_match = re.match(
+            r"^\s*(?:read|show)\s+(?:my\s+)?note\s+(?P<title>.+)\s*$",
+            raw_message,
+            re.IGNORECASE,
+        )
+        if note_read_match:
+            title = note_read_match.group("title").strip().strip("\"'")
+            if title:
+                return DirectToolIntent("read_note", {"title": title}, f"Reading note '{title}'.", "notes")
+
+        note_delete_match = re.match(
+            r"^\s*delete\s+(?:my\s+)?note\s+(?P<title>.+)\s*$",
+            raw_message,
+            re.IGNORECASE,
+        )
+        if note_delete_match:
+            title = note_delete_match.group("title").strip().strip("\"'")
+            if title:
+                return DirectToolIntent("delete_note", {"title": title}, f"Deleted note '{title}'.", "notes")
+
+        if re.match(r"^\s*(?:list|show)\s+(?:my\s+)?notes\s*$", raw_message, re.IGNORECASE):
+            return DirectToolIntent("list_notes", {}, "Here are your notes.", "notes")
 
         # Group 1: media controls
         if re.search(r"\b(next|skip|change)\b.{0,15}\b(song|track|music)\b", normalized, re.IGNORECASE):
@@ -4024,6 +4090,40 @@ class AgentOrchestrator:
                 retriever=retriever,
             )
 
+        has_memory_message = False
+        for msg in builder_messages:
+            if isinstance(msg, dict):
+                src = str(msg.get("source", "")).lower()
+                content = str(msg.get("content", ""))
+            else:
+                src = str(getattr(msg, "source", "")).lower()
+                content = str(getattr(msg, "content", ""))
+            if src == "memory" or "[memory from previous conversations" in content.lower():
+                has_memory_message = True
+                break
+
+        if self._is_user_name_recall_query(message) and not has_memory_message:
+            fallback_memory = await self._retrieve_memory_context_async(
+                message,
+                origin=origin,
+                routing_mode_type="informational",
+                user_id=user_id,
+                session_id=memory_session_id,
+            )
+            if fallback_memory:
+                builder_messages.insert(
+                    1,
+                    {
+                        "role": "system",
+                        "content": f"[Memory from previous conversations:]\n{fallback_memory}",
+                        "source": "memory",
+                    },
+                )
+                logger.info(
+                    "memory_context_fallback_injected query_type=user_name_recall origin=%s",
+                    origin,
+                )
+
         chat_ctx = ChatContext(builder_messages)
         logger.info(
             "🧩 context_builder_path=phase6 origin=%s messages=%s tokens=%s",
@@ -4031,6 +4131,17 @@ class AgentOrchestrator:
             len(builder_messages),
             self._context_message_tokens(builder_messages),
         )
+
+        if self._is_user_name_recall_query(message):
+            recalled_name = self._extract_name_from_memory_messages(builder_messages)
+            if recalled_name:
+                response = ResponseFormatter.build_response(
+                    display_text=f"Your name is {recalled_name}.",
+                    voice_text=f"Your name is {recalled_name}.",
+                    mode="normal",
+                    confidence=0.9,
+                )
+                return self._tag_response_with_routing_type(response, "informational")
 
         # Use RoleLLM
         # We need access to the underlying LLM. 

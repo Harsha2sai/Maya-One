@@ -30,6 +30,12 @@ class AgentRouter:
         r"\bwhere\s+(?:do\s+you\s+come\s+from|are\s+you\s+from)\b",
         r"\bwhat\s+(?:company|organization|team)\s+(?:made|built|created)\s+you\b",
     )
+    _NOTE_PATTERNS = (
+        r"\bread\s+my\s+note\b",
+        r"\bdelete\s+my\s+note\b",
+        r"\bshow\s+my\s+note\b",
+        r"\blist\s+my\s+notes\b",
+    )
     _RESEARCH_FRESHNESS_PATTERNS = (
         r"\bwho is (?:the )?(?:current )?(?:ceo|cto|cfo|president|founder|head|prime minister|chancellor|governor|mayor)\b",
         r"\bcurrent (?:ceo|cto|cfo|leader|president|head|prime minister|chancellor|governor|mayor)\b",
@@ -79,6 +85,12 @@ class AgentRouter:
 
         # Memory patterns take highest priority
         if any(re.search(pattern, utterance_l) for pattern in self._USER_MEMORY_PATTERNS):
+            result = "chat"
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
+
+        # Note operations should stay in chat tool path and never map to identity.
+        if any(re.search(pattern, utterance_l) for pattern in self._NOTE_PATTERNS):
             result = "chat"
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
