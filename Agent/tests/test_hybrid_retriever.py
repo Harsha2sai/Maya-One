@@ -25,6 +25,17 @@ class _FakeVectorStore:
             filtered = [
                 r for r in filtered if (r.get("metadata") or {}).get("user_id") == filter["user_id"]
             ]
+        elif filter and "$and" in filter:
+            clauses = list(filter.get("$and") or [])
+            for clause in clauses:
+                if "user_id" in clause:
+                    filtered = [
+                        r for r in filtered if (r.get("metadata") or {}).get("user_id") == clause["user_id"]
+                    ]
+                if "session_id" in clause:
+                    filtered = [
+                        r for r in filtered if (r.get("metadata") or {}).get("session_id") == clause["session_id"]
+                    ]
         return filtered[:k]
 
     def add_memory(self, memory: Any) -> bool:
@@ -44,12 +55,17 @@ class _FakeKeywordStore:
         query: str,
         k: int = 5,
         user_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         self.last_query = (query, k, user_id)
         filtered = self.records
         if user_id:
             filtered = [
                 r for r in filtered if (r.get("metadata") or {}).get("user_id") == user_id
+            ]
+        if session_id:
+            filtered = [
+                r for r in filtered if (r.get("metadata") or {}).get("session_id") == session_id
             ]
         return filtered[:k]
 
@@ -81,6 +97,16 @@ def test_retrieve_with_user_id_filters_results() -> None:
     results = retriever.retrieve("alpha", user_id="user_A")
     assert results
     assert all((r.get("metadata") or {}).get("user_id") == "user_A" for r in results)
+
+
+def test_retrieve_with_session_id_pushes_combined_filter_to_vector_store() -> None:
+    retriever, vector_store, _ = _build_retriever()
+    results = retriever.retrieve("alpha", user_id="user_A", session_id="sess_A")
+    assert results
+    assert vector_store.last_query is not None
+    filter_arg = vector_store.last_query[2]
+    assert filter_arg == {"$and": [{"user_id": "user_A"}, {"session_id": "sess_A"}]}
+    assert all((r.get("metadata") or {}).get("session_id") == "sess_A" for r in results)
 
 
 def test_retrieve_without_user_id_returns_all() -> None:

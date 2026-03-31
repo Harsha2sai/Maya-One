@@ -121,10 +121,11 @@ CRITICAL TOOL USAGE:
                 summary += "..."
             system_content += f"\n\n## Session Summary\n{summary}"
 
-        # 5. Retrieved Memories (k=4, full content — no truncation)
+        # 5. Retrieved Memories (chat retrieval budget)
         if self.memory_manager and self.user_id:
             try:
-                memories = await self.memory_manager.get_user_context(self.user_id, k=4)
+                chat_k = max(1, int(os.getenv("CHAT_RETRIEVER_K", str(CHAT_MEMORY_TOP_K_DEFAULT))))
+                memories = await self.memory_manager.get_user_context(self.user_id, k=chat_k)
                 if memories:
                     system_content += f"\n\n## Retrieved Memories\n{memories}"
             except Exception as e:
@@ -201,13 +202,47 @@ CRITICAL TOOL USAGE:
     @staticmethod
     def _memory_to_text(memory_results: list[Any]) -> str:
         lines: list[str] = []
+        seen: set[str] = set()
+        raw_lines = 0
         for item in memory_results:
+            metadata: dict[str, Any] = {}
             if isinstance(item, dict):
                 text = str(item.get("text", "")).strip()
+                maybe_meta = item.get("metadata")
+                if isinstance(maybe_meta, dict):
+                    metadata = maybe_meta
             else:
                 text = str(getattr(item, "text", "")).strip()
-            if text:
-                lines.append(f"- {text}")
+                maybe_meta = getattr(item, "metadata", None)
+                if isinstance(maybe_meta, dict):
+                    metadata = maybe_meta
+            if not text:
+                continue
+
+            source = str(metadata.get("source", "")).lower()
+            candidate_lines: list[str]
+            if source == "conversation":
+                user_lines = [ln.strip() for ln in text.splitlines() if ln.strip().lower().startswith("user:")]
+                candidate_lines = user_lines or [text]
+            else:
+                candidate_lines = [text]
+
+            for line in candidate_lines:
+                normalized = re.sub(r"\s+", " ", line.strip().lower())
+                if not normalized:
+                    continue
+                raw_lines += 1
+                if normalized in seen:
+                    continue
+                seen.add(normalized)
+                lines.append(f"- {line.strip()}")
+        logger.info(
+            "context_builder_memory_sanitized raw_items=%s raw_lines=%s kept_lines=%s deduped_lines=%s",
+            len(memory_results or []),
+            raw_lines,
+            len(lines),
+            max(0, raw_lines - len(lines)),
+        )
         return "\n".join(lines)
 
     @staticmethod

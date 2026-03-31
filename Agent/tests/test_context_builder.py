@@ -142,6 +142,30 @@ async def test_build_for_chat_enforces_semantic_top_k(monkeypatch):
     assert "memory three" not in text_blob
 
 
+def test_memory_to_text_strips_assistant_lines_and_dedupes():
+    builder = _make_builder()
+    memory_results = [
+        {
+            "text": "User: my name is Harsha\nAssistant: I don't know anything about you.",
+            "metadata": {"source": "conversation"},
+        },
+        {
+            "text": "User: my name is Harsha\nAssistant: I don't know anything about you.",
+            "metadata": {"source": "conversation"},
+        },
+        {
+            "text": "User profile fact: name=Harsha",
+            "metadata": {"source": "conversation", "memory_kind": "profile_fact"},
+        },
+    ]
+
+    memory_text = builder._memory_to_text(memory_results)
+
+    assert "Assistant:" not in memory_text
+    assert memory_text.count("User: my name is Harsha") == 1
+    assert "User profile fact: name=Harsha" in memory_text
+
+
 def test_context_guard_truncates_memory_when_over_budget(monkeypatch, caplog):
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "120")
     monkeypatch.setenv("MAX_MEMORY_TOKENS", "20")

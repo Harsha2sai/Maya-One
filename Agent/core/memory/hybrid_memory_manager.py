@@ -1,7 +1,12 @@
 
 import logging
 import sys
+import os
+import re
+import time
+import hashlib
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
+from collections import deque
 
 if TYPE_CHECKING:
     from livekit.agents import ChatContext
@@ -21,7 +26,93 @@ class HybridMemoryManager:
     
     def __init__(self):
         self.retriever = HybridRetriever()
+        self._duplicate_window_s = max(10, int(os.getenv("MEMORY_DUPLICATE_WINDOW_S", "180")))
+        self._recent_write_keys: dict[str, float] = {}
+        self._recent_write_order: deque[str] = deque(maxlen=4096)
         logger.info("HybridMemoryManager initialized")
+
+    def _remember_write_key(self, key: str) -> bool:
+        """
+        Return True when key is seen recently (duplicate window); otherwise register and return False.
+        """
+        now = time.time()
+        expiry = now - self._duplicate_window_s
+
+        while self._recent_write_order:
+            oldest = self._recent_write_order[0]
+            ts = self._recent_write_keys.get(oldest, 0.0)
+            if ts >= expiry:
+                break
+            self._recent_write_order.popleft()
+            self._recent_write_keys.pop(oldest, None)
+
+        if key in self._recent_write_keys and self._recent_write_keys[key] >= expiry:
+            return True
+
+        self._recent_write_keys[key] = now
+        self._recent_write_order.append(key)
+        return False
+
+    @staticmethod
+    def _extract_profile_name(user_msg: str) -> Optional[str]:
+        text = (user_msg or "").strip()
+        if not text:
+            return None
+        match = re.match(
+            r"^\s*(?:my\s+name\s+is|i\s+am|i'm|call\s+me)\s+([A-Za-z][A-Za-z0-9' -]{0,40})\s*$",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return match.group(1).strip(" .,!?:;\"'")
+
+    def store_profile_fact(
+        self,
+        *,
+        user_id: Optional[str],
+        session_id: Optional[str],
+        field: str,
+        value: str,
+    ) -> bool:
+        """
+        Store canonical user profile facts (e.g., name) for safer recall.
+        """
+        safe_field = str(field or "").strip().lower()
+        safe_value = str(value or "").strip()
+        if not safe_field or not safe_value:
+            return False
+
+        dedupe_basis = f"profile|{user_id or ''}|{session_id or ''}|{safe_field}|{safe_value.lower()}"
+        dedupe_key = hashlib.sha1(dedupe_basis.encode("utf-8")).hexdigest()
+        if self._remember_write_key(dedupe_key):
+            logger.info("Skipped duplicate profile fact write field=%s user_id=%s session_id=%s", safe_field, user_id, session_id)
+            return True
+
+        metadata: Dict[str, Any] = {
+            "type": "profile_fact",
+            "memory_kind": "profile_fact",
+            "field": safe_field,
+            "value": safe_value,
+        }
+        if user_id:
+            metadata["user_id"] = user_id
+        if session_id:
+            metadata["session_id"] = session_id
+
+        try:
+            memory = MemoryItem(
+                text=f"User profile fact: {safe_field}={safe_value}",
+                source=MemorySource.CONVERSATION,
+                metadata=metadata,
+            )
+            success = self.retriever.add_memory(memory)
+            if success:
+                RuntimeMetrics.increment("memory_stores_total")
+            return success
+        except Exception as e:
+            logger.error(f"Failed to store profile fact: {e}")
+            return False
     
     def store_conversation_turn(
         self,
@@ -35,6 +126,21 @@ class HybridMemoryManager:
         Store a conversation turn as memory.
         """
         try:
+            dedupe_basis = f"turn|{user_id or ''}|{session_id or ''}|{re.sub(r'\\s+', ' ', (user_msg or '').strip().lower())}"
+            dedupe_key = hashlib.sha1(dedupe_basis.encode("utf-8")).hexdigest()
+            if self._remember_write_key(dedupe_key):
+                logger.info("Skipped duplicate conversation memory write user_id=%s session_id=%s", user_id, session_id)
+                return True
+
+            profile_name = self._extract_profile_name(user_msg)
+            if profile_name:
+                self.store_profile_fact(
+                    user_id=user_id,
+                    session_id=session_id,
+                    field="name",
+                    value=profile_name,
+                )
+
             text = f"User: {user_msg}\nAssistant: {assistant_msg}"
             combined_metadata = metadata or {}
             if user_id:

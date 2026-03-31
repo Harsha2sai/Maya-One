@@ -108,7 +108,11 @@ class HybridRetriever:
             k_keyword,
         )
 
-        user_filter = {"user_id": user_id} if user_id else None
+        user_filter: dict[str, Any] | None = None
+        if user_id and session_id:
+            user_filter = {"$and": [{"user_id": user_id}, {"session_id": session_id}]}
+        elif user_id:
+            user_filter = {"user_id": user_id}
         # Get results from both stores
         try:
             vector_results = self.vector_store.similarity_search(
@@ -127,6 +131,7 @@ class HybridRetriever:
                     safe_query,
                     k=k_keyword,
                     user_id=user_id,
+                    session_id=session_id,
                 )
             except Exception as e:
                 logger.warning("🧠 keyword_retrieval_failed query=%s error=%s", (query or "")[:80], e)

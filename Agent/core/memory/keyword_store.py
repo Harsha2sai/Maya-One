@@ -120,6 +120,7 @@ class KeywordStore:
         query: str,
         k: int = 5,
         user_id: str | None = None,
+        session_id: str | None = None,
     ) -> List[Dict[str, Any]]:
         """
         Perform FTS5 keyword search.
@@ -172,6 +173,8 @@ class KeywordStore:
                     user_value = row["user_id"] if "user_id" in row.keys() else (
                         row["user"] if "user" in row.keys() else metadata.get("user_id", "unknown")
                     )
+                    if session_id and str(metadata.get("session_id") or "") != str(session_id):
+                        continue
                     results.append({
                         'id': row['id'],
                         'text': row['text'],
