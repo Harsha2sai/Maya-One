@@ -858,3 +858,30 @@ async def test_system_query_routes_to_system_agent():
     assert response.structured_data is not None
     assert response.structured_data["_system_result"]["action_type"] == "SCREENSHOT"
     fake_system_agent.run.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_lookup_profile_name_from_memory_prefers_metadata_value():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator.memory = SimpleNamespace(
+        retrieve_relevant_memories_with_scope_fallback_async=AsyncMock(
+            return_value=[
+                {
+                    "text": "User profile fact: name=Harsha",
+                    "metadata": {
+                        "memory_kind": "profile_fact",
+                        "field": "name",
+                        "value": "Harsha",
+                    },
+                }
+            ]
+        )
+    )
+
+    name = await orchestrator._lookup_profile_name_from_memory(
+        user_id="u1",
+        session_id="s1",
+        origin="chat",
+    )
+
+    assert name == "Harsha"

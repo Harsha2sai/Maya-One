@@ -2280,7 +2280,11 @@ class AgentOrchestrator:
 
     @staticmethod
     def _extract_name_from_memory_messages(messages: List[Any]) -> Optional[str]:
-        pattern = re.compile(r"\bmy name is\s+([A-Za-z][A-Za-z0-9' -]{0,40})", re.IGNORECASE)
+        name_pattern = re.compile(r"\bmy name is\s+([A-Za-z][A-Za-z0-9' -]{0,40})", re.IGNORECASE)
+        profile_pattern = re.compile(
+            r"\buser profile fact:\s*name\s*=\s*([A-Za-z][A-Za-z0-9' -]{0,40})",
+            re.IGNORECASE,
+        )
         for message in messages or []:
             source = ""
             content: Any = ""
@@ -2293,7 +2297,51 @@ class AgentOrchestrator:
             if source != "memory" and "[memory" not in str(content).lower():
                 continue
             content_text = content if isinstance(content, str) else str(content)
-            match = pattern.search(content_text)
+            match = name_pattern.search(content_text) or profile_pattern.search(content_text)
+            if match:
+                return match.group(1).strip().strip(".,!?;:\"'")
+        return None
+
+    async def _lookup_profile_name_from_memory(
+        self,
+        *,
+        user_id: str,
+        session_id: str | None,
+        origin: str = "chat",
+    ) -> Optional[str]:
+        """
+        Fallback lookup for canonical profile facts when semantic memory snippets
+        do not include an explicit "my name is ..." line.
+        """
+        try:
+            retriever = getattr(self.memory, "retrieve_relevant_memories_with_scope_fallback_async", None)
+            if not callable(retriever):
+                return None
+            memories = await retriever(
+                query="User profile fact: name=",
+                user_id=user_id,
+                session_id=session_id,
+                origin=origin,
+                k=6,
+            )
+        except Exception as e:
+            logger.warning("profile_name_lookup_failed user_id=%s session_id=%s error=%s", user_id, session_id, e)
+            return None
+
+        profile_pattern = re.compile(
+            r"\buser profile fact:\s*name\s*=\s*([A-Za-z][A-Za-z0-9' -]{0,40})",
+            re.IGNORECASE,
+        )
+        for item in memories or []:
+            meta = item.get("metadata") if isinstance(item, dict) else {}
+            if isinstance(meta, dict):
+                if str(meta.get("memory_kind", "")).lower() == "profile_fact" and str(meta.get("field", "")).lower() == "name":
+                    value = str(meta.get("value") or "").strip().strip(".,!?;:\"'")
+                    if value:
+                        return value
+
+            text = str(item.get("text") if isinstance(item, dict) else "" or "")
+            match = profile_pattern.search(text)
             if match:
                 return match.group(1).strip().strip(".,!?;:\"'")
         return None
@@ -4182,6 +4230,12 @@ class AgentOrchestrator:
 
         if self._is_user_name_recall_query(message):
             recalled_name = self._extract_name_from_memory_messages(builder_messages)
+            if not recalled_name:
+                recalled_name = await self._lookup_profile_name_from_memory(
+                    user_id=user_id,
+                    session_id=memory_session_id,
+                    origin=origin,
+                )
             if recalled_name:
                 response = ResponseFormatter.build_response(
                     display_text=f"Your name is {recalled_name}.",

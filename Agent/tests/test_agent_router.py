@@ -430,6 +430,17 @@ def test_fastpath_group_count_contract() -> None:
     assert groups == {"time", "app", "media", "youtube", "notes"}
 
 
+def test_extract_name_from_profile_fact_memory_message() -> None:
+    messages = [
+        {
+            "role": "user",
+            "source": "memory",
+            "content": "[Memory from previous conversations:]\n- User profile fact: name=Harsha",
+        }
+    ]
+    assert AgentOrchestrator._extract_name_from_memory_messages(messages) == "Harsha"
+
+
 @pytest.mark.asyncio
 async def test_small_talk_does_not_trigger_fast_path_intent() -> None:
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
