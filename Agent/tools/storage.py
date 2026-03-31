@@ -114,6 +114,91 @@ async def _delete_note_by_id(db_path: str, note_id: int) -> bool:
     return await asyncio.to_thread(_op)
 
 
+async def _ensure_calendar_events_table(db_path: Optional[str] = None) -> None:
+    db_path = db_path or _get_db_path()
+
+    def _op() -> None:
+        if not db_path.startswith("file:"):
+            os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        with _connect_sqlite(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS calendar_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    start_time TEXT NOT NULL,
+                    end_time TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_calendar_events_user_start ON calendar_events(user_id, start_time, id)"
+            )
+
+    await asyncio.to_thread(_op)
+
+
+async def _create_calendar_event_record(
+    db_path: str,
+    user_id: str,
+    title: str,
+    start_time: str,
+    end_time: str,
+    description: str = "",
+) -> int:
+    await _ensure_calendar_events_table(db_path)
+
+    def _op() -> int:
+        with _connect_sqlite(db_path) as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO calendar_events(user_id, title, start_time, end_time, description)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (user_id, title, start_time, end_time, description),
+            )
+            return int(cursor.lastrowid)
+
+    return await asyncio.to_thread(_op)
+
+
+async def _list_calendar_event_rows(db_path: str, user_id: str) -> list[sqlite3.Row]:
+    await _ensure_calendar_events_table(db_path)
+
+    def _op() -> list[sqlite3.Row]:
+        with _connect_sqlite(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, user_id, title, start_time, end_time, description, created_at
+                FROM calendar_events
+                WHERE user_id = ?
+                ORDER BY start_time ASC, id ASC
+                LIMIT 20
+                """,
+                (user_id,),
+            ).fetchall()
+            return list(rows)
+
+    return await asyncio.to_thread(_op)
+
+
+async def _delete_calendar_event_by_id(db_path: str, user_id: str, event_id: int) -> bool:
+    await _ensure_calendar_events_table(db_path)
+
+    def _op() -> bool:
+        with _connect_sqlite(db_path) as conn:
+            cursor = conn.execute(
+                "DELETE FROM calendar_events WHERE user_id = ? AND id = ?",
+                (user_id, event_id),
+            )
+            return cursor.rowcount == 1
+
+    return await asyncio.to_thread(_op)
+
+
 # --- Alarms ---
 @function_tool()
 async def set_alarm(
@@ -274,7 +359,7 @@ async def delete_note(context: RunContext, title: str) -> str:
         return f"Deleted note '{title}'."
     return f"Failed to delete note '{title}'."
 
-# --- Calendar (Placeholder) ---
+# --- Calendar ---
 @function_tool()
 async def create_calendar_event(
     context: RunContext,
@@ -283,18 +368,47 @@ async def create_calendar_event(
     end_time: str, 
     description: str = ""
 ) -> str:
-    """Create calendar event (placeholder)."""
-    del context, title, start_time, end_time, description
-    return "Calendar event creation is not yet available."
+    """Create a calendar event."""
+    user_id = get_user_id(context)
+    db_path = _get_db_path()
+    event_id = await _create_calendar_event_record(
+        db_path=db_path,
+        user_id=user_id,
+        title=title,
+        start_time=start_time,
+        end_time=end_time,
+        description=description,
+    )
+    return f"Created calendar event '{title}' (ID: {event_id})."
 
 @function_tool()
 async def list_calendar_events(context: RunContext) -> str:
-    """List calendar events (placeholder)."""
-    del context
-    return "Calendar event listing is not yet available."
+    """List upcoming calendar events."""
+    user_id = get_user_id(context)
+    db_path = _get_db_path()
+    events = await _list_calendar_event_rows(db_path, user_id)
+    if not events:
+        return "No upcoming calendar events."
+
+    lines = []
+    for event in events:
+        line = f"- {event['title']}: {event['start_time']} to {event['end_time']}"
+        if event["description"]:
+            line += f" ({event['description']})"
+        lines.append(line)
+    return "Upcoming events:\n" + "\n".join(lines)
 
 @function_tool()
 async def delete_calendar_event(context: RunContext, event_id: str) -> str:
-    """Delete calendar event (placeholder)."""
-    del context, event_id
-    return "Calendar event deletion is not yet available."
+    """Delete a calendar event by ID."""
+    user_id = get_user_id(context)
+    db_path = _get_db_path()
+    try:
+        event_id_int = int(str(event_id).strip())
+    except (TypeError, ValueError):
+        return f"No calendar event found with ID {event_id}."
+
+    deleted = await _delete_calendar_event_by_id(db_path, user_id, event_id_int)
+    if deleted:
+        return f"Deleted calendar event {event_id_int}."
+    return f"No calendar event found with ID {event_id}."
