@@ -54,6 +54,10 @@ class WorkerWatchdog:
             
             await asyncio.sleep(self.interval)
 
+    async def run_once(self):
+        """Run a single watchdog scan (for external loop integration)."""
+        await self._scan_tasks()
+
     async def _scan_tasks(self):
         """Analyze system health and task states."""
         active_tasks = await self.manager.get_active_tasks()
@@ -101,7 +105,7 @@ class WorkerWatchdog:
     async def _reclaim_stuck_tasks(self):
         """Query for tasks stuck beyond STUCK_TASK_THRESHOLD_SECONDS and transition them to FAILED."""
         try:
-            db_path = self.manager.store.db_path
+            db_path = self.manager.store.backend.db_path
             now = datetime.now(timezone.utc).isoformat()
             threshold_seconds = STUCK_TASK_THRESHOLD_SECONDS
             

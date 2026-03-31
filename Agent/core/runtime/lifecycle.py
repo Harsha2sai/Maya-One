@@ -229,7 +229,7 @@ class RuntimeLifecycleManager:
             from core.tasks.task_manager import TaskManager
             from core.tasks.worker_watchdog import WorkerWatchdog
             self.task_manager = TaskManager(user_id='system', memory_manager=GlobalAgentContainer._memory)
-            self.worker_watchdog = WorkerWatchdog(self.task_manager)
+            self.worker_watchdog = WorkerWatchdog("console_user")
             self._background_tasks.append(asyncio.create_task(self._run_watchdog_loop()))
             
             print(f"✅ Phase {self.architecture_phase}: global resources ready.")
