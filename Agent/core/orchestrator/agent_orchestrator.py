@@ -450,8 +450,31 @@ class AgentOrchestrator:
         r"\btask completed\b",
     )
     _TOOL_ERROR_HINT_PATTERN = re.compile(
-        r"(traceback|exception|error executing command|timed out|timeout|failed)",
+        r"(traceback|exception|error executing command|timed out|timeout|failed|permission denied|access denied|blocked)",
         flags=re.IGNORECASE,
+    )
+    _REPORT_EXPORT_PATTERNS = (
+        r"\b(save|export)\s+(it|this|that|report|document|file)?\s*(to|in)?\s*(my\s+)?downloads\b",
+        r"\b(save|export)\s+(as|into)\s+(docx|document|file)\b",
+        r"\b(save|export|write)\s+.*\b(report|document|docx)\b.*\b(downloads|file)\b",
+        r"\b(create|generate|prepare)\s+(a\s+)?(report|document|doc)\b.*\b(save|export)\b",
+    )
+    _REPORT_EXPORT_KEYWORDS = (
+        "save to downloads",
+        "save it in my downloads",
+        "save in my downloads",
+        "export report",
+        "save as docx",
+        "save document",
+    )
+    _DEEP_RESEARCH_KEYWORDS = (
+        "report",
+        "in depth",
+        "in-depth",
+        "detailed",
+        "full analysis",
+        "thorough",
+        "full report",
     )
     MEDIA_PATTERNS = (
         r"\bplay\s+.+",
@@ -477,6 +500,18 @@ class AgentOrchestrator:
         r"\b(tell me more|more information|more about|what about|and what|and who|what does he|what does she|what does it)\b",
         flags=re.IGNORECASE,
     )
+    _RESEARCH_ACTION_OBJECT_PATTERN = re.compile(
+        r"\b(save|write|put|export|send|move|copy|open|download|create|generate|make)\s+"
+        r"(it|that|this|them|they)\b",
+        flags=re.IGNORECASE,
+    )
+    _VOICE_TRANSCRIPTION_NORMALIZATIONS = {
+        "diwnloads": "downloads",
+        "downlods": "downloads",
+        "downlodes": "downloads",
+        "donwloads": "downloads",
+        "downloades": "downloads",
+    }
     _RESEARCH_PRONOUN_TOKENS = {
         "him",
         "her",
@@ -516,6 +551,45 @@ class AgentOrchestrator:
         "the",
         "a",
         "an",
+    }
+    _VOICE_SHORT_COMMAND_ALLOWLIST = {
+        "yes",
+        "no",
+        "ok",
+        "okay",
+        "sure",
+        "stop",
+        "pause",
+        "resume",
+        "play",
+        "next",
+        "continue",
+        "cancel",
+        "thanks",
+        "thank you",
+    }
+    _VOICE_CONTINUATION_MARKERS = {
+        "just",
+        "and",
+        "but",
+        "so",
+        "then",
+        "also",
+        "that",
+        "this",
+        "it",
+    }
+    _VOICE_ACTION_SECOND_TOKEN_ALLOWLIST = {
+        "open",
+        "close",
+        "search",
+        "play",
+        "set",
+        "take",
+        "run",
+        "start",
+        "show",
+        "list",
     }
 
     def _classify_tool_intent_type(self, tool_name: str) -> str:
@@ -653,6 +727,32 @@ class AgentOrchestrator:
         search_ms = int(max(0.0, (time.monotonic() - search_started) * 1000.0))
 
         synth_started = time.monotonic()
+        voice_mode = "deep" if self._should_use_deep_research_voice(query) else "brief"
+        if not sources and not executor.has_configured_premium_provider():
+            synth_ms = int(max(0.0, (time.monotonic() - synth_started) * 1000.0))
+            self._log_research_stage_metrics(
+                query=query,
+                plan_ms=plan_ms,
+                search_ms=search_ms,
+                synth_ms=synth_ms,
+                source_count=0,
+                trace_id=trace_id,
+            )
+            total_ms = int(max(0.0, (time.monotonic() - started) * 1000.0))
+            low_confidence_message = (
+                "I can't produce a reliable research summary right now. "
+                "Search provider is not configured."
+            )
+            return ResearchResult(
+                summary=low_confidence_message,
+                voice_summary=low_confidence_message,
+                sources=[],
+                query=query,
+                trace_id=trace_id,
+                duration_ms=total_ms,
+                voice_mode=voice_mode,
+            )
+
         role_llm = None
         try:
             from core.llm.role_llm import RoleLLM
@@ -663,7 +763,11 @@ class AgentOrchestrator:
         except Exception as e:
             logger.warning("inline_research_synth_role_llm_unavailable error=%s", e)
         synthesizer = ResultSynthesizer(role_llm=role_llm)
-        display_summary, voice_summary = await synthesizer.synthesize(query, sources)
+        display_summary, voice_summary = await synthesizer.synthesize(
+            query,
+            sources,
+            voice_mode=voice_mode,
+        )
         synth_ms = int(max(0.0, (time.monotonic() - synth_started) * 1000.0))
 
         self._log_research_stage_metrics(
@@ -683,6 +787,7 @@ class AgentOrchestrator:
             query=query,
             trace_id=trace_id,
             duration_ms=total_ms,
+            voice_mode=voice_mode,
         )
 
     async def _handle_identity_fast_path(
@@ -874,15 +979,27 @@ class AgentOrchestrator:
     def _resolve_research_subject_from_context(self, tool_context: Any = None) -> str:
         history = list(self._conversation_history or [])
 
-        # Source 1: in-session history
+        # Source 1: in-session user history (prefer user intent over assistant phrasing)
         for item in reversed(history):
             if str(item.get("source") or "history") != "history":
+                continue
+            if str(item.get("role") or "").strip().lower() != "user":
                 continue
             candidate = self._extract_subject_from_text(str(item.get("content") or ""))
             if candidate:
                 return candidate
 
-        # Source 2: injected continuity summary
+        # Source 2: in-session assistant history
+        for item in reversed(history):
+            if str(item.get("source") or "history") != "history":
+                continue
+            if str(item.get("role") or "").strip().lower() != "assistant":
+                continue
+            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
+            if candidate:
+                return candidate
+
+        # Source 3: injected continuity summary
         for item in reversed(history):
             if str(item.get("source") or "") != "session_continuity":
                 continue
@@ -890,7 +1007,7 @@ class AgentOrchestrator:
             if candidate:
                 return candidate
 
-        # Source 3: bootstrap payload
+        # Source 4: bootstrap payload
         session_key = (
             getattr(tool_context, "session_id", None)
             or self._current_session_id
@@ -913,7 +1030,7 @@ class AgentOrchestrator:
                 if candidate:
                     return candidate
 
-        # Source 4: most recent completed research result (session-scoped, TTL guarded)
+        # Source 5: most recent completed research result (session-scoped, TTL guarded)
         context = self._get_active_research_context(tool_context)
         if context:
             candidate = self._extract_subject_from_text(str(context.get("subject") or ""))
@@ -936,6 +1053,13 @@ class AgentOrchestrator:
 
         has_pronoun = bool(self._RESEARCH_PRONOUN_PATTERN.search(raw_query))
         if not has_pronoun:
+            return raw_query, False, False
+
+        if self._RESEARCH_ACTION_OBJECT_PATTERN.search(raw_query):
+            logger.info(
+                "pronoun_followup_rewrite_skipped reason=action_object query=%s",
+                raw_query[:160],
+            )
             return raw_query, False, False
 
         subject = self._resolve_research_subject_from_context(tool_context)
@@ -993,6 +1117,24 @@ class AgentOrchestrator:
         if changed and rewritten:
             return rewritten, True, False
         return query, False, False
+
+    def _normalize_voice_transcription_for_routing(self, message: str) -> tuple[str, bool]:
+        text = str(message or "")
+        if not text:
+            return "", False
+        normalized = text
+        changed = False
+        for garbled, corrected in self._VOICE_TRANSCRIPTION_NORMALIZATIONS.items():
+            updated = re.sub(
+                rf"\b{re.escape(garbled)}\b",
+                corrected,
+                normalized,
+                flags=re.IGNORECASE,
+            )
+            if updated != normalized:
+                normalized = updated
+                changed = True
+        return normalized, changed
 
     async def _handle_research_route(
         self,
@@ -1077,8 +1219,7 @@ class AgentOrchestrator:
         else:
             await self._run_research_background(**background_kwargs)
 
-        # Immediate acknowledgement — voice turn unblocked
-        ack_text = "Let me look that up for you."
+        # Immediate acknowledgement — routed silently and surfaced via chat events/UI
         logger.info(
             "research_dispatched_to_background",
             extra={
@@ -1089,11 +1230,15 @@ class AgentOrchestrator:
             },
         )
 
-        return ResponseFormatter.build_response(
-            display_text=ack_text,
-            voice_text=ack_text,
-            structured_data={"_routing_mode_type": "research_pending",
-                             "turn_id": turn_id},
+        return AgentResponse(
+            display_text="",
+            voice_text="",
+            structured_data={
+                "_routing_mode_type": "research_pending",
+                "_interaction_mode": "silent_ack",
+                "_suppress_assistant_output": True,
+                "turn_id": turn_id,
+            },
         )
 
     async def _run_research_background(
@@ -1172,6 +1317,7 @@ class AgentOrchestrator:
             sanitized_voice, sanitize_mode = self._sanitize_research_voice_for_tts(
                 research_result.voice_summary,
                 research_result.summary,
+                voice_mode=str(getattr(research_result, "voice_mode", "brief") or "brief"),
             )
             logger.info(
                 "research_voice_tts_sanitized mode=%s before_len=%d after_len=%d",
@@ -1477,6 +1623,66 @@ class AgentOrchestrator:
             marker in text for marker in action_markers
         )
 
+    def _is_report_export_request(self, message: str) -> bool:
+        text = str(message or "").strip().lower()
+        if not text:
+            return False
+        if any(keyword in text for keyword in self._REPORT_EXPORT_KEYWORDS):
+            return True
+        has_export_verb = bool(
+            re.search(r"\b(save|export|download|write|store)\b", text)
+        )
+        has_file_target = bool(
+            re.search(r"\b(downloads|file|docx|document)\b", text)
+        )
+        has_report_object = bool(re.search(r"\b(report|analysis)\b", text))
+        if has_export_verb and (has_file_target or has_report_object):
+            return True
+        return any(
+            re.search(pattern, text, flags=re.IGNORECASE)
+            for pattern in self._REPORT_EXPORT_PATTERNS
+        )
+
+    def _should_use_deep_research_voice(self, query: str) -> bool:
+        text = str(query or "").strip().lower()
+        if not text:
+            return False
+        if any(keyword in text for keyword in self._DEEP_RESEARCH_KEYWORDS):
+            return True
+        words = re.findall(r"\b[\w'-]+\b", text)
+        return len(words) >= 25
+
+    @staticmethod
+    def _slugify_topic(text: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower())
+        normalized = normalized.strip("-")
+        if not normalized:
+            return "research-report"
+        return normalized[:60]
+
+    def _build_report_output_path(self, query: str) -> str:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")
+        topic_slug = self._slugify_topic(query)
+        return f"~/Downloads/{topic_slug}-{stamp}.docx"
+
+    @staticmethod
+    def _extract_report_focus_query(user_text: str) -> str:
+        text = str(user_text or "").strip()
+        if not text:
+            return ""
+        text = re.sub(
+            r"(?i)\b(and\s+)?(make|create|write|prepare)\s+(a\s+)?(full\s+)?(report|document|doc)\b",
+            " ",
+            text,
+        )
+        text = re.sub(
+            r"(?i)\b(and\s+)?(save|export)\s+(it|this|that|report|document)?\s*(to|in)?\s*(my\s+)?downloads\b",
+            " ",
+            text,
+        )
+        text = re.sub(r"\s+", " ", text).strip(" ,.")
+        return text or str(user_text or "").strip()
+
     def inject_session_continuity_summary(self, summary: str) -> bool:
         """
         Inject one-time continuity context from the previous session.
@@ -1536,6 +1742,82 @@ class AgentOrchestrator:
             except Exception:
                 messages = []
         return list(messages or [])
+
+    @staticmethod
+    def _message_content_to_text(message: Any) -> str:
+        if isinstance(message, dict):
+            content = message.get("content")
+        else:
+            content = getattr(message, "content", None)
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            chunks: List[str] = []
+            for part in content:
+                if isinstance(part, str):
+                    chunks.append(part)
+                    continue
+                if isinstance(part, dict):
+                    text_value = part.get("text") or part.get("content") or ""
+                    if text_value:
+                        chunks.append(str(text_value))
+                    continue
+                text_value = getattr(part, "text", None)
+                if text_value:
+                    chunks.append(str(text_value))
+                    continue
+                part_content = getattr(part, "content", None)
+                if part_content:
+                    chunks.append(str(part_content))
+            return " ".join(chunk.strip() for chunk in chunks if str(chunk).strip()).strip()
+        if isinstance(content, dict):
+            return str(content.get("text") or content.get("content") or "").strip()
+        if content is None:
+            return ""
+        return str(content).strip()
+
+    @staticmethod
+    def _message_role_value(message: Any) -> str:
+        if isinstance(message, dict):
+            role = message.get("role")
+        else:
+            role = getattr(message, "role", None)
+        return str(role or "").strip().lower()
+
+    def _is_voice_continuation_fragment(
+        self,
+        *,
+        routing_text: str,
+        origin: str,
+        chat_ctx_messages: List[Any],
+    ) -> bool:
+        if str(origin or "").strip().lower() != "voice":
+            return False
+        if not chat_ctx_messages:
+            return False
+        normalized = str(routing_text or "").strip().lower()
+        if not normalized:
+            return False
+        if normalized in self._VOICE_SHORT_COMMAND_ALLOWLIST:
+            return False
+
+        tokens = re.findall(r"\b[\w'-]+\b", normalized)
+        if not tokens or len(tokens) > 6:
+            return False
+        if len(tokens) == 1 and tokens[0] in self._VOICE_SHORT_COMMAND_ALLOWLIST:
+            return False
+        if tokens[0] not in self._VOICE_CONTINUATION_MARKERS:
+            return False
+        if len(tokens) > 1 and tokens[1] in self._VOICE_ACTION_SECOND_TOKEN_ALLOWLIST:
+            return False
+
+        # Require at least one prior assistant turn so we only gate true follow-up fragments.
+        for message in reversed(chat_ctx_messages):
+            if self._message_role_value(message) != "assistant":
+                continue
+            if self._message_content_to_text(message):
+                return True
+        return False
 
     def _tool_name(self, tool: Any) -> str:
         """Best-effort tool name extraction across wrapped tool types."""
@@ -1775,7 +2057,13 @@ class AgentOrchestrator:
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned
 
-    def _sanitize_research_voice_for_tts(self, voice: str, display: str) -> tuple[str, str]:
+    def _sanitize_research_voice_for_tts(
+        self,
+        voice: str,
+        display: str,
+        *,
+        voice_mode: str = "brief",
+    ) -> tuple[str, str]:
         """Return clean TTS text for research results."""
         from core.research.result_synthesizer import ResultSynthesizer
 
@@ -1789,13 +2077,17 @@ class AgentOrchestrator:
         raw_voice = str(voice or "").strip()
         if not raw_voice:
             display_fallback = ResultSynthesizer._normalize_voice(
-                ResultSynthesizer._voice_from_display(display)
+                ResultSynthesizer._voice_from_display(display, voice_mode=voice_mode),
+                voice_mode=voice_mode,
             )
             if display_fallback:
                 return display_fallback, "display_fallback"
             return "", "empty"
 
-        direct = ResultSynthesizer._normalize_voice(self._sanitize_response(raw_voice))
+        direct = ResultSynthesizer._normalize_voice(
+            self._sanitize_response(raw_voice),
+            voice_mode=voice_mode,
+        )
         if direct and not _has_json_signatures(direct):
             return direct, "direct"
 
@@ -1803,12 +2095,16 @@ class AgentOrchestrator:
         cleaned_source = re.sub(r"[{}\"]", " ", cleaned_source)
         cleaned_source = re.sub(r"(?im)^\s*sources?\s*:.*$", " ", cleaned_source)
         cleaned_source = re.sub(r"\s+", " ", cleaned_source).strip()
-        cleaned = ResultSynthesizer._normalize_voice(self._sanitize_response(cleaned_source))
+        cleaned = ResultSynthesizer._normalize_voice(
+            self._sanitize_response(cleaned_source),
+            voice_mode=voice_mode,
+        )
         if cleaned and not _has_json_signatures(cleaned):
             return cleaned, "cleaned"
 
         display_fallback = ResultSynthesizer._normalize_voice(
-            ResultSynthesizer._voice_from_display(display)
+            ResultSynthesizer._voice_from_display(display, voice_mode=voice_mode),
+            voice_mode=voice_mode,
         )
         if display_fallback and not _has_json_signatures(display_fallback):
             return display_fallback, "display_fallback"
@@ -3087,6 +3383,17 @@ class AgentOrchestrator:
             - Casual/Greeting -> CHAT Role
             - Task Request -> PLANNER Role
         """
+        normalized_origin = str(origin or "").strip().lower()
+        if normalized_origin == "voice":
+            normalized_message, message_changed = self._normalize_voice_transcription_for_routing(message)
+            if message_changed:
+                logger.info(
+                    "voice_transcription_normalized original=%s normalized=%s",
+                    str(message or "")[:120],
+                    normalized_message[:120],
+                )
+                message = normalized_message
+
         session_id = getattr(getattr(self, "room", None), "name", None) or "console_session"
         active_session_id = getattr(tool_context, "session_id", None) or session_id
         effective_message = self._augment_message_with_session_bootstrap(message, active_session_id)
@@ -3168,6 +3475,7 @@ class AgentOrchestrator:
                     "workflow",
                 ]
             )
+            report_export_trigger = self._is_report_export_request(message_lower)
             is_task_request = explicit_task_trigger or (
                 not scheduling_domain_request
                 and direct_tool_intent is None
@@ -3182,6 +3490,8 @@ class AgentOrchestrator:
             )
             if not is_task_request and not scheduling_domain_request and direct_tool_intent is None:
                 is_task_request = self._is_multi_step_task_request(message_lower)
+            if not is_task_request and report_export_trigger:
+                is_task_request = True
             
             # Use normalization for intent logging/routing safety
             intent_str = normalize_intent("TASK REQUEST" if is_task_request else "CASUAL CHAT")
@@ -3261,6 +3571,14 @@ class AgentOrchestrator:
         tool_context: Any = None,
     ) -> str:
         """Handle execution via PLANNER role."""
+        report_export_result = await self._try_handle_report_export_task(
+            user_text=user_text,
+            user_id=user_id,
+            tool_context=tool_context,
+        )
+        if report_export_result is not None:
+            return report_export_result
+
         planning_task_id = getattr(tool_context, "task_id", None) or f"handoff-plan:{uuid.uuid4()}"
         host_profile = self._get_host_capability_profile(refresh=True)
         handoff_target = self._consume_handoff_signal(
@@ -3441,6 +3759,115 @@ class AgentOrchestrator:
         else:
             return "Failed to save the task."
 
+    async def _try_handle_report_export_task(
+        self,
+        *,
+        user_text: str,
+        user_id: str,
+        tool_context: Any = None,
+    ) -> str | None:
+        if not self._is_report_export_request(user_text):
+            return None
+
+        user_role = _coerce_user_role(
+            getattr(tool_context, "user_role", None) if tool_context is not None else None,
+            default_role=UserRole.USER,
+        )
+        if user_role < UserRole.TRUSTED:
+            return (
+                "I can prepare the report summary, but saving files to Downloads needs TRUSTED role. "
+                "Enable TRUSTED role in client metadata and retry."
+            )
+
+        session_id = (
+            getattr(tool_context, "session_id", None)
+            or self._current_session_id
+            or getattr(getattr(self, "room", None), "name", None)
+            or "console_session"
+        )
+        trace_id = (
+            getattr(tool_context, "trace_id", None)
+            or current_trace_id()
+            or str(uuid.uuid4())
+        )
+        research_query = self._extract_report_focus_query(user_text)
+        if not research_query:
+            research_query = user_text
+
+        try:
+            research_result = await self._run_inline_research_pipeline(
+                query=research_query,
+                user_id=user_id,
+                session_id=session_id,
+                trace_id=trace_id,
+            )
+        except Exception as exc:
+            logger.error("report_export_research_failed error=%s", exc, exc_info=True)
+            return "I couldn't prepare the report content yet. Please try again."
+
+        if not research_result or not str(getattr(research_result, "summary", "")).strip():
+            return "I couldn't prepare a reliable report summary right now."
+
+        output_path = self._build_report_output_path(research_query)
+        report_markdown = self._compose_report_markdown(
+            query=research_query,
+            summary=str(research_result.summary or "").strip(),
+            sources=list(getattr(research_result, "sources", []) or []),
+        )
+        result, invocation = await self._execute_tool_call(
+            "create_docx",
+            {"content": report_markdown, "path": output_path},
+            user_id,
+            tool_context=tool_context,
+        )
+        if invocation.status != "success":
+            result_message = str((result or {}).get("message") or "").strip()
+            if "permission denied" in result_message.lower() or "access denied" in result_message.lower():
+                return (
+                    "Report content is ready, but I don't have permission to save in Downloads. "
+                    "Use TRUSTED role and retry."
+                )
+            return (
+                "I prepared the report content, but saving the document failed. "
+                "Please retry once."
+            )
+
+        return (
+            f"I created a report and saved it to {output_path}. "
+            f"Sources included: {len(getattr(research_result, 'sources', []) or [])}."
+        )
+
+    @staticmethod
+    def _compose_report_markdown(query: str, summary: str, sources: list[Any]) -> str:
+        lines = [
+            f"# Research Report: {query}",
+            "",
+            "## Executive Summary",
+            summary or "No summary available.",
+            "",
+            "## Sources",
+        ]
+        if sources:
+            for idx, source in enumerate(sources[:12], start=1):
+                if hasattr(source, "title"):
+                    title = str(getattr(source, "title", "") or f"Source {idx}")
+                    url = str(getattr(source, "url", "") or "")
+                    snippet = str(getattr(source, "snippet", "") or "").strip()
+                else:
+                    source_dict = source if isinstance(source, dict) else {}
+                    title = str(source_dict.get("title") or f"Source {idx}")
+                    url = str(source_dict.get("url") or "")
+                    snippet = str(source_dict.get("snippet") or "").strip()
+                line = f"- [{idx}] {title}"
+                if url:
+                    line += f" ({url})"
+                if snippet:
+                    line += f" - {snippet}"
+                lines.append(line)
+        else:
+            lines.append("- No sources were available.")
+        return "\n".join(lines).strip() + "\n"
+
     async def _ensure_task_worker(self, user_id: str) -> None:
         """
         Start one TaskWorker per user for phase-4 task execution.
@@ -3535,6 +3962,7 @@ class AgentOrchestrator:
                         response,
                         user_id=queued_user_id,
                         session_id=queued_session_id,
+                        origin=queued_origin,
                     )
                     if not queued_future.done():
                         queued_future.set_result(response)
@@ -3561,6 +3989,7 @@ class AgentOrchestrator:
         response: Any,
         user_id: str = "console_user",
         session_id: str | None = None,
+        origin: str = "chat",
     ) -> None:
         """Best-effort chat memory write for every chat response path."""
         response_text = ""
@@ -3582,7 +4011,12 @@ class AgentOrchestrator:
                 user_id=user_id,
                 session_id=session_id,
             )
-            logger.info("chat_turn_memory_stored user_id=%s session_id=%s", user_id, session_id or "none")
+            logger.info(
+                "chat_turn_memory_stored user_id=%s session_id=%s origin=%s",
+                user_id,
+                session_id or "none",
+                origin or "unknown",
+            )
         except Exception as mem_err:
             logger.warning("chat_turn_memory_store_failed error=%s", mem_err)
 
@@ -3746,10 +4180,37 @@ class AgentOrchestrator:
             return self._tag_response_with_routing_type(response, "informational")
 
         routing_text = self._extract_user_message_segment(message) or message
-        rewritten_followup, forced_research, ambiguous_followup = self._rewrite_pronoun_followup_pre_router(
-            routing_text,
-            tool_context=tool_context,
-        )
+        chat_ctx_messages = self._chat_ctx_messages(getattr(self.agent, "chat_ctx", None))
+        if self._is_voice_continuation_fragment(
+            routing_text=routing_text,
+            origin=origin,
+            chat_ctx_messages=chat_ctx_messages,
+        ):
+            logger.info(
+                "short_turn_blocked reason=continuation_fragment origin=%s text=%s",
+                origin,
+                str(routing_text or "")[:120],
+            )
+            clarification = "Please continue your request so I can handle it correctly."
+            return self._tag_response_with_routing_type(
+                ResponseFormatter.build_response(
+                    display_text=clarification,
+                    voice_text=clarification,
+                ),
+                "informational",
+            )
+
+        if self._is_report_export_request(routing_text):
+            logger.info(
+                "document_export_intent_bypasses_pronoun_rewrite text=%s",
+                routing_text[:120],
+            )
+            rewritten_followup, forced_research, ambiguous_followup = routing_text, False, False
+        else:
+            rewritten_followup, forced_research, ambiguous_followup = self._rewrite_pronoun_followup_pre_router(
+                routing_text,
+                tool_context=tool_context,
+            )
         if ambiguous_followup:
             logger.info(
                 "research_pronoun_override forced=false ambiguous=true rewritten=%s",
@@ -3776,7 +4237,7 @@ class AgentOrchestrator:
                 query_ambiguous=False,
             )
 
-        agent_key = await self._router.route(routing_text, user_id)
+        agent_key = await self._router.route(routing_text, user_id, chat_ctx=chat_ctx_messages)
 
         if agent_key == "identity":
             return await self._handle_identity_fast_path(
@@ -4014,9 +4475,29 @@ class AgentOrchestrator:
         if agent_key == "research":
             research_query = (self._extract_user_message_segment(message) or message).strip()
             research_word_count = len(re.findall(r"\b[\w'-]+\b", research_query))
-            if research_word_count < 3:
+            min_research_words = 4 if str(origin or "").strip().lower() == "voice" else 3
+            if research_word_count < min_research_words:
+                if min_research_words == 4:
+                    logger.info(
+                        "research_route_blocked_short_voice_turn words=%s min_words=%s query=%s",
+                        research_word_count,
+                        min_research_words,
+                        research_query[:80],
+                    )
+                else:
+                    logger.info(
+                        "research_route_guard_short_utterance words=%s query=%s",
+                        research_word_count,
+                        research_query[:80],
+                    )
+                agent_key = "chat"
+            elif str(origin or "").strip().lower() == "voice" and not re.search(
+                r"[.?!]|\b(search|find|lookup|look up|news|latest|current|today)\b",
+                research_query,
+                flags=re.IGNORECASE,
+            ):
                 logger.info(
-                    "research_route_guard_short_utterance words=%s query=%s",
+                    "research_route_blocked_low_signal words=%s query=%s",
                     research_word_count,
                     research_query[:80],
                 )
