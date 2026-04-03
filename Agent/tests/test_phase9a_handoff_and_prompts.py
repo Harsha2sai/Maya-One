@@ -244,6 +244,45 @@ async def test_system_route_delegates_before_live_system_execution():
 
 
 @pytest.mark.asyncio
+async def test_system_route_supports_photograph_synonym():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="system")
+    orchestrator._handoff_manager.consume_signal = MagicMock(return_value="system_operator")
+    orchestrator._handoff_manager.delegate = AsyncMock(
+        return_value=SimpleNamespace(
+            status="completed",
+            error_code=None,
+            user_visible_text=None,
+            structured_payload={"action_type": "SCREENSHOT", "tool_name": "take_screenshot"},
+        )
+    )
+    orchestrator._get_host_capability_profile = MagicMock(return_value={"os": "linux", "cpu_count": 8})
+    fake_system_agent = MagicMock()
+    fake_system_agent.run = AsyncMock(
+        return_value=SimpleNamespace(
+            success=True,
+            action_type=SimpleNamespace(value="SCREENSHOT"),
+            message="Saved screenshot.",
+            detail="/tmp/test.png",
+            rollback_available=False,
+            trace_id="trace-system",
+        )
+    )
+    orchestrator._resolve_system_agent = MagicMock(return_value=fake_system_agent)
+
+    response = await orchestrator._handle_chat_response(
+        "take a photograph",
+        user_id="u1",
+        origin="chat",
+    )
+
+    orchestrator._handoff_manager.delegate.assert_awaited_once()
+    fake_system_agent.run.assert_awaited_once()
+    assert response.display_text == "Saved screenshot."
+
+
+@pytest.mark.asyncio
 async def test_system_route_handoff_failure_falls_back_to_legacy_execution():
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
     orchestrator._router = MagicMock()

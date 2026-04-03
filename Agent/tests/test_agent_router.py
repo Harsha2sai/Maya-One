@@ -47,8 +47,11 @@ class _MappingLLM:
         ("tell me about DeepMind", "research"),
         ("who made Linux", "research"),
         ("news about foundation models", "research"),
+        ("can you use web search or not", "research"),
         ("take a screenshot", "system"),
+        ("take a photograph", "system"),
         ("open file report.txt", "system"),
+        ("open browser and click settings", "system"),
         ("move folder downloads", "system"),
         ("close window", "system"),
         ("resize window", "system"),
@@ -84,13 +87,63 @@ async def test_agent_router_llm_failure_returns_chat() -> None:
             raise RuntimeError("boom")
 
     router = AgentRouter(_FailLLM())
-    assert await router.route("search for ai", "u1") == "chat"
+    assert await router.route("tell me something interesting", "u1") == "chat"
 
 
 @pytest.mark.asyncio
 async def test_agent_router_small_talk_override_forces_chat() -> None:
     router = AgentRouter(_MappingLLM({"how are you": "identity"}))
     assert await router.route("how are you", "u1") == "chat"
+
+
+@pytest.mark.asyncio
+async def test_agent_router_short_followup_after_question_routes_to_chat() -> None:
+    router = AgentRouter(_MappingLLM({"just a small one": "research"}))
+    chat_ctx = [
+        {"role": "assistant", "content": "What kind of app do you want?"},
+        {"role": "user", "content": "I need an app"},
+    ]
+
+    result = await router.route("just a small one", "u1", chat_ctx=chat_ctx)
+
+    assert result == "chat"
+
+
+@pytest.mark.asyncio
+async def test_agent_router_short_followup_without_question_uses_normal_routing() -> None:
+    router = AgentRouter(_MappingLLM({"just a small one": "research"}))
+    chat_ctx = [
+        {"role": "assistant", "content": "I can help with that."},
+        {"role": "user", "content": "I need an app"},
+    ]
+
+    result = await router.route("just a small one", "u1", chat_ctx=chat_ctx)
+
+    assert result == "research"
+
+
+@pytest.mark.asyncio
+async def test_agent_router_context_followup_does_not_override_explicit_research_intent() -> None:
+    router = AgentRouter(_MappingLLM({"search for house budget app": "chat"}))
+    chat_ctx = [
+        {"role": "assistant", "content": "Do you want me to look this up?"},
+    ]
+
+    result = await router.route("search for house budget app", "u1", chat_ctx=chat_ctx)
+
+    assert result == "research"
+
+
+@pytest.mark.asyncio
+async def test_agent_router_context_followup_does_not_override_explicit_system_intent() -> None:
+    router = AgentRouter(_MappingLLM({"open browser settings": "chat"}))
+    chat_ctx = [
+        {"role": "assistant", "content": "Do you want to continue?"},
+    ]
+
+    result = await router.route("open browser settings", "u1", chat_ctx=chat_ctx)
+
+    assert result == "system"
 
 
 @pytest.mark.asyncio
@@ -191,6 +244,86 @@ async def test_greeting_uses_small_talk_fast_path_without_router() -> None:
 
     assert "maya" in response.display_text.lower()
     orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_continuation_fragment_returns_clarification_and_skips_router() -> None:
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator.agent.chat_ctx = SimpleNamespace(
+        messages=[SimpleNamespace(role="assistant", content="What kind of app do you want?")]
+    )
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(side_effect=AssertionError("router should not run"))
+
+    response = await orchestrator._handle_chat_response(
+        "just a small one",
+        user_id="u1",
+        origin="voice",
+    )
+
+    assert "please continue your request" in response.display_text.lower()
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_short_command_allowlist_does_not_trigger_fragment_guard() -> None:
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator.agent.chat_ctx = SimpleNamespace(
+        messages=[SimpleNamespace(role="assistant", content="Do you want me to continue?")]
+    )
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="identity")
+    orchestrator._handle_identity_fast_path = AsyncMock(
+        return_value=ResponseFormatter.build_response("I'm Maya.")
+    )
+
+    response = await orchestrator._handle_chat_response(
+        "yes",
+        user_id="u1",
+        origin="voice",
+    )
+
+    assert "maya" in response.display_text.lower()
+    orchestrator._router.route.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_voice_research_route_is_demoted_for_three_word_query() -> None:
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="research")
+    orchestrator._handle_research_route = AsyncMock(
+        side_effect=AssertionError("research should be demoted to chat")
+    )
+    orchestrator._is_phase6_context_builder_active = MagicMock(return_value=False)
+
+    response = await orchestrator._handle_chat_response(
+        "alpha beta gamma",
+        user_id="u1",
+        origin="voice",
+    )
+
+    assert "context pipeline is temporarily unavailable" in response.display_text.lower()
+    orchestrator._handle_research_route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_chat_research_route_still_allows_three_word_query() -> None:
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="research")
+    orchestrator._handle_research_route = AsyncMock(
+        return_value=ResponseFormatter.build_response("Let me look that up for you.")
+    )
+
+    response = await orchestrator._handle_chat_response(
+        "alpha beta gamma",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "look that up" in response.display_text.lower()
+    orchestrator._handle_research_route.assert_awaited_once()
 
 
 @pytest.mark.asyncio

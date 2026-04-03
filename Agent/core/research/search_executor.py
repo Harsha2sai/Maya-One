@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from urllib.parse import urlparse, urlunparse
 
 from tools.information import web_search
@@ -22,6 +23,31 @@ logger = logging.getLogger(__name__)
 
 
 class SearchExecutor:
+    _PREMIUM_PROVIDER_NAMES = ("tavily", "serper", "brave", "news")
+    _RELEVANCE_STOPWORDS = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "be",
+        "for",
+        "from",
+        "how",
+        "in",
+        "is",
+        "it",
+        "latest",
+        "news",
+        "of",
+        "on",
+        "or",
+        "search",
+        "the",
+        "to",
+        "what",
+        "with",
+    }
+
     def __init__(self) -> None:
         self.provider_timeout_s = float(os.getenv("RESEARCH_PROVIDER_TIMEOUT_S", "8.0"))
         self.providers = {
@@ -39,6 +65,7 @@ class SearchExecutor:
         if not tasks:
             return await self._fallback_web_search(query)
 
+        premium_provider_ready = self.has_configured_premium_provider()
         merged: list[SourceItem] = []
         attempted: set[str] = set()
         for task in tasks:
@@ -64,7 +91,29 @@ class SearchExecutor:
             fallback = await self._fallback_web_search(query)
             deduped = self._dedupe_sources([*deduped, *fallback])
 
+        if not premium_provider_ready and not self._has_query_relevance(query, deduped):
+            logger.warning(
+                "research_low_confidence_missing_provider query=%s deduped_count=%s",
+                query,
+                len(deduped),
+            )
+            return []
+
         return deduped
+
+    def has_configured_premium_provider(self) -> bool:
+        for provider_name in self._PREMIUM_PROVIDER_NAMES:
+            provider = self.providers.get(provider_name)
+            if provider is None:
+                continue
+            is_configured = getattr(provider, "is_configured", None)
+            if callable(is_configured):
+                try:
+                    if bool(is_configured()):
+                        return True
+                except Exception:
+                    continue
+        return False
 
     async def _run_task(self, task: ProviderTask) -> list[SourceItem]:
         provider = self.providers.get(task.provider)
@@ -138,3 +187,27 @@ class SearchExecutor:
             seen.add(normalized)
             deduped.append(source)
         return deduped
+
+    @classmethod
+    def _relevance_terms(cls, text: str) -> list[str]:
+        tokens = re.findall(r"[a-z0-9]+", str(text or "").lower())
+        return [
+            token
+            for token in tokens
+            if len(token) >= 2 and token not in cls._RELEVANCE_STOPWORDS
+        ]
+
+    @classmethod
+    def _has_query_relevance(cls, query: str, sources: list[SourceItem]) -> bool:
+        query_terms = set(cls._relevance_terms(query))
+        if not query_terms:
+            return True
+        for source in sources:
+            haystack_terms = set(
+                cls._relevance_terms(
+                    f"{source.title} {source.snippet} {source.url} {source.domain}"
+                )
+            )
+            if haystack_terms.intersection(query_terms):
+                return True
+        return False

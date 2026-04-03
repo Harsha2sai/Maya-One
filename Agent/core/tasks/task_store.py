@@ -155,6 +155,9 @@ class SupabaseTaskStore(BaseTaskStore):
     async def get_active_tasks(self, user_id: str) -> List[Task]:
         if not self.db.client: return []
         try:
+            user_id = str(user_id or "").strip()
+            if not user_id:
+                return []
             terminal_states = [
                 normalize_intent(TaskStatus.COMPLETED), 
                 normalize_intent(TaskStatus.FAILED), 
@@ -534,6 +537,9 @@ class SQLiteTaskStore(BaseTaskStore):
 
     async def get_active_tasks(self, user_id: str) -> List[Task]:
         try:
+            user_id = str(user_id or "").strip()
+            if not user_id:
+                return []
             def _op():
                  with self._get_conn() as conn:
                     conn.row_factory = sqlite3.Row

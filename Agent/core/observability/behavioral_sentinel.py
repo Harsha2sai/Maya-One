@@ -213,7 +213,9 @@ class BehavioralSentinel:
             success = memory.store_conversation_turn(
                 user_msg=f"Sentinel probe: {probe_id}",
                 assistant_msg="Probe response",
-                metadata={"sentinel_probe": True, "probe_id": probe_id}
+                metadata={"sentinel_probe": True, "probe_id": probe_id},
+                user_id="__sentinel__",
+                session_id="__sentinel__",
             )
 
             if not success:
@@ -233,7 +235,8 @@ class BehavioralSentinel:
             memories = memory.retrieve_relevant_memories(
                 query=probe_id,
                 k=5,
-                user_id="__sentinel__"
+                user_id="__sentinel__",
+                session_id="__sentinel__",
             )
 
             if not memories:

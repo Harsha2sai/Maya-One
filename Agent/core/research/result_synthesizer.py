@@ -24,6 +24,7 @@ class ResultSynthesizer:
         sources: list[SourceItem] | None = None,
         *,
         snippets: list[dict[str, Any]] | None = None,
+        voice_mode: str = "brief",
     ) -> Tuple[str, str]:
         if (not sources) and snippets:
             converted: list[SourceItem] = []
@@ -50,12 +51,20 @@ class ResultSynthesizer:
             default_msg = "I couldn't find enough reliable information right now."
             return default_msg, default_msg
 
-        llm_display, llm_voice = await self._llm_summarize(query, sources)
+        voice_mode = self._coerce_voice_mode(voice_mode)
+        llm_display, llm_voice = await self._llm_summarize(
+            query,
+            sources,
+            voice_mode=voice_mode,
+        )
         if llm_display or llm_voice:
             display = self._repair_display(llm_display or llm_voice)
-            voice = self._normalize_voice(llm_voice or llm_display) or self._normalize_voice(display)
+            voice = self._normalize_voice(
+                llm_voice or llm_display,
+                voice_mode=voice_mode,
+            ) or self._normalize_voice(display, voice_mode=voice_mode)
             if self._is_voice_low_quality(voice):
-                fallback_voice = self._voice_from_display(display)
+                fallback_voice = self._voice_from_display(display, voice_mode=voice_mode)
                 if fallback_voice and not self._is_voice_low_quality(fallback_voice):
                     voice = fallback_voice
             return display, voice
@@ -70,22 +79,50 @@ class ResultSynthesizer:
         fallback = " ".join(sentences)
         return fallback, fallback
 
-    async def _llm_summarize(self, query: str, sources: list[SourceItem]) -> Tuple[str, str]:
+    async def _llm_summarize(
+        self,
+        query: str,
+        sources: list[SourceItem],
+        *,
+        voice_mode: str = "brief",
+    ) -> Tuple[str, str]:
         if self.role_llm is None:
             return "", ""
+
+        voice_mode = self._coerce_voice_mode(voice_mode)
+        if voice_mode == "deep":
+            voice_rules = (
+                "- 3 to 5 sentences.\n"
+                "- Plain spoken English only.\n"
+                "- Zero bullets, zero emoji, zero markdown, zero source numbers.\n"
+                "- Explain key context, impacts, and uncertainty clearly.\n"
+                "- Keep under 900 characters."
+            )
+            voice_instruction = (
+                "voice must be 3 to 5 sentences of plain spoken English under 900 characters."
+            )
+        else:
+            voice_rules = (
+                "- EXACTLY 1 sentence. Never 2. Never more.\n"
+                "- Plain spoken English only.\n"
+                "- Zero bullets, zero emoji, zero markdown, zero source numbers.\n"
+                "- Must sound like a human speaking, not reading a list.\n"
+                "- If you write more than one sentence, you have failed this rule."
+            )
+            voice_instruction = "voice must be exactly 1 sentence of plain spoken English."
 
         sources_text = "\n".join(
             [f"- {s.title} | {s.url} | {s.snippet}" for s in sources[:8]]
         )
-        system_prompt = """
+        system_prompt = f"""
 You are a research synthesizer. You MUST return valid JSON only.
 No preamble. No explanation. No markdown code fences. Just JSON.
 
 Return exactly this structure:
-{
+{{
   "display": "<formatted answer>",
   "voice": "<spoken summary>"
-}
+}}
 
 DISPLAY rules (strictly enforced):
 - Line 1: MUST be a bold header using ** like: **Topic Name - Key Findings**
@@ -95,18 +132,14 @@ DISPLAY rules (strictly enforced):
 - Absolutely no prose paragraphs in display
 
 VOICE rules (strictly enforced):
-- EXACTLY 1 sentence. Never 2. Never more.
-- Plain spoken English only
-- Zero bullets, zero emoji, zero markdown, zero source numbers
-- Must sound like a human speaking, not reading a list
-- If you write more than one sentence, you have failed this rule
+- {voice_rules}
 """.strip()
         user_prompt = f"""
 Query: {query}
 Sources: {sources_text}
 
 Return JSON only. display must start with a ** bold header.
-voice must be exactly 1 sentence of plain spoken English.
+{voice_instruction}
 """.strip()
         chat_ctx = ChatContext(
             [
@@ -123,7 +156,7 @@ voice must be exactly 1 sentence of plain spoken English.
                 tool_choice="none",
             )
             text = await self._stream_to_text(stream)
-            display, voice = self._parse_dual_output(text)
+            display, voice = self._parse_dual_output(text, voice_mode=voice_mode)
             if display and voice and not self._has_json_voice_signatures(voice):
                 logger.info(
                     "research_synthesizer_parse_mode=%s research_synthesizer_voice_len=%s",
@@ -131,7 +164,10 @@ voice must be exactly 1 sentence of plain spoken English.
                     len(voice or ""),
                 )
                 return display, voice
-            display, voice, parse_mode = self._salvage_raw_output(text)
+            display, voice, parse_mode = self._salvage_raw_output(
+                text,
+                voice_mode=voice_mode,
+            )
             if display and voice:
                 logger.info(
                     "research_synthesizer_parse_mode=%s research_synthesizer_voice_len=%s",
@@ -151,7 +187,7 @@ voice must be exactly 1 sentence of plain spoken English.
             return "", ""
 
     @staticmethod
-    def _parse_dual_output(raw_text: str) -> Tuple[str, str]:
+    def _parse_dual_output(raw_text: str, *, voice_mode: str = "brief") -> Tuple[str, str]:
         raw = ResultSynthesizer._strip_code_fences(raw_text)
         if not raw:
             return "", ""
@@ -162,7 +198,10 @@ voice must be exactly 1 sentence of plain spoken English.
         if not isinstance(payload, dict):
             return "", ""
         display = ResultSynthesizer._normalize_display(str(payload.get("display") or ""))
-        voice = ResultSynthesizer._normalize_voice(str(payload.get("voice") or ""))
+        voice = ResultSynthesizer._normalize_voice(
+            str(payload.get("voice") or ""),
+            voice_mode=voice_mode,
+        )
         if not display or not voice:
             return "", ""
         return display, voice
@@ -235,7 +274,15 @@ voice must be exactly 1 sentence of plain spoken English.
         return str(value).strip()
 
     @staticmethod
-    def _normalize_voice(voice: str) -> str:
+    def _coerce_voice_mode(voice_mode: str) -> str:
+        normalized = str(voice_mode or "brief").strip().lower()
+        if normalized not in {"brief", "deep"}:
+            return "brief"
+        return normalized
+
+    @staticmethod
+    def _normalize_voice(voice: str, *, voice_mode: str = "brief") -> str:
+        voice_mode = ResultSynthesizer._coerce_voice_mode(voice_mode)
         cleaned = str(voice or "").strip()
         if not cleaned:
             return ""
@@ -256,25 +303,31 @@ voice must be exactly 1 sentence of plain spoken English.
         if not sentences:
             sentences = [cleaned]
 
-        lower = cleaned.lower()
-        complex_markers = (
-            "latest",
-            "recent",
-            "today",
-            "right now",
-            "update",
-            "news",
-            "because",
-            "however",
-            "while",
-        )
-        is_complex = len(cleaned) > 90 or sum(1 for token in complex_markers if token in lower) >= 1
-        max_sentences = 2 if is_complex else 1
+        if voice_mode == "deep":
+            max_sentences = 5
+            max_chars = 900
+        else:
+            lower = cleaned.lower()
+            complex_markers = (
+                "latest",
+                "recent",
+                "today",
+                "right now",
+                "update",
+                "news",
+                "because",
+                "however",
+                "while",
+            )
+            is_complex = len(cleaned) > 90 or sum(1 for token in complex_markers if token in lower) >= 1
+            max_sentences = 2 if is_complex else 1
+            max_chars = 150
+
         cleaned = " ".join(sentences[:max_sentences]).strip()
 
-        if len(cleaned) > 150:
-            trimmed = cleaned[:150].rsplit(" ", 1)[0].strip()
-            cleaned = trimmed if trimmed else cleaned[:150].strip()
+        if len(cleaned) > max_chars:
+            trimmed = cleaned[:max_chars].rsplit(" ", 1)[0].strip()
+            cleaned = trimmed if trimmed else cleaned[:max_chars].strip()
         cleaned = cleaned.rstrip(" ,;:")
         if cleaned and cleaned[-1] not in ".!?":
             cleaned = f"{cleaned}."
@@ -326,7 +379,7 @@ voice must be exactly 1 sentence of plain spoken English.
         )
 
     @staticmethod
-    def _voice_from_display(display: str) -> str:
+    def _voice_from_display(display: str, *, voice_mode: str = "brief") -> str:
         text = str(display or "").strip()
         if not text:
             return ""
@@ -348,11 +401,13 @@ voice must be exactly 1 sentence of plain spoken English.
         merged = re.sub(r"\s+", " ", merged).strip()
         if not merged:
             return ""
+        if ResultSynthesizer._coerce_voice_mode(voice_mode) == "deep":
+            return ResultSynthesizer._normalize_voice(merged, voice_mode="deep")
         first_sentence = re.split(r"(?<=[.!?])\s+", merged, maxsplit=1)[0].strip()
-        return ResultSynthesizer._normalize_voice(first_sentence or merged)
+        return ResultSynthesizer._normalize_voice(first_sentence or merged, voice_mode="brief")
 
     @staticmethod
-    def _salvage_raw_output(raw_text: Any) -> Tuple[str, str, str]:
+    def _salvage_raw_output(raw_text: Any, *, voice_mode: str = "brief") -> Tuple[str, str, str]:
         raw = ResultSynthesizer._strip_code_fences(raw_text)
         if not raw:
             return "", "", "empty"
@@ -361,12 +416,16 @@ voice must be exactly 1 sentence of plain spoken English.
         header = header_match.group(1).strip() if header_match else "**Research Summary**"
 
         voice_line = ResultSynthesizer._normalize_voice(
-            ResultSynthesizer._extract_voice_line(raw)
+            ResultSynthesizer._extract_voice_line(raw),
+            voice_mode=voice_mode,
         )
 
         json_payload = ResultSynthesizer._extract_first_json_object(raw)
         if isinstance(json_payload, dict):
-            json_voice = ResultSynthesizer._normalize_voice(str(json_payload.get("voice") or ""))
+            json_voice = ResultSynthesizer._normalize_voice(
+                str(json_payload.get("voice") or ""),
+                voice_mode=voice_mode,
+            )
             if (
                 voice_line
                 and not ResultSynthesizer._is_voice_low_quality(voice_line)
@@ -391,7 +450,7 @@ voice must be exactly 1 sentence of plain spoken English.
                 source_count = min(3, max(1, len(bullet_texts)))
                 sources = " ".join(f"[{idx}]" for idx in range(1, source_count + 1))
                 display = "\n".join([header, *bullets, f"Sources: {sources}"])
-                voice = ResultSynthesizer._voice_from_display(display)
+                voice = ResultSynthesizer._voice_from_display(display, voice_mode=voice_mode)
                 if (
                     voice
                     and not ResultSynthesizer._is_voice_low_quality(voice)
@@ -400,13 +459,13 @@ voice must be exactly 1 sentence of plain spoken English.
                     return ResultSynthesizer._normalize_display(display), voice, "display_sentence"
 
         if json_payload is None and header_match is None:
-            normalized_raw_voice = ResultSynthesizer._normalize_voice(raw)
+            normalized_raw_voice = ResultSynthesizer._normalize_voice(raw, voice_mode=voice_mode)
             return raw, normalized_raw_voice or raw, "raw_passthrough"
 
         display = ResultSynthesizer._normalize_display(raw)
-        voice = ResultSynthesizer._voice_from_display(display)
+        voice = ResultSynthesizer._voice_from_display(display, voice_mode=voice_mode)
         if not voice or ResultSynthesizer._has_json_voice_signatures(voice):
-            voice = ResultSynthesizer._normalize_voice(raw)
+            voice = ResultSynthesizer._normalize_voice(raw, voice_mode=voice_mode)
         return display, voice, "display_sentence"
 
     @staticmethod

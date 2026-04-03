@@ -5,9 +5,10 @@ This test verifies that the ContextBuilder produces prompts within
 the target token budget after optimization.
 """
 
+import os
 import pytest
 from unittest.mock import Mock, AsyncMock
-from core.context.context_builder import ContextBuilder
+from core.context.context_builder import ContextBuilder, CHAT_MEMORY_TOP_K_DEFAULT
 from livekit.agents.llm import ChatContext, ChatMessage
 
 
@@ -59,7 +60,7 @@ async def test_prompt_size_under_budget():
 
 @pytest.mark.asyncio
 async def test_memory_retrieval_limited():
-    """Verify that memory retrieval is limited to k=1."""
+    """Verify that memory retrieval uses the configured chat retrieval k."""
     
     mock_llm = Mock()
     mock_memory_manager = Mock()
@@ -76,8 +77,8 @@ async def test_memory_retrieval_limited():
     
     await builder("Test", chat_ctx)
     
-    # Verify k=1 was passed
-    mock_memory_manager.get_user_context.assert_called_once_with("test-user", k=1)
+    expected_k = max(1, int(os.getenv("CHAT_RETRIEVER_K", str(CHAT_MEMORY_TOP_K_DEFAULT))))
+    mock_memory_manager.get_user_context.assert_called_once_with("test-user", k=expected_k)
 
 
 @pytest.mark.asyncio

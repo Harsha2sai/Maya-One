@@ -168,7 +168,14 @@ class SystemPlanner:
             )
             return actions
 
-        if "take a screenshot" in normalized or normalized.startswith("screenshot"):
+        if (
+            "take a screenshot" in normalized
+            or normalized.startswith("screenshot")
+            or re.search(
+                r"\b(take|capture)\s+(?:a\s+)?(?:photo|photograph|picture)\b",
+                normalized,
+            )
+        ):
             actions.append(SystemAction(SystemActionType.SCREENSHOT, trace_id=trace_id))
             return actions
 

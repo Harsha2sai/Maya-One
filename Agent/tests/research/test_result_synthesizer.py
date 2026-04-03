@@ -325,3 +325,36 @@ async def test_salvage_rejects_json_like_voice_and_uses_display_sentence() -> No
     assert '"display":' not in voice.lower()
     assert '"voice":' not in voice.lower()
     assert "Narendra Modi is the current prime minister of India" in voice
+
+
+@pytest.mark.asyncio
+async def test_deep_voice_mode_allows_multi_sentence_summary() -> None:
+    payload = json.dumps(
+        {
+            "display": "**Iran Market Impact**\n🔹 Oil volatility rose.\nSources: [1] [2]",
+            "voice": (
+                "Tensions between Iran and the United States have increased energy risk premiums. "
+                "Oil and gold prices tend to react first due to supply and safety-demand concerns. "
+                "Currency markets can also reprice quickly as risk sentiment changes."
+            ),
+        }
+    )
+    synthesizer = ResultSynthesizer(role_llm=_RoleLLM(payload))
+    sources = [
+        SourceItem.from_values(
+            title="S1",
+            url="https://example.com/market",
+            snippet="Market volatility increased.",
+            provider="tavily",
+        )
+    ]
+
+    _display, voice = await synthesizer.synthesize(
+        "give me a detailed report on market impact",
+        sources,
+        voice_mode="deep",
+    )
+
+    sentence_count = len([s for s in voice.split(".") if s.strip()])
+    assert sentence_count >= 3
+    assert len(voice) <= 900

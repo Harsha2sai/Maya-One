@@ -3,6 +3,8 @@ import asyncio
 import os
 import re
 import requests
+from urllib.parse import quote_plus
+import xml.etree.ElementTree as ET
 from livekit.agents import function_tool, RunContext
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,156 @@ def _has_query_relevance(query: str, structured_results: list[dict[str, str]]) -
         if haystack_terms.intersection(query_terms):
             return True
     return False
+
+
+def _fallback_web_search_sync(query: str, max_results: int) -> list[dict[str, str]]:
+    """
+    Lightweight fallback search via DuckDuckGo Instant Answer endpoint.
+    Returns normalized result objects compatible with web_search output.
+    """
+    timeout = (
+        float(os.getenv("WEB_SEARCH_FALLBACK_CONNECT_TIMEOUT_S", "2.0")),
+        float(os.getenv("WEB_SEARCH_FALLBACK_READ_TIMEOUT_S", "5.0")),
+    )
+    resp = requests.get(
+        "https://api.duckduckgo.com/",
+        params={
+            "q": query,
+            "format": "json",
+            "no_html": "1",
+            "no_redirect": "1",
+            "skip_disambig": "1",
+        },
+        timeout=timeout,
+        headers={"User-Agent": "Maya-One/1.0"},
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    data = payload if isinstance(payload, dict) else {}
+
+    structured: list[dict[str, str]] = []
+
+    abstract_url = str(data.get("AbstractURL") or "").strip()
+    abstract_text = str(data.get("AbstractText") or "").strip()
+    heading = str(data.get("Heading") or "").strip() or "DuckDuckGo Result"
+    if abstract_url:
+        structured.append(
+            {
+                "title": heading,
+                "url": abstract_url,
+                "snippet": abstract_text,
+            }
+        )
+
+    related_topics = data.get("RelatedTopics") or []
+    for topic in related_topics:
+        if len(structured) >= max_results:
+            break
+        if isinstance(topic, dict) and isinstance(topic.get("Topics"), list):
+            for sub in topic["Topics"]:
+                if len(structured) >= max_results:
+                    break
+                if not isinstance(sub, dict):
+                    continue
+                url = str(sub.get("FirstURL") or "").strip()
+                text = str(sub.get("Text") or "").strip()
+                if not url:
+                    continue
+                structured.append(
+                    {
+                        "title": text[:120] or "DuckDuckGo Topic",
+                        "url": url,
+                        "snippet": text,
+                    }
+                )
+            continue
+        if not isinstance(topic, dict):
+            continue
+        url = str(topic.get("FirstURL") or "").strip()
+        text = str(topic.get("Text") or "").strip()
+        if not url:
+            continue
+        structured.append(
+            {
+                "title": text[:120] or "DuckDuckGo Topic",
+                "url": url,
+                "snippet": text,
+            }
+        )
+
+    if structured:
+        return structured[:max_results]
+
+    # News-focused fallback: Google News RSS search.
+    lowered = str(query or "").lower()
+    if any(token in lowered for token in ("news", "latest", "today", "this week")):
+        news_resp = requests.get(
+            "https://news.google.com/rss/search",
+            params={"q": query, "hl": "en-US", "gl": "US", "ceid": "US:en"},
+            timeout=timeout,
+            headers={"User-Agent": "Maya-One/1.0"},
+        )
+        news_resp.raise_for_status()
+        root = ET.fromstring(news_resp.text)
+        for item in root.findall(".//item"):
+            if len(structured) >= max_results:
+                break
+            title = (item.findtext("title") or "").strip()
+            link = (item.findtext("link") or "").strip()
+            description = (item.findtext("description") or "").strip()
+            if not link:
+                continue
+            structured.append(
+                {
+                    "title": title or "News result",
+                    "url": link,
+                    "snippet": description,
+                }
+            )
+        if structured:
+            return structured[:max_results]
+
+    # Secondary fallback: Wikipedia opensearch for broad informational queries.
+    wiki_resp = requests.get(
+        "https://en.wikipedia.org/w/api.php",
+        params={
+            "action": "opensearch",
+            "search": query,
+            "limit": max_results,
+            "namespace": "0",
+            "format": "json",
+        },
+        timeout=timeout,
+        headers={"User-Agent": "Maya-One/1.0"},
+    )
+    wiki_resp.raise_for_status()
+    wiki_payload = wiki_resp.json()
+    if (
+        isinstance(wiki_payload, list)
+        and len(wiki_payload) >= 4
+        and isinstance(wiki_payload[1], list)
+        and isinstance(wiki_payload[2], list)
+        and isinstance(wiki_payload[3], list)
+    ):
+        titles = wiki_payload[1]
+        snippets = wiki_payload[2]
+        urls = wiki_payload[3]
+        for idx, title in enumerate(titles):
+            if len(structured) >= max_results:
+                break
+            url = str(urls[idx] if idx < len(urls) else "").strip()
+            if not url:
+                continue
+            snippet = str(snippets[idx] if idx < len(snippets) else "").strip()
+            structured.append(
+                {
+                    "title": str(title or "Wikipedia Result"),
+                    "url": url,
+                    "snippet": snippet,
+                }
+            )
+
+    return structured[:max_results]
 
 
 def _get_weather_sync(city: str) -> str:
@@ -204,21 +356,38 @@ async def get_weather(context: RunContext, city: str) -> str:
 @function_tool(name="web_search")
 async def web_search(context: RunContext, query: str) -> dict:
     """Search the web using DuckDuckGo."""
+    search_timeout_s = max(3.0, float(os.getenv("WEB_SEARCH_TIMEOUT_S", "12.0")))
+    fallback_timeout_s = max(2.0, float(os.getenv("WEB_SEARCH_FALLBACK_TIMEOUT_S", "6.0")))
+    max_results = max(1, int(os.getenv("WEB_SEARCH_MAX_RESULTS", "3")))
+    fallback_url = f"https://duckduckgo.com/?q={quote_plus(query)}"
+
     try:
         if _DDGS is None:
+            fallback = await asyncio.wait_for(
+                asyncio.to_thread(_fallback_web_search_sync, query, max_results),
+                timeout=fallback_timeout_s,
+            )
+            if fallback:
+                return {"results": fallback, "query": query, "source": "fallback_duckduckgo_instant"}
             return {
                 "error": "search_unavailable",
                 "results": [],
                 "message": "DuckDuckGo search library unavailable.",
-                "fallback_url": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
+                "fallback_url": fallback_url,
             }
 
         def _search():
             with _DDGS() as ddgs:
-                return list(ddgs.text(query, max_results=3))
+                backend = str(os.getenv("WEB_SEARCH_BACKEND", "lite")).strip()
+                if backend:
+                    try:
+                        return list(ddgs.text(query, max_results=max_results, backend=backend))
+                    except TypeError:
+                        # Backward compatibility for DDGS variants without backend kwarg.
+                        return list(ddgs.text(query, max_results=max_results))
+                return list(ddgs.text(query, max_results=max_results))
         
-        # Keep search bounded for voice latency targets.
-        results = await asyncio.wait_for(asyncio.to_thread(_search), timeout=5.0)
+        results = await asyncio.wait_for(asyncio.to_thread(_search), timeout=search_timeout_s)
         
         if results:
             structured = []
@@ -243,24 +412,43 @@ async def web_search(context: RunContext, query: str) -> dict:
                     "query": query,
                     "message": "I couldn't find anything relevant for that search.",
                 }
-            logger.info(f"Search results for '{query}': {len(results)} found")
+                logger.info(f"Search results for '{query}': {len(results)} found")
             return {
                 "results": structured,
                 "query": query,
             }
         return {"results": [], "query": query, "message": "No results found"}
     except asyncio.TimeoutError:
-        logger.warning(f"Web search timed out for '{query}'")
+        logger.warning("Web search timed out for '%s' (timeout_s=%.1f)", query, search_timeout_s)
+        try:
+            fallback = await asyncio.wait_for(
+                asyncio.to_thread(_fallback_web_search_sync, query, max_results),
+                timeout=fallback_timeout_s,
+            )
+            if fallback:
+                return {"results": fallback, "query": query, "source": "fallback_duckduckgo_instant"}
+        except Exception as fallback_err:
+            logger.warning("Fallback web search failed for '%s': %s", query, fallback_err)
         return {
             "error": "timeout",
             "results": [],
             "message": "Search timed out.",
-            "fallback_url": f"https://duckduckgo.com/?q={query.replace(' ', '+')}",
+            "fallback_url": fallback_url,
         }
     except Exception as e:
         logger.error(f"Error searching the web for '{query}': {e}")
+        try:
+            fallback = await asyncio.wait_for(
+                asyncio.to_thread(_fallback_web_search_sync, query, max_results),
+                timeout=fallback_timeout_s,
+            )
+            if fallback:
+                return {"results": fallback, "query": query, "source": "fallback_duckduckgo_instant"}
+        except Exception as fallback_err:
+            logger.warning("Fallback web search failed after error for '%s': %s", query, fallback_err)
         return {
             "error": "search_failed",
             "results": [],
             "message": f"An error occurred while searching the web for '{query}'.",
+            "fallback_url": fallback_url,
         }

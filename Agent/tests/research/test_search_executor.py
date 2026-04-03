@@ -16,6 +16,9 @@ class _FakeProvider:
     async def search(self, *_args, **_kwargs):
         return list(self.items)
 
+    def is_configured(self):
+        return False
+
 
 @pytest.mark.asyncio
 async def test_dedupes_results_by_url() -> None:
@@ -97,4 +100,27 @@ async def test_missing_provider_is_skipped() -> None:
     executor.providers = {}
     with patch("core.research.search_executor.web_search", new=AsyncMock(return_value={"results": []})):
         results = await executor.execute([ProviderTask(provider="missing", query="q")], "q")
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_low_confidence_fallback_returns_empty_when_no_premium_provider() -> None:
+    executor = SearchExecutor()
+    executor.providers = {"tavily": _FakeProvider([])}
+    fallback_payload = {
+        "results": [
+            {
+                "title": "Asking Alexandria",
+                "url": "https://en.wikipedia.org/wiki/Asking_Alexandria",
+                "snippet": "British rock band",
+            }
+        ]
+    }
+
+    with patch("core.research.search_executor.web_search", new=AsyncMock(return_value=fallback_payload)):
+        results = await executor.execute(
+            [ProviderTask(provider="tavily", query="iran market war")],
+            "iran market war",
+        )
+
     assert results == []

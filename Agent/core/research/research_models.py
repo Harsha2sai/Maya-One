@@ -63,6 +63,7 @@ class ResearchResult:
     trace_id: str
     duration_ms: int
     voice_summary: str = ""
+    voice_mode: str = "brief"
 
     def to_event_payload(self) -> dict:
         return {

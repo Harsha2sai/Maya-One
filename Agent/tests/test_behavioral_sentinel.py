@@ -65,17 +65,32 @@ class TestBehavioralSentinel:
             def __init__(self):
                 self._probe = None
 
-            def store_conversation_turn(self, *, user_msg, assistant_msg, metadata):
+            def store_conversation_turn(
+                self,
+                *,
+                user_msg,
+                assistant_msg,
+                metadata,
+                user_id=None,
+                session_id=None,
+            ):
                 del assistant_msg
                 self._probe = {
                     "text": user_msg,
                     "metadata": metadata,
+                    "user_id": user_id,
+                    "session_id": session_id,
                 }
                 return True
 
             def retrieve_relevant_memories(self, **kwargs):
                 probe_id = kwargs.get("query")
-                if self._probe and self._probe["metadata"].get("probe_id") == probe_id:
+                if (
+                    self._probe
+                    and self._probe["metadata"].get("probe_id") == probe_id
+                    and kwargs.get("user_id") == "__sentinel__"
+                    and kwargs.get("session_id") == "__sentinel__"
+                ):
                     return [self._probe]
                 return []
 

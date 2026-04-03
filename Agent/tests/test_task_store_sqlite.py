@@ -85,3 +85,18 @@ async def test_claim_or_renew_does_not_reclaim_fresh_running_task(tmp_path):
     assert persisted is not None
     assert persisted.status == TaskStatus.RUNNING
     assert persisted.metadata["claimed_by"] == "worker-a"
+
+
+@pytest.mark.asyncio
+async def test_get_active_tasks_coerces_non_string_user_id(tmp_path):
+    store = _make_store(tmp_path)
+    task = _make_task()
+    assert await store.create_task(task) is True
+
+    class _UserLike:
+        def __str__(self) -> str:
+            return "task-user"
+
+    tasks = await store.get_active_tasks(_UserLike())
+    assert len(tasks) == 1
+    assert tasks[0].id == task.id

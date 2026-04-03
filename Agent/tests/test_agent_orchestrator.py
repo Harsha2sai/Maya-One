@@ -4,10 +4,11 @@ from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
 from core.orchestrator.agent_orchestrator import AgentOrchestrator
 from core.tasks.task_models import TaskStep
-from core.response.agent_response import ToolInvocation
+from core.response.agent_response import AgentResponse, ToolInvocation
 from core.research.research_models import ResearchResult, SourceItem
 from core.media.media_models import MediaResult, MediaTrack
 from core.system.system_models import SystemActionType, SystemResult
+from core.governance.types import UserRole
 
 @pytest.fixture
 def mock_deps():
@@ -44,13 +45,16 @@ async def test_handle_intent_creates_task(mock_deps):
     orchestrator._ensure_task_worker = AsyncMock()
     
     # Run
-    response = await orchestrator.handle_message("Create a report", user_id="test_user")
+    response = await orchestrator.handle_message(
+        "Create a task to plan weekly goals",
+        user_id="test_user",
+    )
     
     # Verify
     mock_planner.generate_plan.assert_called_once()
     planner_prompt = mock_planner.generate_plan.await_args.args[0]
     assert "Host Capability Profile:" in planner_prompt
-    assert planner_prompt.endswith("Create a report")
+    assert planner_prompt.endswith("Create a task to plan weekly goals")
     mock_store.create_task.assert_called_once()
     assert "started a task" in response.display_text
 
@@ -302,11 +306,14 @@ async def test_research_query_routes_to_research_pipeline():
         origin="chat",
     )
 
-    # Response is now immediate ack, research runs in background
-    assert "look that up" in response.display_text.lower()
+    # Response is metadata-only silent ack; research runs in background
+    assert response.display_text == ""
+    assert response.voice_text == ""
     assert response.structured_data is not None
     assert "_routing_mode_type" in response.structured_data
     assert response.structured_data["_routing_mode_type"] == "research_pending"
+    assert response.structured_data["_interaction_mode"] == "silent_ack"
+    assert response.structured_data["_suppress_assistant_output"] is True
     assert "turn_id" in response.structured_data
     # Inline pipeline is invoked by background task after ack returns.
 
@@ -378,11 +385,14 @@ async def test_search_for_routes_to_research_pipeline_not_fastpath():
         origin="chat",
     )
 
-    # Response is now immediate ack, research runs in background
-    assert "look that up" in response.display_text.lower()
+    # Response is metadata-only silent ack; research runs in background
+    assert response.display_text == ""
+    assert response.voice_text == ""
     assert response.structured_data is not None
     assert "_routing_mode_type" in response.structured_data
     assert response.structured_data["_routing_mode_type"] == "research_pending"
+    assert response.structured_data["_interaction_mode"] == "silent_ack"
+    assert response.structured_data["_suppress_assistant_output"] is True
     assert "turn_id" in response.structured_data
     # Tool call should not be invoked for research routing
     assert orchestrator._execute_tool_call.await_count == 0
@@ -541,11 +551,14 @@ async def test_pronoun_followup_forces_research_with_rewrite():
         "expires_at": 9999999999.0,
     }
     orchestrator._handle_research_route = AsyncMock(
-        return_value=SimpleNamespace(
-            display_text="Let me look that up for you.",
-            voice_text="Let me look that up for you.",
-            structured_data={"_routing_mode_type": "research_pending"},
-            tool_invocations=[],
+        return_value=AgentResponse(
+            display_text="",
+            voice_text="",
+            structured_data={
+                "_routing_mode_type": "research_pending",
+                "_interaction_mode": "silent_ack",
+                "_suppress_assistant_output": True,
+            },
         )
     )
 
@@ -556,7 +569,9 @@ async def test_pronoun_followup_forces_research_with_rewrite():
         origin="voice",
     )
 
-    assert "look that up" in response.display_text.lower()
+    assert response.display_text == ""
+    assert response.voice_text == ""
+    assert response.structured_data["_suppress_assistant_output"] is True
     assert orchestrator._router.route.await_count == 0
     assert orchestrator._handle_research_route.await_count == 1
     rewritten_message = orchestrator._handle_research_route.await_args.kwargs["message"]
@@ -577,11 +592,14 @@ async def test_router_not_called_when_pronoun_override_forces_research():
         "expires_at": 9999999999.0,
     }
     orchestrator._handle_research_route = AsyncMock(
-        return_value=SimpleNamespace(
-            display_text="Let me look that up for you.",
-            voice_text="Let me look that up for you.",
-            structured_data={"_routing_mode_type": "research_pending"},
-            tool_invocations=[],
+        return_value=AgentResponse(
+            display_text="",
+            voice_text="",
+            structured_data={
+                "_routing_mode_type": "research_pending",
+                "_interaction_mode": "silent_ack",
+                "_suppress_assistant_output": True,
+            },
         )
     )
 
@@ -736,6 +754,73 @@ async def test_media_query_routes_to_media_agent():
     assert "spotify" in response.display_text.lower()
     assert response.structured_data is not None
     assert "_media_result" in response.structured_data
+
+
+def test_report_export_intent_detection_keywords():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    assert orchestrator._is_report_export_request(
+        "search the web and export report and save it in my downloads"
+    )
+    assert not orchestrator._is_report_export_request(
+        "give me an in-depth report on the latest iran war developments"
+    )
+
+
+@pytest.mark.asyncio
+async def test_report_export_requires_trusted_role():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+
+    response_text = await orchestrator._try_handle_report_export_task(
+        user_text="make a full report and save it in my downloads",
+        user_id="u1",
+        tool_context=SimpleNamespace(user_role=UserRole.USER),
+    )
+
+    assert response_text is not None
+    assert "trusted role" in response_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_report_export_trusted_role_creates_docx():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._run_inline_research_pipeline = AsyncMock(
+        return_value=ResearchResult(
+            summary="Detailed research summary.",
+            voice_summary="Detailed voice summary.",
+            sources=[
+                SourceItem.from_values(
+                    title="Source A",
+                    url="https://example.com/source-a",
+                    snippet="Snippet A",
+                    provider="tavily",
+                )
+            ],
+            query="iran and us conflict market report",
+            trace_id="trace-report",
+            duration_ms=20,
+            voice_mode="deep",
+        )
+    )
+    orchestrator._execute_tool_call = AsyncMock(
+        return_value=(
+            {"success": True, "message": "Created Word document"},
+            ToolInvocation(tool_name="create_docx", status="success", latency_ms=4),
+        )
+    )
+
+    response_text = await orchestrator._try_handle_report_export_task(
+        user_text="create a detailed report and save it to my downloads",
+        user_id="u1",
+        tool_context=SimpleNamespace(user_role=UserRole.TRUSTED, session_id="s1", trace_id="t1"),
+    )
+
+    assert response_text is not None
+    assert "saved it to ~/Downloads/" in response_text
+    assert orchestrator._execute_tool_call.await_count == 1
+    tool_name = orchestrator._execute_tool_call.await_args.args[0]
+    payload = orchestrator._execute_tool_call.await_args.args[1]
+    assert tool_name == "create_docx"
+    assert payload["path"].startswith("~/Downloads/")
 
 
 @pytest.mark.asyncio
