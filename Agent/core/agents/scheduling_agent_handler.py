@@ -275,6 +275,26 @@ class SchedulingAgentHandler(SpecializedAgent):
                 },
                 "confirmation_text": f"I've created the calendar event {calendar_match2.group('title').strip()}.",
             }
+        calendar_match3 = re.search(
+            r"create (?:a )?calendar event for\s+(?P<title>.+?)\s+(?:on\s+)?(?P<start>(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}[\/\-]\d{1,2}|\w+ \d{1,2})(?:\s+at\s+[\d:apm ]+)?)[\.\!\?]?$",
+            lowered,
+            flags=re.IGNORECASE,
+        )
+        if calendar_match3:
+            title = calendar_match3.group("title").strip()
+            start_time = calendar_match3.group("start").strip()
+            return {
+                "status": "completed",
+                "action_type": "create_calendar_event",
+                "tool_name": "create_calendar_event",
+                "parameters": {
+                    "title": title,
+                    "start_time": start_time,
+                    "end_time": "",
+                    "description": "",
+                },
+                "confirmation_text": f"I've created the calendar event {title}.",
+            }
 
         return {"status": "rejected"}
 
