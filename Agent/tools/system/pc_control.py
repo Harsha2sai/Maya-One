@@ -56,6 +56,8 @@ APP_MAP = {
     "calcultor": "gnome-calculator",  # Common typo
     "calulator": "gnome-calculator",  # Common typo
     "terminal": "gnome-terminal",
+    "the terminal": "gnome-terminal",
+    "a terminal": "gnome-terminal",
     "term": "gnome-terminal",
     "console": "gnome-terminal",
     "settings": "gnome-control-center",
