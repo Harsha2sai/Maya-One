@@ -19,6 +19,7 @@ class GlobalAgentContainer:
     _initialized: bool = False
     _memory: Any = None          # HybridMemoryManager
     memory_ingestor: Any = None        # MemoryIngestor
+    _preference_manager: Any = None
     _task_store: Any = None      # SQLiteTaskStore
     _tools: List[Any] = []
     _llm: Any = None             # Base LLM
@@ -55,6 +56,7 @@ class GlobalAgentContainer:
         from core.tasks.task_store import SQLiteTaskStore
         from core.memory.hybrid_memory_manager import HybridMemoryManager
         from core.memory.memory_ingestor import MemoryIngestor
+        from core.memory.preference_manager import PreferenceManager
         from core.tasks.task_tools import get_task_tools
         from core.registry.tool_registry import get_registry
         from core.system.host_capability_profile import collect_host_capability_profile
@@ -81,6 +83,7 @@ class GlobalAgentContainer:
         
         # 1.1 Initialize Ingestor (Singleton)
         cls.memory_ingestor = MemoryIngestor(memory_manager=cls._memory)
+        cls._preference_manager = PreferenceManager()
 
         
         # 2. Initialize Task Store (Singleton)
@@ -257,6 +260,7 @@ class GlobalAgentContainer:
             session=None,  # No audio session in console
             memory_manager=cls._memory,
             ingestor=cls.memory_ingestor,
+            preference_manager=cls._preference_manager,
             enable_chat_tools=max(1, int(getattr(settings, "architecture_phase", 1))) >= 3,
             enable_task_pipeline=max(1, int(getattr(settings, "architecture_phase", 1))) >= 4,
         )

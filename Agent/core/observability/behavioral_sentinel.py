@@ -210,7 +210,7 @@ class BehavioralSentinel:
 
             # Write probe
             probe_id = f"sentinel_probe_{datetime.now().isoformat()}"
-            success = memory.store_conversation_turn(
+            success = await memory.store_conversation_turn(
                 user_msg=f"Sentinel probe: {probe_id}",
                 assistant_msg="Probe response",
                 metadata={"sentinel_probe": True, "probe_id": probe_id},

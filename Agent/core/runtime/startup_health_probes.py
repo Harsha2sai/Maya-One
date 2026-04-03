@@ -231,7 +231,7 @@ async def _probe_memory() -> Tuple[bool, str]:
         test_value = "probe_value_12345"
         user_id = "__probe__"
 
-        success = memory.store_conversation_turn(
+        success = await memory.store_conversation_turn(
             user_msg=f"Test key: {test_key}",
             assistant_msg=f"Test value: {test_value}",
             metadata={"user_id": user_id, "probe": True}

@@ -292,44 +292,80 @@ async def _speak_greeting_with_failover(
     """
     Speak the greeting through the same failover-aware path as normal turn TTS.
     """
+    text_len = len(greeting_text or "")
     try:
+        started = time.monotonic()
+        logger.info(
+            "tts_task_started scope=greeting provider=%s text_len=%d timeout_s=%.2f",
+            get_active_tts_provider(),
+            text_len,
+            timeout_s,
+        )
         await asyncio.wait_for(
             session.say(greeting_text, allow_interruptions=True, add_to_chat_ctx=True),
             timeout=timeout_s,
         )
+        elapsed_ms = max(0.0, (time.monotonic() - started) * 1000.0)
         logger.info(
-            "greeting_sent provider=%s text_len=%d",
+            "tts_task_completed scope=greeting provider=%s text_len=%d elapsed_ms=%.2f",
             get_active_tts_provider(),
-            len(greeting_text or ""),
+            text_len,
+            elapsed_ms,
         )
         return
     except asyncio.TimeoutError:
-        logger.warning("greeting_timeout text_len=%d timeout_s=%s", len(greeting_text or ""), timeout_s)
+        elapsed_ms = max(0.0, (time.monotonic() - started) * 1000.0)
+        logger.warning(
+            "greeting_timeout text_len=%d timeout_s=%s elapsed_ms=%.2f",
+            text_len,
+            timeout_s,
+            elapsed_ms,
+        )
         return
     except Exception as err:
-        logger.warning("greeting_tts_error error=%s", err)
+        logger.exception(
+            "greeting_tts_error provider=%s text_len=%d error=%s",
+            get_active_tts_provider(),
+            text_len,
+            err,
+        )
         failover_reason = str(err)
 
     await failover_handler(failover_reason)
 
     try:
+        started_retry = time.monotonic()
+        logger.info(
+            "tts_task_retry_started scope=greeting provider=%s text_len=%d timeout_s=%.2f",
+            get_active_tts_provider(),
+            text_len,
+            timeout_s,
+        )
         await asyncio.wait_for(
             session.say(greeting_text, allow_interruptions=True, add_to_chat_ctx=True),
             timeout=timeout_s,
         )
+        elapsed_ms = max(0.0, (time.monotonic() - started_retry) * 1000.0)
         logger.info(
-            "greeting_sent_via_fallback provider=%s text_len=%d",
+            "tts_task_retry_completed scope=greeting provider=%s text_len=%d elapsed_ms=%.2f",
             get_active_tts_provider(),
-            len(greeting_text or ""),
+            text_len,
+            elapsed_ms,
         )
     except asyncio.TimeoutError:
+        elapsed_ms = max(0.0, (time.monotonic() - started_retry) * 1000.0)
         logger.warning(
             "greeting_timeout_after_failover text_len=%d timeout_s=%s",
-            len(greeting_text or ""),
+            text_len,
             timeout_s,
         )
-    except Exception as retry_err:
         logger.warning(
+            "greeting_timeout_after_failover_elapsed text_len=%d elapsed_ms=%.2f",
+            text_len,
+            elapsed_ms,
+        )
+    except Exception as retry_err:
+        logger.exception(
             "greeting_silent_drop_applied provider=%s reason=%s",
             get_active_tts_provider(),
             retry_err,
@@ -513,7 +549,10 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     - Phase 2+: keeps Phase 1 voice stability and routes `lk.chat`
       text turns through the orchestrator chat path.
     """
-    from livekit.agents import AgentSession, AutoSubscribe
+    # Connect immediately to avoid join timeouts while heavy imports initialize.
+    await ctx.connect(auto_subscribe=agents.AutoSubscribe.AUDIO_ONLY)
+
+    from livekit.agents import AgentSession
     from core.runtime.worker_bootstrap import build_phase1_runtime
     from utils.schema_fixer import apply_schema_patch
     from core.governance.types import UserRole
@@ -536,9 +575,6 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     apply_schema_patch()
     logger.info(f"🔥 PHASE {arch_phase} MODE: LiveKit Voice Agent")
     logger.info(f"🎥 [Phase {arch_phase}] New session: room={ctx.room.name} job={ctx.job.id}")
-
-    # Connect to the room (audio only)
-    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
     # Build Phase 1 runtime: raw LLM + STT + TTS + VAD only.
     # No GlobalAgentContainer, SmartLLM, memory, tools, or orchestrator.
@@ -596,8 +632,8 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     session = AgentSession(
         turn_detection=resolved_turn_detection,
         allow_interruptions=True,
-        min_interruption_duration=0.2,
-        min_interruption_words=0,
+        min_interruption_duration=0.8,
+        min_interruption_words=3,
         min_endpointing_delay=min_endpointing_delay_s,
         max_endpointing_delay=max_endpointing_delay_s,
     )
@@ -640,14 +676,21 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
         float(os.getenv("VOICE_INGRESS_REPLAY_WINDOW_S", "1.25")),
     )
     ingress_seen: dict[str, float] = {}
-    voice_final_grace_s = max(0.1, float(os.getenv("VOICE_FINAL_GRACE_S", "0.35")))
-    voice_coalesce_window_s = max(0.2, float(os.getenv("VOICE_COALESCE_WINDOW_S", "0.85")))
-    voice_post_audio_silence_s = max(0.1, float(os.getenv("VOICE_POST_AUDIO_SILENCE_S", "0.30")))
+    voice_final_grace_s = max(0.1, float(os.getenv("VOICE_FINAL_GRACE_S", "0.60")))
+    voice_coalesce_window_s = max(0.2, float(os.getenv("VOICE_COALESCE_WINDOW_S", "1.60")))
+    voice_post_audio_silence_s = max(0.1, float(os.getenv("VOICE_POST_AUDIO_SILENCE_S", "0.45")))
+    agent_heartbeat_interval_s = max(2.0, float(os.getenv("AGENT_HEARTBEAT_INTERVAL_S", "5.0")))
     voice_lock = threading.Lock()
     voice_last_audio_ts = 0.0
     voice_last_final_seq = 0
+    voice_last_session_transcript_ts = 0.0
     voice_pending_task: Optional[asyncio.Task] = None
+    heartbeat_task: Optional[asyncio.Task] = None
     voice_turn_coalescer = VoiceTurnCoalescer(window_s=voice_coalesce_window_s)
+    voice_room_transcript_fallback_grace_s = max(
+        0.5,
+        float(os.getenv("VOICE_ROOM_TRANSCRIPTION_FALLBACK_GRACE_S", "2.0")),
+    )
     phase2_orchestrator = None
     phase3_orchestrator = None
     media_agent_runtime = None
@@ -943,6 +986,18 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
             voice_last_final_seq += 1
             return voice_last_final_seq
 
+    def _mark_session_transcript_event() -> None:
+        nonlocal voice_last_session_transcript_ts
+        with voice_lock:
+            voice_last_session_transcript_ts = time.monotonic()
+
+    def _has_recent_session_transcript_event() -> bool:
+        with voice_lock:
+            last_ts = voice_last_session_transcript_ts
+        if last_ts <= 0.0:
+            return False
+        return (time.monotonic() - last_ts) <= voice_room_transcript_fallback_grace_s
+
     def _get_voice_state() -> tuple[float, int]:
         with voice_lock:
             return voice_last_audio_ts, voice_last_final_seq
@@ -997,7 +1052,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                 def retrieve_relevant_memories(self, _query: str, k: int = 5):
                     return []
 
-                def store_conversation_turn(self, **_kwargs):
+                async def store_conversation_turn(self, **_kwargs):
                     return None
 
             class _NoopIngestor:
@@ -1250,6 +1305,18 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
 
             async def _publish_and_speak(response_text: str) -> Dict[str, float]:
                 response = ResponseFormatter.normalize_response(response_text)
+                structured_data = getattr(response, "structured_data", None) or {}
+                suppress_assistant_output = (
+                    isinstance(structured_data, dict)
+                    and structured_data.get("_suppress_assistant_output") is True
+                )
+                if suppress_assistant_output:
+                    logger.info(
+                        "research_ack_suppressed turn_id=%s interaction_mode=%s",
+                        turn_id,
+                        structured_data.get("_interaction_mode"),
+                    )
+                    return {"publish_ms": 0.0, "tts_ms": 0.0}
                 safe_text = response.display_text or fallback_response
                 speak_text = response.voice_text or fallback_response
                 tool_ctx_conversation_id = (
@@ -1416,9 +1483,23 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         _get_active_tts_provider(),
                         len(speak_text or ""),
                     )
+                    tts_provider_before = _get_active_tts_provider()
+                    logger.info(
+                        "tts_task_started scope=turn turn_id=%s provider=%s text_len=%d timeout_s=%.2f",
+                        turn_id,
+                        tts_provider_before,
+                        len(speak_text or ""),
+                        voice_session_say_timeout_s,
+                    )
                     await asyncio.wait_for(
                         session.say(speak_text, allow_interruptions=True, add_to_chat_ctx=True),
                         timeout=voice_session_say_timeout_s,
+                    )
+                    logger.info(
+                        "tts_task_completed scope=turn turn_id=%s provider=%s text_len=%d",
+                        turn_id,
+                        _get_active_tts_provider(),
+                        len(speak_text or ""),
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
@@ -1428,8 +1509,57 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         len(speak_text or ""),
                     )
                 except Exception as speak_err:
-                    logger.warning(f"⚠️ [Phase {arch_phase}] session.say failed: {speak_err}")
+                    tts_provider_before = _get_active_tts_provider()
+                    logger.exception(
+                        "tts_task_error scope=turn turn_id=%s provider=%s text_len=%d error=%s",
+                        turn_id,
+                        tts_provider_before,
+                        len(speak_text or ""),
+                        speak_err,
+                    )
                     await _attempt_runtime_tts_failover(str(speak_err))
+                    retry_provider = _get_active_tts_provider()
+                    if retry_provider != tts_provider_before:
+                        retry_started = time.monotonic()
+                        try:
+                            logger.info(
+                                "tts_task_retry_started scope=turn turn_id=%s from_provider=%s to_provider=%s text_len=%d timeout_s=%.2f",
+                                turn_id,
+                                tts_provider_before,
+                                retry_provider,
+                                len(speak_text or ""),
+                                voice_session_say_timeout_s,
+                            )
+                            await asyncio.wait_for(
+                                session.say(speak_text, allow_interruptions=True, add_to_chat_ctx=True),
+                                timeout=voice_session_say_timeout_s,
+                            )
+                            retry_elapsed_ms = max(0.0, (time.monotonic() - retry_started) * 1000.0)
+                            logger.info(
+                                "tts_task_retry_completed scope=turn turn_id=%s provider=%s text_len=%d elapsed_ms=%.2f",
+                                turn_id,
+                                retry_provider,
+                                len(speak_text or ""),
+                                retry_elapsed_ms,
+                            )
+                            tts_ms = max(0.0, (time.monotonic() - tts_started) * 1000.0)
+                            return {"publish_ms": publish_ms, "tts_ms": tts_ms}
+                        except asyncio.TimeoutError:
+                            retry_elapsed_ms = max(0.0, (time.monotonic() - retry_started) * 1000.0)
+                            logger.warning(
+                                "tts_task_retry_timeout scope=turn turn_id=%s provider=%s timeout_s=%.2f elapsed_ms=%.2f",
+                                turn_id,
+                                retry_provider,
+                                voice_session_say_timeout_s,
+                                retry_elapsed_ms,
+                            )
+                        except Exception as retry_err:
+                            logger.exception(
+                                "tts_task_retry_error scope=turn turn_id=%s provider=%s error=%s",
+                                turn_id,
+                                retry_provider,
+                                retry_err,
+                            )
                     logger.warning(
                         "tts_silent_drop_applied provider=%s reason=%s",
                         active_tts_provider,
@@ -1456,6 +1586,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                     text[:120],
                 )
                 logger.info(f"🔐 [Phase {arch_phase}] Tool role context: {tool_ctx.user_role.name} (user={tool_ctx.user_id})")
+                effective_user_id = str(getattr(tool_ctx, "user_id", "") or f"livekit:{sender}")
 
                 if ctx.room:
                     await publish_user_message(ctx.room, turn_id, text)
@@ -1467,7 +1598,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         response = await asyncio.wait_for(
                             phase3_orchestrator.handle_message(
                                 text,
-                                user_id=f"livekit:{sender}",
+                                user_id=effective_user_id,
                                 tool_context=tool_ctx,
                                 origin=origin,
                             ),
@@ -1477,7 +1608,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         response = await asyncio.wait_for(
                             phase3_orchestrator._handle_chat_response(
                                 text,
-                                user_id=f"livekit:{sender}",
+                                user_id=effective_user_id,
                                 tool_context=tool_ctx,
                             ),
                             timeout=text_turn_timeout_s,
@@ -1499,7 +1630,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         response = await asyncio.wait_for(
                             orchestrator.handle_message(
                                 text,
-                                user_id=f"livekit:{sender}",
+                                user_id=effective_user_id,
                                 tool_context=tool_ctx,
                                 origin=origin,
                             ),
@@ -1510,7 +1641,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         response = await asyncio.wait_for(
                             orchestrator._handle_chat_response(
                                 text,
-                                user_id=f"livekit:{sender}",
+                                user_id=effective_user_id,
                                 tool_context=tool_ctx,
                             ),
                             timeout=text_turn_timeout_s,
@@ -1576,6 +1707,23 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
             reliable=True,
             topic="system.events",
         )
+
+    async def _agent_heartbeat_loop() -> None:
+        while not closed_event.is_set():
+            try:
+                await _publish_system_event(
+                    {
+                        "type": "agent_heartbeat",
+                        "session_id": _current_runtime_session_id(),
+                    }
+                )
+            except Exception as hb_err:
+                logger.debug("agent_heartbeat_publish_failed error=%s", hb_err)
+
+            try:
+                await asyncio.wait_for(closed_event.wait(), timeout=agent_heartbeat_interval_s)
+            except asyncio.TimeoutError:
+                continue
 
     async def _publish_topic_event(topic_name: str, event_payload: Dict[str, Any]) -> None:
         if not ctx.room:
@@ -2004,145 +2152,169 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                 exc_info=True,
             )
 
+    def _dispatch_voice_transcript_event(
+        *,
+        transcript_text: str,
+        is_final: bool,
+        speaker_id: Optional[str],
+        source_event_id: Optional[str],
+        participant_hint: Any = None,
+        source: str = "session",
+    ) -> None:
+        if closed_event.is_set() or arch_phase < 3:
+            return
+
+        _mark_voice_activity()
+        if not is_final:
+            return
+
+        text = (transcript_text or "").strip()
+        if not text:
+            return
+        if not is_valid_voice_transcript(text):
+            logger.warning(
+                "⚠️ [Phase %s] transcript_rejected_low_quality source=%s text=%s",
+                arch_phase,
+                source,
+                text[:120],
+            )
+            return
+
+        local_identity = getattr(getattr(ctx.room, "local_participant", None), "identity", None)
+        if speaker_id and local_identity and str(speaker_id) == str(local_identity):
+            return
+
+        participant = participant_hint or _resolve_participant_for_voice(speaker_id)
+        sender = speaker_id or getattr(participant, "identity", None) or "voice_user"
+        source_event_id_text = str(source_event_id) if source_event_id else None
+        if not _accept_ingress(
+            origin="voice",
+            sender=str(sender),
+            text=text,
+            source_event_id=source_event_id_text,
+        ):
+            return
+
+        ingress_received_mono = time.monotonic()
+        coalesced = voice_turn_coalescer.add_segment(
+            sender=str(sender),
+            text=text,
+            participant=participant,
+            source_event_id=source_event_id_text,
+            ingress_received_mono=ingress_received_mono,
+        )
+        seq = _next_voice_seq()
+        _cancel_voice_pending_task()
+
+        async def _dispatch_voice_after_grace(
+            *,
+            accepted_seq: int,
+            accepted_text: str,
+            accepted_segments: int,
+            accepted_sender: str,
+            accepted_participant: Any,
+            accepted_event_id: Optional[str],
+            accepted_mono: float,
+        ) -> None:
+            try:
+                token_count = len(re.findall(r"\b[\w'-]+\b", accepted_text))
+                has_strong_punctuation = bool(re.search(r"[.!?]['\"]?\s*$", accepted_text))
+                immediate_flush = has_strong_punctuation and token_count >= 6
+                flush_reason = "punctuation" if immediate_flush else "timer"
+                grace_delay = 0.05 if immediate_flush else voice_final_grace_s
+                await asyncio.sleep(grace_delay)
+                last_audio_ts, latest_seq = _get_voice_state()
+                if latest_seq != accepted_seq:
+                    return
+                if (time.monotonic() - last_audio_ts) < voice_post_audio_silence_s:
+                    await asyncio.sleep(voice_post_audio_silence_s)
+                    _, latest_seq = _get_voice_state()
+                    if latest_seq != accepted_seq:
+                        return
+
+                turn_wait_started = time.monotonic()
+                while text_turn_lock.locked() and not closed_event.is_set():
+                    await asyncio.sleep(0.05)
+                    if (time.monotonic() - turn_wait_started) > 2.5:
+                        break
+
+                local_turn_id = str(uuid.uuid4())
+                if accepted_segments >= 2:
+                    logger.info(
+                        "voice_turn_coalesced segments=%s flush_reason=%s utterance_len=%s sender=%s source=%s",
+                        accepted_segments,
+                        flush_reason,
+                        len(accepted_text),
+                        accepted_sender,
+                        source,
+                    )
+                logger.info(
+                    "🎙️ VOICE_TURN_ACCEPTED turn_id=%s seq=%s sender=%s source=%s text=%s",
+                    local_turn_id,
+                    accepted_seq,
+                    accepted_sender,
+                    source,
+                    accepted_text[:120],
+                )
+                task = asyncio.create_task(
+                    _handle_text_chat_input(
+                        accepted_text,
+                        accepted_sender,
+                        accepted_participant,
+                        origin="voice",
+                        source_event_id=accepted_event_id,
+                        ingress_received_mono=accepted_mono,
+                        ingress_turn_id=local_turn_id,
+                    )
+                )
+                voice_turn_coalescer.clear()
+                pending_text_tasks.add(task)
+                task.add_done_callback(lambda t: pending_text_tasks.discard(t))
+            except asyncio.CancelledError:
+                return
+            except Exception as dispatch_err:
+                logger.error(
+                    "❌ [Phase %s] VOICE_TURN_DISPATCH failed: %s",
+                    arch_phase,
+                    dispatch_err,
+                    exc_info=True,
+                )
+            finally:
+                _set_voice_pending_task(None)
+
+        task = asyncio.create_task(
+            _dispatch_voice_after_grace(
+                accepted_seq=seq,
+                accepted_text=str(coalesced.get("text") or text),
+                accepted_segments=int(coalesced.get("segments") or 1),
+                accepted_sender=str(coalesced.get("sender") or sender),
+                accepted_participant=coalesced.get("participant") or participant,
+                accepted_event_id=coalesced.get("source_event_id") or source_event_id_text,
+                accepted_mono=float(coalesced.get("ingress_received_mono") or ingress_received_mono),
+            )
+        )
+        _set_voice_pending_task(task)
+        pending_text_tasks.add(task)
+        task.add_done_callback(lambda t: pending_text_tasks.discard(t))
+
     if not _get_session_flag("_maya_transcript_handler_registered"):
         @session.on("user_input_transcribed")
         def _on_user_input_transcribed(ev):
             """Route final voice transcripts through the orchestrator pipeline."""
             try:
-                if closed_event.is_set() or arch_phase < 3:
-                    return
-                _mark_voice_activity()
-                if not getattr(ev, "is_final", False):
-                    return
-                text = (getattr(ev, "transcript", "") or "").strip()
-                if not text:
-                    return
-                if not is_valid_voice_transcript(text):
-                    logger.warning(
-                        "⚠️ [Phase %s] transcript_rejected_low_quality text=%s",
-                        arch_phase,
-                        text[:120],
-                    )
-                    return
-                speaker_id = getattr(ev, "speaker_id", None)
-                local_identity = getattr(getattr(ctx.room, "local_participant", None), "identity", None)
-                if speaker_id and local_identity and str(speaker_id) == str(local_identity):
-                    return
-
-                participant = _resolve_participant_for_voice(speaker_id)
-                sender = speaker_id or getattr(participant, "identity", None) or "voice_user"
-                source_event_id = (
-                    getattr(ev, "id", None)
-                    or getattr(ev, "event_id", None)
-                    or getattr(ev, "segment_id", None)
+                _mark_session_transcript_event()
+                _dispatch_voice_transcript_event(
+                    transcript_text=str(getattr(ev, "transcript", "") or ""),
+                    is_final=bool(getattr(ev, "is_final", False)),
+                    speaker_id=getattr(ev, "speaker_id", None),
+                    source_event_id=(
+                        getattr(ev, "id", None)
+                        or getattr(ev, "event_id", None)
+                        or getattr(ev, "segment_id", None)
+                    ),
+                    participant_hint=_resolve_participant_for_voice(getattr(ev, "speaker_id", None)),
+                    source="session",
                 )
-                source_event_id_text = str(source_event_id) if source_event_id else None
-                if not _accept_ingress(
-                    origin="voice",
-                    sender=str(sender),
-                    text=text,
-                    source_event_id=source_event_id_text,
-                ):
-                    return
-                ingress_received_mono = time.monotonic()
-                coalesced = voice_turn_coalescer.add_segment(
-                    sender=str(sender),
-                    text=text,
-                    participant=participant,
-                    source_event_id=source_event_id_text,
-                    ingress_received_mono=ingress_received_mono,
-                )
-                seq = _next_voice_seq()
-                _cancel_voice_pending_task()
-
-                async def _dispatch_voice_after_grace(
-                    *,
-                    accepted_seq: int,
-                    accepted_text: str,
-                    accepted_segments: int,
-                    accepted_sender: str,
-                    accepted_participant: Any,
-                    accepted_event_id: Optional[str],
-                    accepted_mono: float,
-                ) -> None:
-                    try:
-                        token_count = len(re.findall(r"\b[\w'-]+\b", accepted_text))
-                        has_strong_punctuation = bool(re.search(r"[.!?]['\"]?\s*$", accepted_text))
-                        immediate_flush = has_strong_punctuation and token_count >= 6
-                        flush_reason = "punctuation" if immediate_flush else "timer"
-                        grace_delay = 0.05 if immediate_flush else voice_final_grace_s
-                        await asyncio.sleep(grace_delay)
-                        last_audio_ts, latest_seq = _get_voice_state()
-                        if latest_seq != accepted_seq:
-                            return
-                        if (time.monotonic() - last_audio_ts) < voice_post_audio_silence_s:
-                            await asyncio.sleep(voice_post_audio_silence_s)
-                            _, latest_seq = _get_voice_state()
-                            if latest_seq != accepted_seq:
-                                return
-
-                        turn_wait_started = time.monotonic()
-                        while text_turn_lock.locked() and not closed_event.is_set():
-                            await asyncio.sleep(0.05)
-                            if (time.monotonic() - turn_wait_started) > 2.5:
-                                break
-
-                        local_turn_id = str(uuid.uuid4())
-                        if accepted_segments >= 2:
-                            logger.info(
-                                "voice_turn_coalesced segments=%s flush_reason=%s utterance_len=%s sender=%s",
-                                accepted_segments,
-                                flush_reason,
-                                len(accepted_text),
-                                accepted_sender,
-                            )
-                        logger.info(
-                            "🎙️ VOICE_TURN_ACCEPTED turn_id=%s seq=%s sender=%s text=%s",
-                            local_turn_id,
-                            accepted_seq,
-                            accepted_sender,
-                            accepted_text[:120],
-                        )
-                        task = asyncio.create_task(
-                            _handle_text_chat_input(
-                                accepted_text,
-                                accepted_sender,
-                                accepted_participant,
-                                origin="voice",
-                                source_event_id=accepted_event_id,
-                                ingress_received_mono=accepted_mono,
-                                ingress_turn_id=local_turn_id,
-                            )
-                        )
-                        voice_turn_coalescer.clear()
-                        pending_text_tasks.add(task)
-                        task.add_done_callback(lambda t: pending_text_tasks.discard(t))
-                    except asyncio.CancelledError:
-                        return
-                    except Exception as dispatch_err:
-                        logger.error(
-                            "❌ [Phase %s] VOICE_TURN_DISPATCH failed: %s",
-                            arch_phase,
-                            dispatch_err,
-                            exc_info=True,
-                        )
-                    finally:
-                        _set_voice_pending_task(None)
-
-                task = asyncio.create_task(
-                    _dispatch_voice_after_grace(
-                        accepted_seq=seq,
-                        accepted_text=str(coalesced.get("text") or text),
-                        accepted_segments=int(coalesced.get("segments") or 1),
-                        accepted_sender=str(coalesced.get("sender") or sender),
-                        accepted_participant=coalesced.get("participant") or participant,
-                        accepted_event_id=coalesced.get("source_event_id") or source_event_id_text,
-                        accepted_mono=float(coalesced.get("ingress_received_mono") or ingress_received_mono),
-                    )
-                )
-                _set_voice_pending_task(task)
-                pending_text_tasks.add(task)
-                task.add_done_callback(lambda t: pending_text_tasks.discard(t))
             except Exception as voice_err:
                 logger.error(
                     f"❌ [Phase {arch_phase}] user_input_transcribed handler failed: {voice_err}",
@@ -2153,6 +2325,84 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     else:
         logger.error(
             "🚫 DUPLICATE_HANDLER_REGISTRATION_BLOCKED handler=user_input_transcribed job_id=%s pid=%s session_identity=%s",
+            str(getattr(getattr(ctx, "job", None), "id", "") or "unknown"),
+            os.getpid(),
+            id(session),
+        )
+
+    if not _get_session_flag("_maya_room_transcription_handler_registered"):
+        @ctx.room.on("transcription_received")
+        def _on_room_transcription_received(*args):
+            """
+            Fallback path for SDK/runtime variants where user_input_transcribed is not emitted.
+            """
+            try:
+                if closed_event.is_set() or arch_phase < 3:
+                    return
+                if _has_recent_session_transcript_event():
+                    return
+
+                segments = None
+                participant = None
+                publication = None
+
+                if len(args) >= 3:
+                    segments = args[0]
+                    participant = args[1]
+                    publication = args[2]
+                elif len(args) == 1:
+                    packet = args[0]
+                    segments = (
+                        getattr(packet, "segments", None)
+                        or getattr(packet, "transcription", None)
+                    )
+                    participant = getattr(packet, "participant", None)
+                    publication = getattr(packet, "publication", None)
+
+                if hasattr(segments, "segments"):
+                    segments = getattr(segments, "segments", None)
+                if not segments:
+                    return
+
+                speaker_id = (
+                    getattr(participant, "identity", None)
+                    or getattr(publication, "participant_identity", None)
+                )
+
+                for segment in segments:
+                    if segment is None:
+                        continue
+                    seg_text = (getattr(segment, "text", "") or "").strip()
+                    if not seg_text:
+                        continue
+                    seg_final = bool(
+                        getattr(segment, "final", getattr(segment, "is_final", False))
+                    )
+                    seg_id = (
+                        getattr(segment, "id", None)
+                        or getattr(segment, "segment_id", None)
+                        or getattr(segment, "event_id", None)
+                    )
+                    _dispatch_voice_transcript_event(
+                        transcript_text=seg_text,
+                        is_final=seg_final,
+                        speaker_id=speaker_id,
+                        source_event_id=seg_id,
+                        participant_hint=participant,
+                        source="room_transcription",
+                    )
+            except Exception as room_transcript_err:
+                logger.error(
+                    "❌ [Phase %s] room transcription fallback handler failed: %s",
+                    arch_phase,
+                    room_transcript_err,
+                    exc_info=True,
+                )
+
+        _set_session_flag("_maya_room_transcription_handler_registered", True)
+    else:
+        logger.error(
+            "🚫 DUPLICATE_HANDLER_REGISTRATION_BLOCKED handler=room_transcription_received job_id=%s pid=%s session_identity=%s",
             str(getattr(getattr(ctx, "job", None), "id", "") or "unknown"),
             os.getpid(),
             id(session),
@@ -2172,6 +2422,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
 
     # Start session (attaches agent to room)
     await session.start(room=ctx.room, agent=voice_agent)
+    heartbeat_task = asyncio.create_task(_agent_heartbeat_loop())
 
     # Proactive greeting
     try:
@@ -2222,6 +2473,9 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     await closed_event.wait()
 
     # Best-effort cleanup of pending text handlers
+    if heartbeat_task is not None:
+        heartbeat_task.cancel()
+        await asyncio.gather(heartbeat_task, return_exceptions=True)
     for task in list(pending_text_tasks):
         task.cancel()
     if pending_text_tasks:

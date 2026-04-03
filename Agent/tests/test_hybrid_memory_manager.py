@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 import os
 import shutil
@@ -46,11 +47,11 @@ def test_memory_manager_initialization(temp_memory_manager):
 
 def test_store_conversation_turn(temp_memory_manager):
     """Test storing a conversation turn."""
-    success = temp_memory_manager.store_conversation_turn(
+    success = asyncio.run(temp_memory_manager.store_conversation_turn(
         user_msg="What is Python?",
         assistant_msg="Python is a high-level programming language.",
         metadata={"session_id": "test123"}
-    )
+    ))
     
     assert success is True
     stats = temp_memory_manager.get_stats()
@@ -59,13 +60,13 @@ def test_store_conversation_turn(temp_memory_manager):
 
 def test_store_conversation_turn_persists_user_and_session_scope(temp_memory_manager):
     """Conversation turns should persist user/session metadata for scoped retrieval."""
-    success = temp_memory_manager.store_conversation_turn(
+    success = asyncio.run(temp_memory_manager.store_conversation_turn(
         user_msg="my name is Harsha",
         assistant_msg="Nice to meet you, Harsha.",
         metadata={"source": "conversation", "role": "chat"},
         user_id="console_user",
         session_id="console-room",
-    )
+    ))
 
     assert success is True
     stored = temp_memory_manager.retriever.vector_store.collection.get(
@@ -83,12 +84,12 @@ def test_store_conversation_turn_persists_user_and_session_scope(temp_memory_man
     assert matched["session_id"] == "console-room"
 
 def test_store_conversation_turn_extracts_profile_fact_for_name_statement(temp_memory_manager):
-    success = temp_memory_manager.store_conversation_turn(
+    success = asyncio.run(temp_memory_manager.store_conversation_turn(
         user_msg="my name is Harsha",
         assistant_msg="Nice to meet you.",
         user_id="console_user",
         session_id="console-room",
-    )
+    ))
     assert success is True
 
     profile_rows = temp_memory_manager.retriever.vector_store.collection.get(
@@ -99,18 +100,18 @@ def test_store_conversation_turn_extracts_profile_fact_for_name_statement(temp_m
     assert any("name=Harsha" in str(doc or "") for doc in (profile_rows.get("documents") or []))
 
 def test_duplicate_conversation_write_guard_skips_repeated_user_turn(temp_memory_manager):
-    first = temp_memory_manager.store_conversation_turn(
+    first = asyncio.run(temp_memory_manager.store_conversation_turn(
         user_msg="repeat this question",
         assistant_msg="first answer",
         user_id="console_user",
         session_id="console-room",
-    )
-    second = temp_memory_manager.store_conversation_turn(
+    ))
+    second = asyncio.run(temp_memory_manager.store_conversation_turn(
         user_msg="repeat this question",
         assistant_msg="second answer should be deduped",
         user_id="console_user",
         session_id="console-room",
-    )
+    ))
     assert first is True
     assert second is True
 
@@ -145,14 +146,14 @@ def test_store_tool_output(temp_memory_manager):
 def test_retrieve_relevant_memories(temp_memory_manager):
     """Test retrieving relevant memories."""
     # Store some memories
-    temp_memory_manager.store_conversation_turn(
+    asyncio.run(temp_memory_manager.store_conversation_turn(
         "Tell me about Python",
         "Python is a programming language"
-    )
-    temp_memory_manager.store_conversation_turn(
+    ))
+    asyncio.run(temp_memory_manager.store_conversation_turn(
         "What about JavaScript?",
         "JavaScript is used for web development"
-    )
+    ))
     temp_memory_manager.store_task_result(
         "task-1",
         "Completed Python script for data processing"
@@ -167,7 +168,7 @@ def test_retrieve_relevant_memories(temp_memory_manager):
 
 def test_get_stats(temp_memory_manager):
     """Test getting memory statistics."""
-    temp_memory_manager.store_conversation_turn("Hello", "Hi there")
+    asyncio.run(temp_memory_manager.store_conversation_turn("Hello", "Hi there"))
     temp_memory_manager.store_task_result("task-1", "Done")
     
     stats = temp_memory_manager.get_stats()

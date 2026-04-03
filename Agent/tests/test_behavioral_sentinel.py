@@ -65,7 +65,7 @@ class TestBehavioralSentinel:
             def __init__(self):
                 self._probe = None
 
-            def store_conversation_turn(
+            async def store_conversation_turn(
                 self,
                 *,
                 user_msg,
@@ -103,7 +103,7 @@ class TestBehavioralSentinel:
         import core.memory.hybrid_memory_manager as hmm_module
 
         class _FailingMemory:
-            def store_conversation_turn(self, **kwargs):
+            async def store_conversation_turn(self, **kwargs):
                 del kwargs
                 return False
 

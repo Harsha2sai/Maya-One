@@ -77,7 +77,7 @@ class TestBootProbes:
         import core.memory.hybrid_memory_manager as hmm_module
 
         class _MemoryStub:
-            def store_conversation_turn(self, **kwargs):
+            async def store_conversation_turn(self, **kwargs):
                 del kwargs
                 return True
 

@@ -363,6 +363,10 @@ CRITICAL TOOL USAGE:
                     "source": "memory",
                 }
             )
+            logger.debug(
+                "context_builder_memory_appended_to_context chars=%s",
+                len(memory_text),
+            )
 
         raw.append(
             {
@@ -444,6 +448,16 @@ CRITICAL TOOL USAGE:
             logger.info("context_builder_memory_skipped reason=identity_or_capability_or_small_talk origin=voice")
 
         memory_results = self._limit_semantic_results(memory_results, voice_k)
+        if not skip_memory:
+            if memory_results:
+                logger.info(
+                    "context_builder_memory_injected count=%s origin=voice",
+                    len(memory_results),
+                )
+            else:
+                logger.info(
+                    "context_builder_memory_skipped reason=retrieval_empty origin=voice"
+                )
 
         return self._assemble_and_guard(
             system_prompt=system_prompt,
@@ -501,6 +515,16 @@ CRITICAL TOOL USAGE:
             logger.info("context_builder_memory_skipped reason=identity_or_capability_or_small_talk origin=chat")
 
         memory_results = self._limit_semantic_results(memory_results, chat_k)
+        if not skip_memory:
+            if memory_results:
+                logger.info(
+                    "context_builder_memory_injected count=%s origin=chat",
+                    len(memory_results),
+                )
+            else:
+                logger.info(
+                    "context_builder_memory_skipped reason=retrieval_empty origin=chat"
+                )
 
         return self._assemble_and_guard(
             system_prompt=system_prompt,

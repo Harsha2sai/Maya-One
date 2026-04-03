@@ -114,7 +114,7 @@ class HybridMemoryManager:
             logger.error(f"Failed to store profile fact: {e}")
             return False
     
-    def store_conversation_turn(
+    async def store_conversation_turn(
         self,
         user_msg: str,
         assistant_msg: str,
@@ -125,6 +125,7 @@ class HybridMemoryManager:
         """
         Store a conversation turn as memory.
         """
+        logger.debug("memory_write_started background=True user_id=%s", user_id)
         try:
             dedupe_basis = f"turn|{user_id or ''}|{session_id or ''}|{re.sub(r'\\s+', ' ', (user_msg or '').strip().lower())}"
             dedupe_key = hashlib.sha1(dedupe_basis.encode("utf-8")).hexdigest()

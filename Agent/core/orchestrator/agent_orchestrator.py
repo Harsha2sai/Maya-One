@@ -19,6 +19,7 @@ from core.tasks.task_models import Task, TaskStatus
 from core.context.context_guard import ContextGuard
 from core.telemetry.runtime_metrics import RuntimeMetrics
 from core.memory.hybrid_memory_manager import HybridMemoryManager
+from core.memory.preference_manager import PreferenceManager
 from core.orchestrator.agent_router import AgentRouter
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
@@ -26,6 +27,7 @@ from core.security.input_guard import InputGuard
 from core.governance.types import UserRole
 from core.utils.intent_utils import normalize_intent
 from core.utils.small_talk_detector import is_small_talk
+from core.utils.context_signal import get_music_query
 from core.agents.contracts import AgentHandoffRequest, HandoffSignal
 from core.agents.handoff_manager import get_handoff_manager
 from core.agents.registry import get_agent_registry
@@ -127,7 +129,7 @@ class _NoopMemoryManager:
         del k, user_id, session_id, origin
         return []
 
-    def store_conversation_turn(self, **_kwargs):
+    async def store_conversation_turn(self, **_kwargs):
         return None
 
 
@@ -174,6 +176,7 @@ class AgentOrchestrator:
         context_guard: Optional[ContextGuard] = None,
         memory_manager: Any = None,
         ingestor: Any = None,
+        preference_manager: Any = None,
         enable_chat_tools: bool = False,
         enable_task_pipeline: bool = True,
     ):
@@ -219,6 +222,13 @@ class AgentOrchestrator:
 
         self.memory = memory_manager
         self.ingestor = ingestor
+        self.preference_manager = preference_manager
+        if self.preference_manager is None:
+            try:
+                self.preference_manager = PreferenceManager()
+            except Exception as pref_err:
+                logger.warning(f"⚠️ Preference manager unavailable; personalization disabled: {pref_err}")
+                self.preference_manager = None
         self._memory_timeout_count = 0
         self._memory_disabled_until = 0.0
         self._synthesis_timeout_s = max(
@@ -2683,6 +2693,118 @@ class AgentOrchestrator:
         summary = summary[:180]
         return f"I've started a task with {len(steps)} steps: {summary}..."
 
+    def _queue_preference_update(self, user_id: str, key: str, value: Any, source: str) -> None:
+        if not self.preference_manager:
+            return
+        if not str(user_id or "").strip():
+            return
+        set_pref = getattr(self.preference_manager, "set", None)
+        if callable(set_pref):
+            asyncio.create_task(set_pref(user_id, key, value))
+            logger.info(
+                "preference_implicit_update_queued user_id=%s key=%s value=%s source=%s",
+                user_id,
+                key,
+                value,
+                source,
+            )
+            return
+        update_pref = getattr(self.preference_manager, "update_preference", None)
+        if callable(update_pref):
+            asyncio.create_task(update_pref(user_id, key, value))
+            logger.info(
+                "preference_implicit_update_queued user_id=%s key=%s value=%s source=%s",
+                user_id,
+                key,
+                value,
+                source,
+            )
+
+    def _queue_preference_extraction(self, user_text: str, user_id: str) -> None:
+        if not self.preference_manager:
+            return
+        extract = getattr(self.preference_manager, "extract_from_text", None)
+        if callable(extract) and str(user_text or "").strip():
+            asyncio.create_task(extract(user_text, user_id))
+
+    def _capture_implicit_preference_from_direct_tool(
+        self,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        user_id: str,
+    ) -> None:
+        app_name = ""
+        if tool_name == "open_app":
+            app_name = str(tool_args.get("app_name") or "").strip().lower()
+            for browser in ("firefox", "chrome", "brave", "edge"):
+                if browser in app_name:
+                    self._queue_preference_update(
+                        user_id,
+                        "preferred_browser",
+                        browser,
+                        source="direct_open_app",
+                    )
+                    break
+            for music_app in ("spotify", "youtube", "vlc"):
+                if music_app in app_name:
+                    self._queue_preference_update(
+                        user_id,
+                        "music_app",
+                        music_app,
+                        source="direct_open_app",
+                    )
+                    break
+        elif tool_name == "set_volume":
+            try:
+                percent = int(tool_args.get("percent"))
+            except Exception:
+                return
+            if 0 <= percent <= 100:
+                self._queue_preference_update(
+                    user_id,
+                    "preferred_volume",
+                    percent,
+                    source="direct_set_volume",
+                )
+
+    @staticmethod
+    def _is_generic_music_request(message: str) -> bool:
+        text = str(message or "").strip().lower()
+        return bool(
+            re.search(
+                r"\b(play|start|put on)\b(?:\s+(?:some|any))?\s+\b(music|songs?)\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
+    async def _resolve_media_query_from_preferences(self, message: str, user_id: str) -> str:
+        if not self.preference_manager:
+            return message
+        if not self._is_generic_music_request(message):
+            return message
+
+        get_pref = getattr(self.preference_manager, "get_all", None)
+        if not callable(get_pref):
+            get_pref = getattr(self.preference_manager, "get_preferences", None)
+        if not callable(get_pref):
+            return message
+
+        try:
+            prefs = await get_pref(user_id)
+        except Exception as pref_err:
+            logger.debug("media_preference_lookup_failed user_id=%s error=%s", user_id, pref_err)
+            return message
+
+        music_app = str((prefs or {}).get("music_app") or "").strip().lower()
+        music_genre = str((prefs or {}).get("music_genre") or "").strip().lower()
+        if not music_app or not music_genre:
+            return message
+
+        query = get_music_query(music_genre)
+        logger.info("media_preference_resolved app=%s query=%s user_id=%s", music_app, query, user_id)
+        return f"play {query} on {music_app}"
+
     def _detect_direct_tool_intent(self, message: str, origin: str = "chat") -> Optional[DirectToolIntent]:
         """
         Deterministic fast-path for high-frequency queries.
@@ -3786,8 +3908,8 @@ class AgentOrchestrator:
             response = self._summarize_task_start(user_text, steps)
             self.turn_state["pending_task_completion_summary"] = response
             
-            # Store turn
-            try:
+            # Store turn in background to avoid blocking the turn loop.
+            asyncio.create_task(
                 self.memory.store_conversation_turn(
                     user_msg=user_text,
                     assistant_msg=response,
@@ -3795,8 +3917,7 @@ class AgentOrchestrator:
                     user_id=user_id,
                     session_id=memory_session_id,
                 )
-            except Exception as mem_err:
-                logger.warning(f"⚠️ Failed to store planner turn in memory: {mem_err}")
+            )
             return response
         else:
             return "Failed to save the task."
@@ -4045,22 +4166,31 @@ class AgentOrchestrator:
         if response_text.startswith("Sorry, I encountered"):
             return
 
+        store_turn = getattr(self.memory, "store_conversation_turn", None)
+        if not callable(store_turn):
+            logger.debug("chat_turn_memory_skipped reason=store_method_missing")
+            return
+
         try:
-            self.memory.store_conversation_turn(
-                user_msg=user_text,
-                assistant_msg=response_text,
-                metadata={"source": "conversation", "role": "chat"},
-                user_id=user_id,
-                session_id=session_id,
-            )
-            logger.info(
-                "chat_turn_memory_stored user_id=%s session_id=%s origin=%s",
-                user_id,
-                session_id or "none",
-                origin or "unknown",
+            asyncio.create_task(
+                store_turn(
+                    user_msg=user_text,
+                    assistant_msg=response_text,
+                    metadata={"source": "conversation", "role": "chat"},
+                    user_id=user_id,
+                    session_id=session_id,
+                )
             )
         except Exception as mem_err:
-            logger.warning("chat_turn_memory_store_failed error=%s", mem_err)
+            logger.warning(f"⚠️ Failed to queue chat memory write: {mem_err}")
+            return
+        self._queue_preference_extraction(user_text, user_id)
+        logger.info(
+            "chat_turn_memory_stored user_id=%s session_id=%s origin=%s",
+            user_id,
+            session_id or "none",
+            origin or "unknown",
+        )
 
     async def _handle_chat_response_core(
         self,
@@ -4201,6 +4331,11 @@ class AgentOrchestrator:
                         voice_text = f"Today's date is {cleaned_value}"
                     else:
                         voice_text = cleaned_value
+            self._capture_implicit_preference_from_direct_tool(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                user_id=user_id,
+            )
 
             response = ResponseFormatter.build_response(
                 display_text=display_candidate or voice_text,
@@ -4290,6 +4425,7 @@ class AgentOrchestrator:
 
         if agent_key == "media_play":
             try:
+                media_command = await self._resolve_media_query_from_preferences(message, user_id)
                 session_id = (
                     getattr(tool_context, "session_id", None)
                     or self._current_session_id
@@ -4309,7 +4445,7 @@ class AgentOrchestrator:
                 )
                 handoff_request = self._build_handoff_request(
                     target_agent=handoff_target,
-                    message=message,
+                    message=media_command,
                     user_id=user_id,
                     execution_mode="inline",
                     intent="media_play",
@@ -4364,7 +4500,7 @@ class AgentOrchestrator:
                     )
                     media_agent = self._resolve_media_agent()
                     media_result = await media_agent.run(
-                        command=message,
+                        command=media_command,
                         user_id=user_id,
                         session_id=session_id,
                         trace_id=trace_id,
