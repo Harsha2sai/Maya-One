@@ -977,6 +977,29 @@ class AgentOrchestrator:
         return context
 
     def _resolve_research_subject_from_context(self, tool_context: Any = None) -> str:
+        def _is_bad_subject(candidate: str) -> bool:
+            if not candidate:
+                return True
+            lowered = candidate.strip().lower()
+            if not lowered:
+                return True
+            # Avoid filesystem/location nouns from task requests (e.g., "Downloads").
+            if lowered in {"downloads", "download", "desktop", "documents", "folder", "file", "pdf"}:
+                return True
+            if "/" in lowered or "\\" in lowered:
+                return True
+            return False
+
+        # Source 1: most recent completed research result (session-scoped, TTL guarded)
+        context = self._get_active_research_context(tool_context)
+        if context:
+            candidate = self._extract_subject_from_text(str(context.get("subject") or ""))
+            if candidate and not _is_bad_subject(candidate):
+                return candidate
+            candidate = self._extract_subject_from_text(str(context.get("query") or ""))
+            if candidate and not _is_bad_subject(candidate):
+                return candidate
+
         history = list(self._conversation_history or [])
 
         # Source 1: in-session user history (prefer user intent over assistant phrasing)
@@ -985,8 +1008,11 @@ class AgentOrchestrator:
                 continue
             if str(item.get("role") or "").strip().lower() != "user":
                 continue
+            item_route = str(item.get("route") or "")
+            if item_route and item_route != "research":
+                continue
             candidate = self._extract_subject_from_text(str(item.get("content") or ""))
-            if candidate:
+            if candidate and not _is_bad_subject(candidate):
                 return candidate
 
         # Source 2: in-session assistant history
@@ -995,8 +1021,11 @@ class AgentOrchestrator:
                 continue
             if str(item.get("role") or "").strip().lower() != "assistant":
                 continue
+            item_route = str(item.get("route") or "")
+            if item_route and item_route != "research":
+                continue
             candidate = self._extract_subject_from_text(str(item.get("content") or ""))
-            if candidate:
+            if candidate and not _is_bad_subject(candidate):
                 return candidate
 
         # Source 3: injected continuity summary
@@ -1004,7 +1033,7 @@ class AgentOrchestrator:
             if str(item.get("source") or "") != "session_continuity":
                 continue
             candidate = self._extract_subject_from_text(str(item.get("content") or ""))
-            if candidate:
+            if candidate and not _is_bad_subject(candidate):
                 return candidate
 
         # Source 4: bootstrap payload
@@ -1018,7 +1047,7 @@ class AgentOrchestrator:
         topic_summary = str(payload.get("topic_summary") or "").strip()
         if topic_summary:
             candidate = self._extract_subject_from_text(topic_summary)
-            if candidate:
+            if candidate and not _is_bad_subject(candidate):
                 return candidate
 
         recent_events = payload.get("recent_events") or []
@@ -1027,18 +1056,9 @@ class AgentOrchestrator:
                 if not isinstance(event, dict):
                     continue
                 candidate = self._extract_subject_from_text(str(event.get("content") or ""))
-                if candidate:
+                if candidate and not _is_bad_subject(candidate):
                     return candidate
 
-        # Source 5: most recent completed research result (session-scoped, TTL guarded)
-        context = self._get_active_research_context(tool_context)
-        if context:
-            candidate = self._extract_subject_from_text(str(context.get("subject") or ""))
-            if candidate:
-                return candidate
-            candidate = self._extract_subject_from_text(str(context.get("query") or ""))
-            if candidate:
-                return candidate
         return ""
 
     def rewrite_research_query_for_context(
@@ -1219,6 +1239,13 @@ class AgentOrchestrator:
         else:
             await self._run_research_background(**background_kwargs)
 
+        self._append_conversation_history(
+            "user",
+            message,
+            source="history",
+            route="research",
+        )
+
         # Immediate acknowledgement — routed silently and surfaced via chat events/UI
         logger.info(
             "research_dispatched_to_background",
@@ -1276,9 +1303,10 @@ class AgentOrchestrator:
             history_summary = f"Research result: {subject}. {summary_sentence}".strip()
             self._append_conversation_history(
                 "assistant",
-                history_summary,
-                source="research_summary",
-            )
+            history_summary,
+            source="research_summary",
+            route="research",
+        )
 
             logger.info(
                 "research_background_complete",
@@ -1572,13 +1600,14 @@ class AgentOrchestrator:
         role: str,
         content: str,
         source: str = "history",
+        route: str = "",
     ) -> None:
         text = str(content or "").strip()
         if not text:
             return
         source_name = str(source or "history")
         self._conversation_history.append(
-            {"role": role, "content": text, "source": source_name}
+            {"role": role, "content": text, "source": source_name, "route": str(route or "")}
         )
         max_turns = max(4, int(os.getenv("PHASE6_HISTORY_TURNS", "20")))
         max_messages = max_turns * 2
