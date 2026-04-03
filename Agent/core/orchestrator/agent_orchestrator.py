@@ -4573,6 +4573,39 @@ class AgentOrchestrator:
                     host_profile=host_profile,
                 )
                 handoff_result = await self._handoff_manager.delegate(handoff_request)
+                if handoff_result.status == "completed":
+                    tool_name = str((handoff_result.structured_payload or {}).get("tool_name") or "").strip()
+                    tool_args = (handoff_result.structured_payload or {}).get("parameters") or {}
+                    if tool_name in {"run_shell_command", "cancel_task", "send_email"}:
+                        tool_output, tool_invocation = await self._execute_tool_call(
+                            tool_name=tool_name,
+                            args=tool_args,
+                            user_id=user_id,
+                            tool_context=tool_context,
+                        )
+                        structured_data = (
+                            tool_output
+                            if isinstance(tool_output, dict)
+                            else {"result": str(tool_output or "")}
+                        )
+                        display_text = ResponseFormatter.extract_display_candidate(structured_data, tool_name)
+                        output_text = str(
+                            structured_data.get("result")
+                            or structured_data.get("message")
+                            or tool_output
+                            or ""
+                        ).strip()
+                        response = ResponseFormatter.build_response(
+                            display_text=display_text or output_text or "Request processed.",
+                            voice_text=display_text or output_text or "Request processed.",
+                            tool_invocations=[tool_invocation],
+                            mode="direct",
+                            structured_data={
+                                "_handoff_result": handoff_result.structured_payload,
+                            },
+                        )
+                        self.turn_state["pending_system_action_result"] = str(output_text or "")
+                        return self._tag_response_with_routing_type(response, "direct_action")
                 if handoff_result.status in {"failed", "rejected"}:
                     logger.warning(
                         "system_handoff_fallback_to_legacy trace_id=%s status=%s error_code=%s",

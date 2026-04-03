@@ -2,6 +2,7 @@
 System Operator Agent - Specialized in system control and file operations.
 """
 import logging
+import re
 from core.agents.base import SpecializedAgent, AgentContext, AgentResponse
 from core.agents.contracts import AgentCapabilityMatch, AgentHandoffRequest, AgentHandoffResult
 from core.response.response_formatter import ResponseFormatter
@@ -83,7 +84,82 @@ class SystemOperatorAgent(SpecializedAgent):
             )
 
     async def handle(self, request: AgentHandoffRequest) -> AgentHandoffResult:
-        actions = await self._planner._parse_intent(request.user_text, trace_id=request.trace_id)
+        user_text = str(request.user_text or "")
+        lowered = user_text.lower()
+
+        # Direct tool intents that should go through ToolManager (for governance gate).
+        shell_match = re.search(r"\brun\s+shell\s+command\s+(.+)$", user_text, flags=re.IGNORECASE)
+        if shell_match:
+            command = shell_match.group(1).strip()
+            return AgentHandoffResult(
+                handoff_id=request.handoff_id,
+                trace_id=request.trace_id,
+                source_agent=self.name,
+                status="completed",
+                user_visible_text="System intent validated.",
+                voice_text=None,
+                structured_payload={
+                    "tool_name": "run_shell_command",
+                    "parameters": {"command": command},
+                    "requires_confirmation": True,
+                },
+                next_action="continue",
+            )
+
+        cancel_match = re.search(r"\bcancel\s+task\s+([A-Za-z0-9_-]+)\b", user_text, flags=re.IGNORECASE)
+        if cancel_match:
+            task_id = cancel_match.group(1).strip()
+            return AgentHandoffResult(
+                handoff_id=request.handoff_id,
+                trace_id=request.trace_id,
+                source_agent=self.name,
+                status="completed",
+                user_visible_text="System intent validated.",
+                voice_text=None,
+                structured_payload={
+                    "tool_name": "cancel_task",
+                    "parameters": {"task_id": task_id},
+                    "requires_confirmation": True,
+                },
+                next_action="continue",
+            )
+
+        email_match = re.search(
+            r"\bsend\s+(?:an\s+)?email\s+to\s+(?P<to>\\S+@\\S+)(?:\\s+subject\\s+(?P<subject>.+?))?(?:\\s+message\\s+(?P<message>.+))?$",
+            user_text,
+            flags=re.IGNORECASE,
+        )
+        if email_match:
+            to_email = email_match.group("to")
+            subject = (email_match.group("subject") or "").strip()
+            message = (email_match.group("message") or "").strip()
+            if not subject or not message:
+                return AgentHandoffResult(
+                    handoff_id=request.handoff_id,
+                    trace_id=request.trace_id,
+                    source_agent=self.name,
+                    status="needs_followup",
+                    user_visible_text="Please provide a subject and message for the email.",
+                    voice_text="Please provide a subject and message for the email.",
+                    structured_payload={"error": "missing_email_fields"},
+                    next_action="respond",
+                )
+            return AgentHandoffResult(
+                handoff_id=request.handoff_id,
+                trace_id=request.trace_id,
+                source_agent=self.name,
+                status="completed",
+                user_visible_text="System intent validated.",
+                voice_text=None,
+                structured_payload={
+                    "tool_name": "send_email",
+                    "parameters": {"to_email": to_email, "subject": subject, "message": message},
+                    "requires_confirmation": True,
+                },
+                next_action="continue",
+            )
+
+        actions = await self._planner._parse_intent(user_text, trace_id=request.trace_id)
         if not actions:
             return AgentHandoffResult(
                 handoff_id=request.handoff_id,
