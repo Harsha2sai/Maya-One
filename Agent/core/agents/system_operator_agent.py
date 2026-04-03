@@ -125,7 +125,7 @@ class SystemOperatorAgent(SpecializedAgent):
             )
 
         email_match = re.search(
-            r"\bsend\s+(?:an\s+)?email\s+to\s+(?P<to>\\S+@\\S+)(?:\\s+subject\\s+(?P<subject>.+?))?(?:\\s+message\\s+(?P<message>.+))?$",
+            r"\bsend\s+(?:an\s+)?email\s+to\s+(?P<to>\S+@\S+)(?:\s+subject\s+(?P<subject>.+?))?(?:\s+message\s+(?P<message>.+))?$",
             user_text,
             flags=re.IGNORECASE,
         )
