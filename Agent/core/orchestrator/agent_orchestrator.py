@@ -2761,6 +2761,19 @@ class AgentOrchestrator:
             return DirectToolIntent("run_shell_command", {"command": "playerctl volume 0.1-"}, "Volume down.", "media")
         if re.match(r"^\s*(mute|mute music|mute playback)\s*$", normalized, re.IGNORECASE):
             return DirectToolIntent("run_shell_command", {"command": "playerctl volume 0.0"}, "Muted.", "media")
+        volume_set = re.match(
+            r"^\s*(?:set|change|adjust)(?:\s+the)?\s+volume(?:\s+to)?\s+(\d{1,3})\s*%?\s*$",
+            normalized,
+            re.IGNORECASE,
+        )
+        if volume_set:
+            percent = max(0, min(100, int(volume_set.group(1))))
+            return DirectToolIntent(
+                "set_volume",
+                {"percent": percent},
+                f"Set volume to {percent}%.",
+                "media",
+            )
 
         # Group 2: YouTube open + search
         yt_search = re.match(
