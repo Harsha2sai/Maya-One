@@ -141,7 +141,20 @@ class SchedulingAgentHandler(SpecializedAgent):
                 "confirmation_text": f"I've set an alarm for {alarm_time}.",
             }
 
-        if any(phrase in lowered for phrase in {"list reminders", "show reminders", "what reminders"}):
+        if any(
+            phrase in lowered
+            for phrase in {
+                "list reminders",
+                "show reminders",
+                "what reminders",
+                "list my reminders",
+                "show my reminders",
+                "what are my reminders",
+                "my reminders",
+                "do i have any reminders",
+                "check my reminders",
+            }
+        ):
             return {
                 "status": "completed",
                 "action_type": "list_reminders",
@@ -149,7 +162,20 @@ class SchedulingAgentHandler(SpecializedAgent):
                 "parameters": {},
                 "confirmation_text": "",
             }
-        if any(phrase in lowered for phrase in {"list alarms", "show alarms", "what alarms"}):
+        if any(
+            phrase in lowered
+            for phrase in {
+                "list alarms",
+                "show alarms",
+                "what alarms",
+                "list my alarms",
+                "show my alarms",
+                "what are my alarms",
+                "my alarms",
+                "do i have any alarms",
+                "check my alarms",
+            }
+        ):
             return {
                 "status": "completed",
                 "action_type": "list_alarms",
@@ -157,7 +183,22 @@ class SchedulingAgentHandler(SpecializedAgent):
                 "parameters": {},
                 "confirmation_text": "",
             }
-        if any(phrase in lowered for phrase in {"list calendar events", "show calendar events", "what calendar events"}):
+        if any(
+            phrase in lowered
+            for phrase in {
+                "list calendar events",
+                "show calendar events",
+                "what calendar events",
+                "list my calendar events",
+                "show my calendar events",
+                "what are my calendar events",
+                "my calendar events",
+                "list my calendar",
+                "show my calendar",
+                "what is on my calendar",
+                "check my calendar",
+            }
+        ):
             return {
                 "status": "completed",
                 "action_type": "list_calendar_events",
