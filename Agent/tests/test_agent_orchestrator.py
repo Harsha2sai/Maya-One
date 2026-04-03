@@ -453,6 +453,46 @@ def test_research_query_rewrite_resolves_pronoun_from_recent_history():
     assert "prime minister of India" in rewritten or "Narendra Modi" in rewritten
 
 
+def test_research_subject_resolution_ignores_non_research_filesystem_turns():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._conversation_history = [
+        {
+            "role": "user",
+            "content": "who is the CEO of Microsoft",
+            "source": "history",
+            "route": "research",
+        },
+        {
+            "role": "assistant",
+            "content": "The CEO of Microsoft is Satya Nadella.",
+            "source": "history",
+            "route": "research",
+        },
+        {
+            "role": "user",
+            "content": "open the Downloads folder",
+            "source": "history",
+            "route": "app",
+        },
+    ]
+
+    subject = orchestrator._resolve_research_subject_from_context(
+        tool_context=SimpleNamespace(session_id="voice-session-1"),
+    )
+    assert subject is not None
+    assert "microsoft" in subject.lower()
+    assert "downloads" not in subject.lower()
+
+    rewritten, changed, ambiguous = orchestrator._rewrite_pronoun_followup_pre_router(
+        "tell me more about it",
+        tool_context=SimpleNamespace(session_id="voice-session-1"),
+    )
+    assert changed is True
+    assert ambiguous is False
+    assert "microsoft" in rewritten.lower()
+    assert "downloads" not in rewritten.lower()
+
+
 @pytest.mark.asyncio
 async def test_research_completion_stores_context_and_history_summary():
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
