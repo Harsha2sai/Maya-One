@@ -399,6 +399,17 @@ CRITICAL TOOL USAGE:
             role = str(msg.get("role", "user"))
             content = self._normalize_content(msg.get("content", ""))
             messages.append(ChatMessage(role=role, content=[content]))
+        # P18-02: context size instrumentation
+        estimated_tokens = sum(
+            len(str(m.content or "")) for m in messages
+        ) // 4
+        logger.info(
+            "context_assembled message_count=%s estimated_tokens=%s memory_count=%s origin=%s",
+            len(messages),
+            estimated_tokens,
+            len(memory_results),
+            origin,
+        )
         return messages
 
     async def build_for_voice(

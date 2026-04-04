@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from dataclasses import dataclass
 
 try:
@@ -228,6 +229,7 @@ class EdgeTTSChunkedStream(tts.ChunkedStream):
         try:
             text_len = len(self.input_text or "")
             logger.info("edge_tts_task_started mode=chunked text_len=%d", text_len)
+            _tts_start = time.monotonic()
             
             # Create Edge-TTS communicator
             communicate = edge_tts.Communicate(
@@ -293,12 +295,13 @@ class EdgeTTSChunkedStream(tts.ChunkedStream):
             decoder.end_input()
             await decode_atask
             logger.info(
-                "edge_tts_task_completed mode=chunked text_len=%d mpeg_chunks=%d mpeg_bytes=%d pcm_chunks=%d pcm_bytes=%d",
+                "edge_tts_task_completed mode=chunked text_len=%d mpeg_chunks=%d mpeg_bytes=%d pcm_chunks=%d pcm_bytes=%d elapsed_ms=%d",
                 text_len,
                 mpeg_chunk_count,
                 mpeg_total_bytes,
                 pcm_chunk_count,
                 pcm_total_bytes,
+                int((time.monotonic() - _tts_start) * 1000),
             )
             if pcm_total_bytes <= 0:
                 logger.warning(
@@ -377,6 +380,7 @@ class EdgeTTSSynthesizeStream(tts.SynthesizeStream):
         try:
             text_len = len(text or "")
             logger.info("edge_tts_task_started mode=stream text_len=%d", text_len)
+            _tts_start = time.monotonic()
             communicate = edge_tts.Communicate(
                 text,
                 voice=self._opts.voice,
@@ -434,12 +438,13 @@ class EdgeTTSSynthesizeStream(tts.SynthesizeStream):
             decoder.end_input()
             await decode_atask
             logger.info(
-                "edge_tts_task_completed mode=stream text_len=%d mpeg_chunks=%d mpeg_bytes=%d pcm_chunks=%d pcm_bytes=%d",
+                "edge_tts_task_completed mode=stream text_len=%d mpeg_chunks=%d mpeg_bytes=%d pcm_chunks=%d pcm_bytes=%d elapsed_ms=%d",
                 text_len,
                 mpeg_chunk_count,
                 mpeg_total_bytes,
                 pcm_chunk_count,
                 pcm_total_bytes,
+                int((time.monotonic() - _tts_start) * 1000),
             )
             if pcm_total_bytes <= 0:
                 logger.warning(

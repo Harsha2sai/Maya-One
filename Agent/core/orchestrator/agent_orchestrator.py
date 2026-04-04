@@ -4299,7 +4299,15 @@ class AgentOrchestrator:
                 query_ambiguous=False,
             )
 
+        route_started = time.monotonic()
         agent_key = await self._router.route(routing_text, user_id, chat_ctx=chat_ctx_messages)
+        route_elapsed_ms = int(max(0.0, (time.monotonic() - route_started) * 1000.0))
+        logger.info(
+            "route_decision_timing route=%s elapsed_ms=%s origin=%s",
+            agent_key,
+            route_elapsed_ms,
+            origin,
+        )
 
         if agent_key == "identity":
             return await self._handle_identity_fast_path(
