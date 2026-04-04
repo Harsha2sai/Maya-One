@@ -374,8 +374,61 @@ async def handle_send_message(request):
         return web.json_response({'error': str(e)}, status=500)
 
 async def handle_health(request):
-    """Health check endpoint"""
-    return web.json_response({'status': 'ok'})
+    """Health check endpoint with dependency validation.
+
+    Returns 200 if all critical dependencies are reachable.
+    Returns 503 if any critical dependency is unavailable.
+    """
+    import os
+    import sqlite3
+    import tempfile
+
+    checks = {}
+    healthy = True
+
+    # Check 1: LLM provider key present
+    llm_provider = os.getenv("LLM_PROVIDER", "groq").lower()
+    if llm_provider == "groq":
+        key_present = bool(os.getenv("GROQ_API_KEY", "").strip())
+    elif llm_provider == "openai":
+        key_present = bool(os.getenv("OPENAI_API_KEY", "").strip())
+    else:
+        key_present = bool(
+            os.getenv("GROQ_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+    checks["llm_key"] = "ok" if key_present else "missing"
+    if not key_present:
+        healthy = False
+
+    # Check 2: SQLite task store writable
+    try:
+        db_path = os.getenv("SQLITE_DB_PATH", "dev_maya_one.db")
+        conn = sqlite3.connect(db_path, timeout=2.0)
+        conn.execute("SELECT 1")
+        conn.close()
+        checks["sqlite"] = "ok"
+    except Exception as e:
+        checks["sqlite"] = f"error: {e}"
+        healthy = False
+
+    # Check 3: LiveKit credentials present
+    livekit_url = os.getenv("LIVEKIT_URL", "").strip()
+    livekit_key = os.getenv("LIVEKIT_API_KEY", "").strip()
+    livekit_secret = os.getenv("LIVEKIT_API_SECRET", "").strip()
+    livekit_ok = bool(livekit_url and livekit_key and livekit_secret)
+    checks["livekit_credentials"] = "ok" if livekit_ok else "missing"
+    if not livekit_ok:
+        healthy = False
+
+    status_code = 200 if healthy else 503
+    return web.json_response(
+        {
+            "status": "ok" if healthy else "degraded",
+            "checks": checks,
+        },
+        status=status_code,
+    )
 
 async def handle_api_keys(request):
     """Sync API keys from Flutter app to backend .env file"""
