@@ -14,6 +14,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.static_analyzer import MayaStaticAnalyzer, CheckResult
 
+pytestmark = pytest.mark.filterwarnings("ignore:unclosed event loop:ResourceWarning")
+
 
 class TestStaticAnalyzer:
     """Tests for the static analyzer."""

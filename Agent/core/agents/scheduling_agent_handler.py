@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import os
 import asyncio
 import logging
 from typing import Any
@@ -310,6 +311,8 @@ class SchedulingAgentHandler(SpecializedAgent):
         - Do not change AgentHandoffResult shape
         """
         try:
+            if str(os.getenv("SCHEDULING_MEMORY_ENRICHMENT", "true")).strip().lower() in {"0", "false", "no", "off"}:
+                return clarification_msg
             if not reminder_text or len(reminder_text) < 3:
                 return clarification_msg
             

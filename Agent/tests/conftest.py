@@ -3,10 +3,43 @@ import sys
 import asyncio
 
 import pytest_asyncio
+import pytest
+import warnings
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+warnings.filterwarnings(
+    "ignore",
+    message="unclosed event loop",
+    category=ResourceWarning,
+)
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "phase4: marks tests related to phase-4 task-state and planner schema validation",
+    )
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+    loop.close()
+
+
+def pytest_sessionfinish(session, exitstatus):
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        return
+    if loop.is_closed():
+        return
+    loop.close()
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -8,7 +8,7 @@ from core.providers.provider_health import ProviderState
 from core.providers.provider_supervisor import ProviderSupervisor
 from livekit import agents
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_audio_state_degradation():
     """Verify ConversationSession reacts to ProviderSupervisor health changes."""
     supervisor = ProviderSupervisor()
@@ -38,7 +38,7 @@ async def test_audio_state_degradation():
     assert conversation.audio_state == AudioState.HEALTHY
     mock_orch.session.say.assert_awaited_with("Voice connection restored.")
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_audio_session_manager_restart():
     """Verify AudioSessionManager restarts the session on failure."""
     

@@ -81,12 +81,12 @@ async def test_sqlite_taskstore_crud(tmp_path):
     assert fetched.steps[0].description == "Step 1"
     
     # Update Task
-    fetched.status = "RUNNING"
+    fetched.status = TaskStatus.RUNNING
     updated = await db.update_task(fetched)
     assert updated is True
     
     fetched_again = await db.get_task(task.id)
-    assert fetched_again.status == "RUNNING"
+    assert fetched_again.status == TaskStatus.RUNNING
 
     # List Tasks
     tasks = await db.list_tasks(user_id="user1")

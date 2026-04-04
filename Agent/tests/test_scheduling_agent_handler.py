@@ -55,7 +55,8 @@ async def test_scheduling_handler_set_reminder_returns_correct_parameters():
 
 
 @pytest.mark.asyncio
-async def test_scheduling_handler_missing_time_returns_needs_followup():
+async def test_scheduling_handler_missing_time_returns_needs_followup(monkeypatch):
+    monkeypatch.setenv("SCHEDULING_MEMORY_ENRICHMENT", "false")
     handler = SchedulingAgentHandler()
     result = await handler.handle(_request(user_text="remind me to call John"))
     assert result.status == "needs_followup"
