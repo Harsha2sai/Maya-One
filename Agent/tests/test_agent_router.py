@@ -160,6 +160,23 @@ async def test_agent_router_deterministic_media_next_controls(utterance: str) ->
     assert await router.route(utterance, "u1") == "media_play"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "list my tasks",
+        "show my tasks",
+        "get my tasks",
+        "my tasks",
+    ],
+)
+async def test_agent_router_task_list_routes_to_chat_not_scheduling(utterance: str) -> None:
+    router = AgentRouter(_MappingLLM({utterance: "scheduling"}))
+    result = await router.route(utterance, "u1")
+    assert result == "chat"
+    assert result != "scheduling"
+
+
 def test_input_guard_sanitizes_and_truncates() -> None:
     raw = (("ab" * 5000) + "\x01\x02")
     cleaned = InputGuard.sanitize(raw)

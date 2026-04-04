@@ -90,6 +90,12 @@ class AgentRouter:
         r"\bcalendar event\b",
         r"\bcalendar\b",
     )
+    _TASK_LIST_PATTERNS = (
+        r"\blist (?:my )?tasks\b",
+        r"\bshow (?:my )?tasks\b",
+        r"\bget (?:my )?tasks\b",
+        r"\bmy tasks\b",
+    )
 
     def __init__(self, llm_client: Any):
         self._llm = llm_client
@@ -251,6 +257,12 @@ class AgentRouter:
         media_play_hit = any(re.search(pattern, utterance_l) for pattern in self._MEDIA_PLAY_PATTERNS)
         if media_play_hit:
             result = "media_play"
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
+
+        task_list_hit = any(re.search(pattern, utterance_l) for pattern in self._TASK_LIST_PATTERNS)
+        if task_list_hit:
+            result = "chat"
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
