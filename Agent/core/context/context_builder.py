@@ -476,6 +476,7 @@ CRITICAL TOOL USAGE:
         conversation_history: list[Any],
         system_prompt: str,
         retriever: Any,
+        origin: str = "chat",
     ) -> List[ChatMessage]:
         chat_k = max(1, int(os.getenv("CHAT_RETRIEVER_K", str(CHAT_MEMORY_TOP_K_DEFAULT))))
         memory_results: list[dict] = []
@@ -486,7 +487,7 @@ CRITICAL TOOL USAGE:
                     "query": user_message,
                     "user_id": user_id,
                     "session_id": session_id,
-                    "origin": "chat",
+                    "origin": origin,
                     "k": chat_k,
                 }
                 try:
@@ -503,7 +504,7 @@ CRITICAL TOOL USAGE:
                     "query": user_message,
                     "user_id": user_id,
                     "session_id": session_id,
-                    "origin": "chat",
+                    "origin": origin,
                     "k": chat_k,
                 }
                 try:
@@ -512,18 +513,23 @@ CRITICAL TOOL USAGE:
                     retrieval_kwargs.pop("k", None)
                     memory_results = await retriever.retrieve_async(**retrieval_kwargs)
         elif skip_memory:
-            logger.info("context_builder_memory_skipped reason=identity_or_capability_or_small_talk origin=chat")
+            logger.info(
+                "context_builder_memory_skipped reason=identity_or_capability_or_small_talk origin=%s",
+                origin,
+            )
 
         memory_results = self._limit_semantic_results(memory_results, chat_k)
         if not skip_memory:
             if memory_results:
                 logger.info(
-                    "context_builder_memory_injected count=%s origin=chat",
+                    "context_builder_memory_injected count=%s origin=%s",
                     len(memory_results),
+                    origin,
                 )
             else:
                 logger.info(
-                    "context_builder_memory_skipped reason=retrieval_empty origin=chat"
+                    "context_builder_memory_skipped reason=retrieval_empty origin=%s",
+                    origin,
                 )
 
         return self._assemble_and_guard(
@@ -531,6 +537,6 @@ CRITICAL TOOL USAGE:
             memory_results=memory_results,
             history=conversation_history,
             user_message=user_message,
-            origin="chat",
+            origin=origin,
             history_limit=5,
         )

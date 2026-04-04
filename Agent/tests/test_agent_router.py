@@ -491,8 +491,9 @@ async def test_chat_route_filters_task_completion_history_and_stays_fresh(monkey
             conversation_history: list[dict],
             system_prompt: str,
             retriever: object,
+            origin: str = "chat",
         ):
-            del user_message, user_id, session_id, system_prompt, retriever
+            del user_message, user_id, session_id, system_prompt, retriever, origin
             self.history_seen = list(conversation_history)
             return []
 

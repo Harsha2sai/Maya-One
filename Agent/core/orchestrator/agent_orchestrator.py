@@ -4876,6 +4876,7 @@ class AgentOrchestrator:
                 conversation_history=history,
                 system_prompt=CHAT_CONFIG.system_prompt_template,
                 retriever=retriever,
+                origin=origin,
             )
 
         has_memory_message = False

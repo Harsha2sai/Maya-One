@@ -114,6 +114,35 @@ async def test_build_for_chat_uses_summary_for_older_history(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("origin", ["research", "media"])
+async def test_build_for_chat_respects_origin_for_retrieval_and_logs(
+    monkeypatch, caplog, origin
+):
+    monkeypatch.setenv("CHAT_RETRIEVER_K", "2")
+    builder = _make_builder()
+    retriever = DummyRetriever(results=[])
+
+    caplog.set_level(logging.INFO)
+    await builder.build_for_chat(
+        user_message="tell me about distributed systems",
+        user_id="u1",
+        session_id="s1",
+        conversation_history=[],
+        system_prompt="system",
+        retriever=retriever,
+        origin=origin,
+    )
+
+    assert retriever.calls
+    assert retriever.calls[0]["origin"] == origin
+    assert any(
+        f"context_builder_memory_skipped reason=retrieval_empty origin={origin}"
+        in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_build_for_chat_enforces_semantic_top_k(monkeypatch):
     monkeypatch.setenv("CHAT_RETRIEVER_K", "2")
     builder = _make_builder()
