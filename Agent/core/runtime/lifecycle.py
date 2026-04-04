@@ -433,7 +433,7 @@ class RuntimeLifecycleManager:
             return ws_url, api_key, api_secret, active_slot
         
         async def run_worker_once():
-            apply_schema_patch()
+            apply_schema_patch(settings.llm_provider)
             _register_inference_runners()
             
             # Use configured worker port; defaults to 8082.

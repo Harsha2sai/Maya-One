@@ -17,8 +17,12 @@ logger = logging.getLogger(__name__)
 
 _patched = False
 
-def apply_schema_patch():
-    """Apply the schema fix patch to LiveKit's schema builder functions."""
+def apply_schema_patch(provider_name: str | None = None):
+    """Apply the schema fix patch to LiveKit's schema builder functions.
+
+    OpenAI keeps strict tool schemas enabled. Non-OpenAI providers use the
+    compatibility shim that forces strict_tool_schema off.
+    """
     global _patched
     
     print("🔍 DEBUG: apply_schema_patch() called")
@@ -29,7 +33,17 @@ def apply_schema_patch():
         return
     
     try:
+        from config.settings import settings as app_settings
         from livekit.agents.llm import utils
+        from livekit.agents.inference import llm as inference_llm
+
+        resolved_provider = str(provider_name or getattr(app_settings, "llm_provider", "") or "").strip().lower()
+        force_loose_tool_schema = resolved_provider != "openai"
+        logger.info(
+            "schema_patch_provider provider=%s strict_tool_schema=%s",
+            resolved_provider or "unknown",
+            not force_loose_tool_schema,
+        )
         
         print("🔍 DEBUG: Imported livekit.agents.llm.utils")
         
@@ -102,31 +116,31 @@ def apply_schema_patch():
         import livekit.agents.llm.utils as full_path_utils
         full_path_is_patched = getattr(full_path_utils.build_strict_openai_schema, "is_patched_build_strict", False)
         logger.debug(f"🔍 DEBUG: livekit.agents.llm.utils.build_strict_openai_schema is patched: {full_path_is_patched}")
-        
-        # --- NEW PATCH: Force disable strict_tool_schema for Groq compatibility ---
-        try:
-            from livekit.agents.inference import llm as inference_llm
-            
+
+        if force_loose_tool_schema:
             if not getattr(inference_llm.LLMStream, "_is_patched_init", False):
                 _orig_stream_init = inference_llm.LLMStream.__init__
-                
+
                 def patched_stream_init(self, *args, **kwargs):
                     if "strict_tool_schema" in kwargs:
                         if kwargs["strict_tool_schema"]:
-                            logger.warning(f"🔧 PATCH: Forcing strict_tool_schema=False for {self.__class__.__name__} (was True)")
+                            logger.warning(
+                                "🔧 PATCH: Forcing strict_tool_schema=False for %s (was True)",
+                                self.__class__.__name__,
+                            )
                         kwargs["strict_tool_schema"] = False
                     return _orig_stream_init(self, *args, **kwargs)
-                
+
                 patched_stream_init._is_patched_init = True
                 inference_llm.LLMStream.__init__ = patched_stream_init
-                logger.info("✅ Applied LLMStream patch to force strict_tool_schema=False")
+                logger.info(
+                    "✅ Applied LLMStream patch to force strict_tool_schema=False for provider=%s",
+                    resolved_provider or "unknown",
+                )
             else:
                 logger.info("ℹ️ LLMStream already patched")
-                
-        except ImportError:
-            logger.warning("⚠️ Could not patch LLMStream (module not found), strict mode might still be enabled")
-        except Exception as e:
-            logger.error(f"❌ Error patching LLMStream: {e}")
+        else:
+            logger.info("✅ OpenAI provider detected; preserving strict_tool_schema=True")
 
         _patched = True
         print("✅ Applied LiveKit schema patch for strict JSON Schema compliance")

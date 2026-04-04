@@ -21,6 +21,7 @@ from core.telemetry.runtime_metrics import RuntimeMetrics
 from core.memory.hybrid_memory_manager import HybridMemoryManager
 from core.memory.preference_manager import PreferenceManager
 from core.orchestrator.agent_router import AgentRouter
+from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
 from core.security.input_guard import InputGuard
@@ -223,6 +224,7 @@ class AgentOrchestrator:
         self.memory = memory_manager
         self.ingestor = ingestor
         self.preference_manager = preference_manager
+        self._pronoun_rewriter = PronounRewriter()
         if self.preference_manager is None:
             try:
                 self.preference_manager = PreferenceManager()
@@ -502,19 +504,7 @@ class AgentOrchestrator:
         r"\b(open|close)\s+(firefox|chrome|calculator|folder|downloads)\b",
         r"\b(next|skip|previous|pause|resume|stop music)\b",
     )
-    _RESEARCH_PRONOUN_PATTERN = re.compile(
-        r"\b(he|she|him|her|it|that|this|they|them|his|their)\b",
-        flags=re.IGNORECASE,
-    )
-    _RESEARCH_FOLLOWUP_PATTERN = re.compile(
-        r"\b(tell me more|more information|more about|what about|and what|and who|what does he|what does she|what does it)\b",
-        flags=re.IGNORECASE,
-    )
-    _RESEARCH_ACTION_OBJECT_PATTERN = re.compile(
-        r"\b(save|write|put|export|send|move|copy|open|download|create|generate|make)\s+"
-        r"(it|that|this|them|they)\b",
-        flags=re.IGNORECASE,
-    )
+    # Pronoun rewriting is handled by PronounRewriter class (P16-02)
     _VOICE_TRANSCRIPTION_NORMALIZATIONS = {
         "diwnloads": "downloads",
         "downlods": "downloads",
@@ -1003,7 +993,7 @@ class AgentOrchestrator:
         # Source 1: most recent completed research result (session-scoped, TTL guarded)
         context = self._get_active_research_context(tool_context)
         if context:
-            candidate = self._extract_subject_from_text(str(context.get("subject") or ""))
+            candidate = str(context.get("subject") or "").strip()
             if candidate and not _is_bad_subject(candidate):
                 return candidate
             candidate = self._extract_subject_from_text(str(context.get("query") or ""))
@@ -1077,51 +1067,26 @@ class AgentOrchestrator:
         *,
         tool_context: Any = None,
     ) -> tuple[str, bool, bool]:
-        raw_query = re.sub(r"\s+", " ", str(query or "")).strip()
-        if not raw_query:
-            return "", False, True
+        """
+        Rewrite a query by resolving pronouns to their antecedent subjects.
 
-        has_pronoun = bool(self._RESEARCH_PRONOUN_PATTERN.search(raw_query))
-        if not has_pronoun:
-            return raw_query, False, False
+        Delegates to PronounRewriter for actual rewriting logic.
+        This method provides backward compatibility with existing call sites.
 
-        if self._RESEARCH_ACTION_OBJECT_PATTERN.search(raw_query):
-            logger.info(
-                "pronoun_followup_rewrite_skipped reason=action_object query=%s",
-                raw_query[:160],
-            )
-            return raw_query, False, False
+        Args:
+            query: The input query potentially containing pronouns
+            tool_context: Optional tool context for session resolution
 
-        subject = self._resolve_research_subject_from_context(tool_context)
-        if not subject:
-            return raw_query, False, True
-
-        rewritten = re.sub(
-            r"\b(tell me about|what about|who is|how about)\s+(he|she|him|her|it|that|this|they|them)\b",
-            lambda m: f"{m.group(1)} {subject}",
-            raw_query,
-            count=1,
-            flags=re.IGNORECASE,
+        Returns:
+            Tuple of (rewritten_query, changed, ambiguous)
+        """
+        research_context = self._get_active_research_context(tool_context)
+        return self._pronoun_rewriter.rewrite(
+            query,
+            conversation_history=self._conversation_history,
+            research_context=research_context,
+            tool_context=tool_context,
         )
-        if rewritten == raw_query:
-            rewritten = re.sub(
-                r"\b(he|she|him|her|it|that|this|they|them|his|their)\b",
-                subject,
-                raw_query,
-                count=1,
-                flags=re.IGNORECASE,
-            )
-        rewritten = re.sub(r"\s+", " ", rewritten).strip()
-        if not rewritten:
-            return raw_query, False, True
-        changed = rewritten.lower() != raw_query.lower()
-        if changed:
-            logger.info(
-                "pronoun_followup_rewrite original_query=%s rewritten_query=%s",
-                raw_query[:160],
-                rewritten[:160],
-            )
-        return rewritten, changed, False
 
     def _rewrite_pronoun_followup_pre_router(
         self,
@@ -1129,24 +1094,35 @@ class AgentOrchestrator:
         *,
         tool_context: Any = None,
     ) -> tuple[str, bool, bool]:
+        """
+        Pre-router check for pronoun follow-up queries.
+
+        Quick check before routing to determine if pronoun rewriting is needed.
+        Delegates to PronounRewriter for actual rewriting.
+
+        Args:
+            raw_query: The input query
+            tool_context: Optional tool context for session resolution
+
+        Returns:
+            Tuple of (rewritten_query, changed, ambiguous)
+        """
         query = re.sub(r"\s+", " ", str(raw_query or "")).strip()
         if not query:
             return "", False, False
 
-        has_pronoun = bool(self._RESEARCH_PRONOUN_PATTERN.search(query))
-        has_followup_phrase = bool(self._RESEARCH_FOLLOWUP_PATTERN.search(query))
-        if not has_pronoun and not has_followup_phrase:
+        # Quick check: skip if no pronouns or followup phrases
+        if not self._pronoun_rewriter.should_check_rewrite(query):
             return query, False, False
 
-        rewritten, changed, ambiguous = self.rewrite_research_query_for_context(
+        # Delegate to main rewrite method
+        research_context = self._get_active_research_context(tool_context)
+        return self._pronoun_rewriter.rewrite(
             query,
+            conversation_history=self._conversation_history,
+            research_context=research_context,
             tool_context=tool_context,
         )
-        if ambiguous:
-            return query, False, True
-        if changed and rewritten:
-            return rewritten, True, False
-        return query, False, False
 
     def _normalize_voice_transcription_for_routing(self, message: str) -> tuple[str, bool]:
         text = str(message or "")

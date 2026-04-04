@@ -48,7 +48,7 @@ class GlobalAgentContainer:
         # Ensure strict tool-schema compatibility in every runtime path
         # (worker already patches, but console/API paths also need this).
         from utils.schema_fixer import apply_schema_patch
-        apply_schema_patch()
+        apply_schema_patch(settings.llm_provider)
 
         # Local imports prevent circular dependencies during worker boot.
         from core.tools.tool_manager import ToolManager

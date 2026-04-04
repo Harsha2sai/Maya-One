@@ -572,7 +572,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
         float(os.getenv("VOICE_SESSION_SAY_TIMEOUT_S", "12.0")),
     )
     # Worker jobs run in child processes; patch tool schema builders in-process.
-    apply_schema_patch()
+    apply_schema_patch(settings.llm_provider)
     logger.info(f"🔥 PHASE {arch_phase} MODE: LiveKit Voice Agent")
     logger.info(f"🎥 [Phase {arch_phase}] New session: room={ctx.room.name} job={ctx.job.id}")
 
