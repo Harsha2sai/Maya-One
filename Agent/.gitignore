@@ -1,0 +1,10 @@
+# Runtime artifacts
+data/local_tasks.json
+data/outcomes.json
+data/memory_qdrant/
+data/notes.db
+data/preferences/
+dev_maya_one.db
+logs/
+run/
+verification/runtime_validation/runtime_metrics.json

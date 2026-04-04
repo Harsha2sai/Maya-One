@@ -3,9 +3,11 @@ Preference Manager - Learn and persist user preferences.
 """
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict
+from datetime import datetime, timezone
 
 from core.system_control.supabase_manager import SupabaseManager
 
@@ -40,24 +42,48 @@ class PreferenceManager:
             return dict(self._cache[user_id])
         path = self._user_file(user_id)
         if not path.exists():
+            self._cache[user_id] = {}
             return {}
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             prefs = payload if isinstance(payload, dict) else {}
             self._cache[user_id] = dict(prefs)
             return dict(prefs)
+        except json.JSONDecodeError as err:
+            suffix = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+            corrupt_path = path.with_suffix(f".corrupt.{suffix}")
+            try:
+                os.replace(path, corrupt_path)
+                logger.warning(
+                    "⚠️ Corrupt preferences for %s moved to %s: %s",
+                    user_id,
+                    corrupt_path,
+                    err,
+                )
+            except Exception as move_err:
+                logger.warning(
+                    "⚠️ Failed to quarantine corrupt preferences for %s: %s",
+                    user_id,
+                    move_err,
+                )
+            self._cache[user_id] = {}
+            return {}
         except Exception as err:
             logger.warning("⚠️ Failed to read local preferences for %s: %s", user_id, err)
+            self._cache[user_id] = {}
             return {}
 
     def _save_local_preferences(self, user_id: str, prefs: Dict[str, Any]) -> None:
         safe_prefs = dict(prefs or {})
         self._cache[user_id] = safe_prefs
         try:
-            self._user_file(user_id).write_text(
+            target = self._user_file(user_id)
+            tmp_path = target.with_suffix(f".tmp.{os.getpid()}")
+            tmp_path.write_text(
                 json.dumps(safe_prefs, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+            os.replace(tmp_path, target)
         except Exception as err:
             logger.warning("⚠️ Failed to persist local preferences for %s: %s", user_id, err)
 

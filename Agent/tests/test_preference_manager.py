@@ -25,3 +25,24 @@ async def test_preference_manager_extract_from_text(tmp_path):
 
     assert prefs.get("preferred_browser") == "firefox"
     assert prefs.get("music_genre") == "lo-fi music"
+
+
+@pytest.mark.asyncio
+async def test_preference_manager_missing_file_returns_empty(tmp_path):
+    manager = PreferenceManager(storage_path=str(tmp_path / "prefs"))
+    prefs = await manager.get_preferences("missing-user")
+    assert prefs == {}
+
+
+@pytest.mark.asyncio
+async def test_preference_manager_corrupt_file_quarantined(tmp_path):
+    manager = PreferenceManager(storage_path=str(tmp_path / "prefs"))
+    user_id = "u-pref-corrupt"
+    user_file = (tmp_path / "prefs") / f"{user_id}.json"
+    user_file.write_text("{not-json", encoding="utf-8")
+
+    prefs = await manager.get_preferences(user_id)
+    assert prefs == {}
+    assert not user_file.exists()
+    corrupt_files = list((tmp_path / "prefs").glob(f"{user_id}.corrupt.*"))
+    assert len(corrupt_files) == 1

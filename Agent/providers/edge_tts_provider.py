@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from dataclasses import dataclass
 
 try:
@@ -94,6 +95,11 @@ DEFAULT_VOICE = "en-US-JennyNeural"
 # Edge-TTS uses MP3 output at 24kHz
 SAMPLE_RATE = 24000
 NUM_CHANNELS = 1
+
+
+def _edge_log_each_chunk_enabled() -> bool:
+    raw = str(os.getenv("EDGE_TTS_LOG_EACH_CHUNK", "false")).strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -220,7 +226,8 @@ class EdgeTTSChunkedStream(tts.ChunkedStream):
         Generate audio using Edge-TTS and emit via AudioEmitter.
         """
         try:
-            logger.debug(f"🎙️ EdgeTTS synthesizing: '{self.input_text[:50]}...'")
+            text_len = len(self.input_text or "")
+            logger.info("edge_tts_task_started mode=chunked text_len=%d", text_len)
             
             # Create Edge-TTS communicator
             communicate = edge_tts.Communicate(
@@ -247,22 +254,58 @@ class EdgeTTSChunkedStream(tts.ChunkedStream):
                 num_channels=NUM_CHANNELS,
                 format="audio/mpeg"
             )
+            log_each_chunk = _edge_log_each_chunk_enabled()
+            mpeg_chunk_count = 0
+            mpeg_total_bytes = 0
+            pcm_chunk_count = 0
+            pcm_total_bytes = 0
             
             async def _decode_task():
+                nonlocal pcm_chunk_count, pcm_total_bytes
                 async for frame in decoder:
-                    output_emitter.push(frame.data.tobytes())
+                    payload = frame.data.tobytes()
+                    pcm_chunk_count += 1
+                    pcm_total_bytes += len(payload)
+                    if log_each_chunk:
+                        logger.debug(
+                            "edge_tts_chunk_decoded mode=chunked chunk_idx=%d bytes=%d",
+                            pcm_chunk_count,
+                            len(payload),
+                        )
+                    output_emitter.push(payload)
                     
             decode_atask = asyncio.create_task(_decode_task())
             
             # Stream audio chunks
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
-                    decoder.push(chunk["data"])
+                    audio_bytes = chunk["data"]
+                    mpeg_chunk_count += 1
+                    mpeg_total_bytes += len(audio_bytes)
+                    if log_each_chunk:
+                        logger.debug(
+                            "edge_tts_chunk_received mode=chunked chunk_idx=%d bytes=%d",
+                            mpeg_chunk_count,
+                            len(audio_bytes),
+                        )
+                    decoder.push(audio_bytes)
                     
             decoder.end_input()
             await decode_atask
-            
-            logger.debug("✅ EdgeTTS synthesis complete")
+            logger.info(
+                "edge_tts_task_completed mode=chunked text_len=%d mpeg_chunks=%d mpeg_bytes=%d pcm_chunks=%d pcm_bytes=%d",
+                text_len,
+                mpeg_chunk_count,
+                mpeg_total_bytes,
+                pcm_chunk_count,
+                pcm_total_bytes,
+            )
+            if pcm_total_bytes <= 0:
+                logger.warning(
+                    "edge_tts_task_no_pcm mode=chunked text_len=%d mpeg_chunks=%d",
+                    text_len,
+                    mpeg_chunk_count,
+                )
                 
         except edge_tts.exceptions.NoAudioReceived as e:
             logger.error(f"❌ EdgeTTS no audio received: {e}")
@@ -332,7 +375,8 @@ class EdgeTTSSynthesizeStream(tts.SynthesizeStream):
         decoder = None
         decode_atask = None
         try:
-            logger.info(f"🔊 EdgeTTS synthesising snippet: '{text[:100]}...'")
+            text_len = len(text or "")
+            logger.info("edge_tts_task_started mode=stream text_len=%d", text_len)
             communicate = edge_tts.Communicate(
                 text,
                 voice=self._opts.voice,
@@ -352,19 +396,57 @@ class EdgeTTSSynthesizeStream(tts.SynthesizeStream):
                 num_channels=NUM_CHANNELS,
                 format="audio/mpeg"
             )
+            log_each_chunk = _edge_log_each_chunk_enabled()
+            mpeg_chunk_count = 0
+            mpeg_total_bytes = 0
+            pcm_chunk_count = 0
+            pcm_total_bytes = 0
             
             async def _decode_task():
+                nonlocal pcm_chunk_count, pcm_total_bytes
                 async for frame in decoder:
-                    output_emitter.push(frame.data.tobytes())
+                    payload = frame.data.tobytes()
+                    pcm_chunk_count += 1
+                    pcm_total_bytes += len(payload)
+                    if log_each_chunk:
+                        logger.debug(
+                            "edge_tts_chunk_decoded mode=stream chunk_idx=%d bytes=%d",
+                            pcm_chunk_count,
+                            len(payload),
+                        )
+                    output_emitter.push(payload)
                     
             decode_atask = asyncio.create_task(_decode_task())
             
             async for chunk in communicate.stream():
                 if chunk["type"] == "audio":
-                    decoder.push(chunk["data"])
+                    audio_bytes = chunk["data"]
+                    mpeg_chunk_count += 1
+                    mpeg_total_bytes += len(audio_bytes)
+                    if log_each_chunk:
+                        logger.debug(
+                            "edge_tts_chunk_received mode=stream chunk_idx=%d bytes=%d",
+                            mpeg_chunk_count,
+                            len(audio_bytes),
+                        )
+                    decoder.push(audio_bytes)
                     
             decoder.end_input()
             await decode_atask
+            logger.info(
+                "edge_tts_task_completed mode=stream text_len=%d mpeg_chunks=%d mpeg_bytes=%d pcm_chunks=%d pcm_bytes=%d",
+                text_len,
+                mpeg_chunk_count,
+                mpeg_total_bytes,
+                pcm_chunk_count,
+                pcm_total_bytes,
+            )
+            if pcm_total_bytes <= 0:
+                logger.warning(
+                    "edge_tts_task_no_pcm mode=stream text_len=%d mpeg_chunks=%d",
+                    text_len,
+                    mpeg_chunk_count,
+                )
             
             # DO NOT FLUSH HERE - flush terminates the audio stream causing WebRTC crashes
             # output_emitter.flush()

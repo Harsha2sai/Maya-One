@@ -16,6 +16,7 @@ warnings.filterwarnings(
     category=ResourceWarning,
 )
 
+_SESSION_LOOP = None
 
 def pytest_configure(config):
     config.addinivalue_line(
@@ -26,18 +27,17 @@ def pytest_configure(config):
 
 @pytest.fixture(scope="session")
 def event_loop():
+    global _SESSION_LOOP
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    _SESSION_LOOP = loop
     yield loop
     loop.close()
 
 
 def pytest_sessionfinish(session, exitstatus):
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        return
-    if loop.is_closed():
+    loop = _SESSION_LOOP
+    if loop is None or loop.is_closed():
         return
     loop.close()
 

@@ -67,6 +67,31 @@ ENV_VAR_MAPPING = {
     'ttsProvider': 'TTS_PROVIDER',
     'ttsModel': 'TTS_MODEL',
     'ttsVoice': 'TTS_VOICE', 
+    # Connector toggles (phase: status + save)
+    'connector_spotify_enabled': 'CONNECTOR_SPOTIFY_ENABLED',
+    'connector_youtube_enabled': 'CONNECTOR_YOUTUBE_ENABLED',
+    'connector_google_workspace_enabled': 'CONNECTOR_GOOGLE_WORKSPACE_ENABLED',
+    'connector_slack_enabled': 'CONNECTOR_SLACK_ENABLED',
+    'connector_home_assistant_enabled': 'CONNECTOR_HOME_ASSISTANT_ENABLED',
+    'connector_github_enabled': 'CONNECTOR_GITHUB_ENABLED',
+}
+
+CONNECTOR_STATUS_KEYS = {
+    'spotify': 'connector_spotify_enabled',
+    'youtube': 'connector_youtube_enabled',
+    'google_workspace': 'connector_google_workspace_enabled',
+    'slack': 'connector_slack_enabled',
+    'home_assistant': 'connector_home_assistant_enabled',
+    'github': 'connector_github_enabled',
+}
+
+CONNECTOR_AVAILABILITY = {
+    'spotify': {'available': True, 'reason': ''},
+    'youtube': {'available': True, 'reason': ''},
+    'google_workspace': {'available': False, 'reason': 'OAuth lifecycle not implemented yet.'},
+    'slack': {'available': False, 'reason': 'OAuth lifecycle not implemented yet.'},
+    'home_assistant': {'available': False, 'reason': 'Backend connector adapter not implemented yet.'},
+    'github': {'available': False, 'reason': 'OAuth lifecycle not implemented yet.'},
 }
 
 MULTI_SLOT_LLM_PROVIDER_IDS = {
@@ -160,6 +185,11 @@ def _env_var_to_provider_id(env_var: str) -> str:
         return f"{m.group(1).lower()}_{m.group(2)}"
 
     return env_var.lower()
+
+
+def _parse_env_bool(raw_value: str) -> bool:
+    normalized = str(raw_value or '').strip().lower()
+    return normalized in {'1', 'true', 'yes', 'on', 'enabled'}
 
 async def _ensure_room_dispatch(room_name: str) -> None:
     """
@@ -351,14 +381,18 @@ async def handle_api_keys(request):
     """Sync API keys from Flutter app to backend .env file"""
     try:
         data = await request.json()
-        api_keys = data.get('apiKeys', {})
-        
+        api_keys = {}
+
+        provided_api_keys = data.get('apiKeys', {})
+        if isinstance(provided_api_keys, dict):
+            api_keys.update(provided_api_keys)
+
+        provided_config = data.get('config', {})
+        if isinstance(provided_config, dict):
+            api_keys.update(provided_config)
+
         if not api_keys:
-            return web.json_response({'error': 'No API keys provided'}, status=400)
-        
-        # Merge 'config' into api_keys if present (support both legacy and new structure)
-        if 'config' in data:
-            api_keys.update(data['config'])
+            return web.json_response({'error': 'No API keys or config provided'}, status=400)
         
         from dotenv import set_key
         env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
@@ -451,7 +485,10 @@ async def handle_get_api_status(request):
                 continue
                 
             value = str(os.getenv(env_var, ''))
-            status[provider_id] = bool(value)
+            if provider_id.startswith('connector_') and provider_id.endswith('_enabled'):
+                status[provider_id] = _parse_env_bool(value)
+            else:
+                status[provider_id] = bool(value)
             is_control_value = (
                 env_var.endswith('_ACTIVE_KEY_SLOT')
                 or env_var.endswith('_ACTIVE_SLOT')
@@ -494,10 +531,23 @@ async def handle_get_api_status(request):
             status.get('supabase_anon_key'),
             status.get('supabase_service_key')
         ])
+
+        connectors = {}
+        for connector_id, status_key in CONNECTOR_STATUS_KEYS.items():
+            availability = CONNECTOR_AVAILABILITY.get(
+                connector_id,
+                {'available': False, 'reason': 'Unknown connector.'},
+            )
+            connectors[connector_id] = {
+                'enabled': bool(status.get(status_key, False)),
+                'available': bool(availability.get('available', False)),
+                'reason': str(availability.get('reason', '') or ''),
+            }
         
         return web.json_response({
             'status': status,
-            'masked': masked
+            'masked': masked,
+            'connectors': connectors,
         })
         
     except Exception as e:

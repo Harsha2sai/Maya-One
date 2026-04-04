@@ -25,8 +25,7 @@ print("🔍 DEBUG: ToolManager - Importing get_skill_registry...")
 from core.skills.registry import get_skill_registry
 print("🔍 DEBUG: ToolManager - Importing ExecutionGate...")
 from core.governance.gate import ExecutionGate
-print("🔍 DEBUG: ToolManager - Importing AuditLogger...")
-from core.governance.audit import AuditLogger
+from core.tools.execution_context import ExecutionContext, create_execution_context
 print("🔍 DEBUG: ToolManager - Importing UserRole...")
 from core.governance.types import UserRole, RiskLevel
 print("🔍 DEBUG: ToolManager - Importing probe_tool_execution...")
@@ -250,16 +249,14 @@ class ToolManager:
             if found_tool:
                 try:
                     result = None
-                    
-                    # Mock Context with user_id for persistence tools
-                    class MockJobContext:
-                        def __init__(self, uid): self.user_id = uid
-                    
-                    class SimpleContext: 
-                        def __init__(self, uid): self.job_context = MockJobContext(uid)
-                    
-                    tool_ctx = SimpleContext(user_id)
-                    
+
+                    # Create production ExecutionContext for tools
+                    tool_ctx = create_execution_context(
+                        context=context,
+                        default_user_id=user_id,
+                        default_session_id=session_id,
+                    )
+
                     room = getattr(context, 'room', None)
                     turn_id = getattr(context, 'turn_id', None)
                     conversation_id = (
