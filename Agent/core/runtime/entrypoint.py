@@ -47,9 +47,10 @@ async def console_entrypoint(user_text: str) -> None:
         if not GlobalAgentContainer._initialized:
             fast_response = _try_console_preinit_fast_response(user_text)
             if fast_response:
-                logger.info("console_preinit_fast_path_matched")
+                logger.info("console_preinit_fast_path_matched query=%s", user_text[:40])
                 print(f"\n🤖 Maya: {fast_response}\n")
                 return
+            logger.warning("console_preinit_fallback_triggered - container not ready at first turn")
             await GlobalAgentContainer.initialize()
 
         # Route through the unified global container

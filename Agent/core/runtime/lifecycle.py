@@ -207,17 +207,17 @@ class RuntimeLifecycleManager:
 
             if self.mode == MayaRuntimeMode.CONSOLE:
                 should_eager_warm_console = str(
-                    os.getenv("MAYA_CONSOLE_EAGER_WARM", "0")
+                    os.getenv("MAYA_CONSOLE_EAGER_WARM", "1")
                 ).strip().lower() in {"1", "true", "yes"}
                 if not should_eager_warm_console:
                     logger.info(
-                        "ℹ️ Console mode using deferred GlobalAgentContainer warm-up "
-                        "(set MAYA_CONSOLE_EAGER_WARM=1 for eager boot)"
+                        "ℹ️ Console mode: deferred warm-up selected via MAYA_CONSOLE_EAGER_WARM=0"
                     )
                     print(
                         f"✅ Phase {self.architecture_phase}: console deferred global warm-up "
                         "(on-demand)."
                     )
+                    self._start_background_task(self._preinit_console_container())
                     return
 
             # Phase 2+: pre-warm the shared single-brain container once.
@@ -385,6 +385,18 @@ class RuntimeLifecycleManager:
                 break
             except Exception as e:
                 logger.error(f"❌ Console Error: {e}")
+
+    async def _preinit_console_container(self) -> None:
+        """
+        Background preinit for console mode when eager warm is disabled.
+        """
+        try:
+            logger.info("console_preinit_background_started")
+            await GlobalAgentContainer.initialize()
+            self.memory_ingestor = GlobalAgentContainer.memory_ingestor
+            logger.info("console_preinit_background_complete")
+        except Exception as e:
+            logger.error("console_preinit_background_failed error=%s", e, exc_info=True)
         
     async def _boot_worker_mode(self, entrypoint_fnc):
         """
