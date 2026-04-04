@@ -24,6 +24,8 @@ STEP_TIMEOUT_SECONDS = 120
 STEP_MAX_RETRIES = 3
 STUCK_TASK_THRESHOLD_SECONDS = 600
 RECENT_RUNNING_STALE_WINDOW_SECONDS = 60
+WATCHDOG_INTERVAL_SECONDS = 120
+WATCHDOG_RECLAIM_THRESHOLD_SECONDS = STUCK_TASK_THRESHOLD_SECONDS
 
 
 class _NoopMemoryManager:
@@ -66,6 +68,7 @@ class TaskWorker:
         )
         self._running = False
         self._task = None
+        self._watchdog_task = None
         self._shutdown_event = asyncio.Event()
         self._event_notifier = event_notifier
         self._evaluator = ExecutionEvaluator()
@@ -121,6 +124,8 @@ class TaskWorker:
         self._shutdown_event.clear()
         self._task = asyncio.create_task(self._worker_loop())
         self._task.add_done_callback(self._log_background_task_exception)
+        self._watchdog_task = asyncio.create_task(self._watchdog_loop())
+        self._watchdog_task.add_done_callback(self._log_background_task_exception)
         logger.info(f"🚀 Task Dispatcher started for user {self.user_id}")
 
     @staticmethod
@@ -150,6 +155,16 @@ class TaskWorker:
             except asyncio.TimeoutError:
                 logger.warning("⚠️ Worker shutdown timed out, forcing cancel")
                 self._task.cancel()
+
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+            try:
+                await asyncio.wait_for(self._watchdog_task, timeout=5.0)
+            except asyncio.CancelledError:
+                pass
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ Watchdog shutdown timed out, forcing cancel")
+                self._watchdog_task.cancel()
         
         logger.info("🛑 Task Dispatcher stopped")
 
@@ -165,6 +180,72 @@ class TaskWorker:
             await asyncio.sleep(self.interval)
         
         logger.info("Worker loop exited")
+
+    async def _watchdog_loop(self) -> None:
+        """
+        Independent background loop that reclaims orphaned RUNNING tasks.
+        """
+        logger.info(
+            "watchdog_loop_started interval_s=%s threshold_s=%s",
+            WATCHDOG_INTERVAL_SECONDS,
+            WATCHDOG_RECLAIM_THRESHOLD_SECONDS,
+        )
+        while self._running:
+            try:
+                await asyncio.sleep(WATCHDOG_INTERVAL_SECONDS)
+                await self._reclaim_orphaned_tasks()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("watchdog_loop_error error=%s", e, exc_info=True)
+        logger.info("watchdog_loop_exited")
+
+    async def _reclaim_orphaned_tasks(self) -> None:
+        """
+        Scan active tasks for RUNNING tasks that exceeded reclaim threshold and
+        are not currently owned by this worker.
+        """
+        try:
+            all_active = await self.manager.get_active_tasks()
+        except Exception as e:
+            logger.error("watchdog_reclaim_scan_error error=%s", e)
+            return
+
+        now = datetime.now(pytz.UTC)
+        reclaimed = 0
+        for task in all_active:
+            if task.status != TaskStatus.RUNNING:
+                continue
+
+            metadata = task.metadata or {}
+            claimed_by = str(metadata.get("claimed_by") or getattr(task, "worker_id", "")).strip()
+            if claimed_by == self.worker_id:
+                continue
+
+            updated = self._coerce_datetime(getattr(task, "updated_at", None))
+            if updated is None:
+                continue
+
+            age_seconds = (now - updated).total_seconds()
+            if age_seconds <= WATCHDOG_RECLAIM_THRESHOLD_SECONDS:
+                continue
+
+            logger.warning(
+                "watchdog_reclaim_orphaned task_id=%s age_s=%s worker_id=%s",
+                task.id,
+                int(age_seconds),
+                claimed_by or "unknown",
+            )
+            await self.manager.fail_task(
+                task.id,
+                f"Reclaimed by watchdog: RUNNING for {int(age_seconds)}s without heartbeat",
+            )
+            reclaimed += 1
+
+        if reclaimed:
+            logger.info("watchdog_reclaim_complete count=%s", reclaimed)
+        else:
+            logger.debug("watchdog_reclaim_scan_complete no_orphans_found")
 
     async def _process_active_tasks(self):
         """Fetch and process all active tasks."""
