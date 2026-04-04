@@ -3,15 +3,6 @@ import os
 import unittest
 from unittest.mock import patch, MagicMock
 
-# Mock agents.cli.run_app to prevent actual startup
-sys.modules["livekit.agents.cli"] = MagicMock()
-sys.modules["livekit.agents.cli"].run_app = MagicMock()
-
-# Mock other dependencies that might trigger side effects on import
-sys.modules["livekit.agents"] = MagicMock()
-sys.modules["livekit.rtc"] = MagicMock()
-sys.modules["dotenv"] = MagicMock()
-
 class TestConsoleShim(unittest.TestCase):
     def test_legacy_console_argument_rewriting(self):
         """Verify that 'console' in sys.argv is rewritten to 'start' and AGENT_MODE env var is set."""

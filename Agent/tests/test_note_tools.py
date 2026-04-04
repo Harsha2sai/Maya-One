@@ -1,11 +1,19 @@
 from types import SimpleNamespace
+import importlib
 
 import pytest
 import pytest_asyncio
 import sqlite3
 from uuid import uuid4
 
-from tools import storage
+from tools import storage as storage_module
+
+storage = importlib.reload(storage_module)
+
+_CREATE_NOTE = getattr(storage.create_note, "__wrapped__", storage.create_note)
+_LIST_NOTES = getattr(storage.list_notes, "__wrapped__", storage.list_notes)
+_READ_NOTE = getattr(storage.read_note, "__wrapped__", storage.read_note)
+_DELETE_NOTE = getattr(storage.delete_note, "__wrapped__", storage.delete_note)
 
 
 def _context(user_id: str = "note-user"):
@@ -13,19 +21,19 @@ def _context(user_id: str = "note-user"):
 
 
 async def _create_note(context, **kwargs):
-    return await storage.create_note.__wrapped__(context, **kwargs)
+    return await _CREATE_NOTE(context, **kwargs)
 
 
 async def _list_notes(context):
-    return await storage.list_notes.__wrapped__(context)
+    return await _LIST_NOTES(context)
 
 
 async def _read_note(context, title: str):
-    return await storage.read_note.__wrapped__(context, title)
+    return await _READ_NOTE(context, title)
 
 
 async def _delete_note(context, title: str):
-    return await storage.delete_note.__wrapped__(context, title)
+    return await _DELETE_NOTE(context, title)
 
 
 @pytest_asyncio.fixture

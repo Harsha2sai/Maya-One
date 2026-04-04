@@ -1,11 +1,16 @@
+import importlib
+
 from core.tools.livekit_tool_adapter import adapt_tool_list
-# Correct imports based on agent.py
-from tools import web_search
-from tools.system.pc_control import file_write
+
+from tools import information as information_module
+from tools.system import pc_control as pc_control_module
+
+information = importlib.reload(information_module)
+pc_control = importlib.reload(pc_control_module)
 
 def test_livekit_tool_adapter_converts_tools():
     # web_search and file_write are likely simple wrappers or functions
-    tools = [web_search, file_write]
+    tools = [information.web_search, pc_control.file_write]
 
     safe = adapt_tool_list(tools)
 

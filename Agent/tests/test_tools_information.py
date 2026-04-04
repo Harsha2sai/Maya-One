@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 from typing import Any
 
 import pytest
 import requests
 
-from tools import information as info
+from tools import information as info_module
+
+info = importlib.reload(info_module)
 
 
 class _FakeResponse:

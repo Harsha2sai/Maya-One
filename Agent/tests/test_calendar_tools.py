@@ -1,9 +1,16 @@
 import re
+import importlib
 import pytest
 import pytest_asyncio
 from types import SimpleNamespace
 
-from tools import storage
+from tools import storage as storage_module
+
+storage = importlib.reload(storage_module)
+
+_CREATE_CALENDAR_EVENT = getattr(storage.create_calendar_event, "__wrapped__", storage.create_calendar_event)
+_LIST_CALENDAR_EVENTS = getattr(storage.list_calendar_events, "__wrapped__", storage.list_calendar_events)
+_DELETE_CALENDAR_EVENT = getattr(storage.delete_calendar_event, "__wrapped__", storage.delete_calendar_event)
 
 
 def _context(user_id: str = "calendar-user"):
@@ -11,15 +18,15 @@ def _context(user_id: str = "calendar-user"):
 
 
 async def _create_event(context, **kwargs):
-    return await storage.create_calendar_event.__wrapped__(context, **kwargs)
+    return await _CREATE_CALENDAR_EVENT(context, **kwargs)
 
 
 async def _list_events(context):
-    return await storage.list_calendar_events.__wrapped__(context)
+    return await _LIST_CALENDAR_EVENTS(context)
 
 
 async def _delete_event(context, event_id: str):
-    return await storage.delete_calendar_event.__wrapped__(context, event_id)
+    return await _DELETE_CALENDAR_EVENT(context, event_id)
 
 
 @pytest.mark.asyncio

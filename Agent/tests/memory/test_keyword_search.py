@@ -23,7 +23,9 @@ class TestMemoryKeywords(unittest.TestCase):
             mem.retriever = hr
             
             # Store a memory
-            mem.store_conversation_turn("hello", "hi there", metadata={"user_id": "test_user"})
+            asyncio.run(
+                mem.store_conversation_turn("hello", "hi there", metadata={"user_id": "test_user"})
+            )
             
             # Now retrieve
             loop = asyncio.new_event_loop()
