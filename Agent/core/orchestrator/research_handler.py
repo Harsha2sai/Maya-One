@@ -19,8 +19,7 @@ Usage:
 import logging
 import re
 import time
-import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -241,3 +240,159 @@ class ResearchHandler:
         if room:
             return getattr(room, "name", "default")
         return "default"
+
+    # -------------------------------------------------------------------------
+    # Pipeline Execution
+    # -------------------------------------------------------------------------
+
+    async def build_research_tasks_inline(
+        self,
+        query: str,
+        *,
+        enable_llm_planner: bool = False,
+        smart_llm: Any = None,
+    ) -> tuple[list[Any], str]:
+        from core.research.research_planner import ResearchPlanner
+        from core.research.research_task_builder import build_research_tasks
+
+        tasks, fallback_query = build_research_tasks(query)
+        if tasks and not enable_llm_planner:
+            return tasks, fallback_query
+        if not enable_llm_planner:
+            return tasks, fallback_query
+
+        role_llm = None
+        try:
+            from core.llm.role_llm import RoleLLM
+            if smart_llm is not None:
+                role_llm = RoleLLM(smart_llm)
+        except Exception as e:
+            logger.warning("inline_research_planner_role_llm_unavailable error=%s", e)
+
+        planner = ResearchPlanner(role_llm=role_llm)
+        llm_plan = await planner.plan(query)
+        if llm_plan.tasks:
+            return llm_plan.tasks, llm_plan.fallback_query or fallback_query
+        return tasks, fallback_query
+
+    def log_research_stage_metrics(
+        self,
+        *,
+        query: str,
+        plan_ms: int,
+        search_ms: int,
+        synth_ms: int,
+        source_count: int,
+        trace_id: str,
+        enable_llm_planner: bool = False,
+    ) -> None:
+        total_ms = max(0, plan_ms + search_ms + synth_ms)
+        logger.info(
+            "research_pipeline_mode=inline_main llm_planner_enabled=%s query=%s",
+            enable_llm_planner,
+            query[:120],
+            extra={"trace_id": trace_id},
+        )
+        logger.info(
+            "research_stage_timing plan_ms=%s search_ms=%s synth_ms=%s total_ms=%s source_count=%s",
+            plan_ms,
+            search_ms,
+            synth_ms,
+            total_ms,
+            source_count,
+            extra={"trace_id": trace_id},
+        )
+
+    async def run_inline_research_pipeline(
+        self,
+        *,
+        query: str,
+        user_id: str,
+        session_id: str,
+        trace_id: str,
+        enable_llm_planner: bool = False,
+        smart_llm: Any = None,
+        should_use_deep_voice: bool = False,
+    ) -> Any:
+        from core.research.research_models import ResearchResult
+        from core.research.result_synthesizer import ResultSynthesizer
+        from core.research.search_executor import SearchExecutor
+
+        started = time.monotonic()
+        plan_started = time.monotonic()
+        tasks, fallback_query = await self.build_research_tasks_inline(
+            query,
+            enable_llm_planner=enable_llm_planner,
+            smart_llm=smart_llm,
+        )
+        plan_ms = int(max(0.0, (time.monotonic() - plan_started) * 1000.0))
+
+        search_started = time.monotonic()
+        executor = SearchExecutor()
+        sources = await executor.execute(tasks, fallback_query or query)
+        search_ms = int(max(0.0, (time.monotonic() - search_started) * 1000.0))
+
+        synth_started = time.monotonic()
+        voice_mode = "deep" if should_use_deep_voice else "brief"
+
+        if not sources and not executor.has_configured_premium_provider():
+            synth_ms = int(max(0.0, (time.monotonic() - synth_started) * 1000.0))
+            self.log_research_stage_metrics(
+                query=query,
+                plan_ms=plan_ms,
+                search_ms=search_ms,
+                synth_ms=synth_ms,
+                source_count=0,
+                trace_id=trace_id,
+                enable_llm_planner=enable_llm_planner,
+            )
+            total_ms = int(max(0.0, (time.monotonic() - started) * 1000.0))
+            msg = (
+                "I can't produce a reliable research summary right now. "
+                "Search provider is not configured."
+            )
+            return ResearchResult(
+                summary=msg,
+                voice_summary=msg,
+                sources=[],
+                query=query,
+                trace_id=trace_id,
+                duration_ms=total_ms,
+                voice_mode=voice_mode,
+            )
+
+        role_llm = None
+        try:
+            from core.llm.role_llm import RoleLLM
+            if smart_llm is not None:
+                role_llm = RoleLLM(smart_llm)
+        except Exception as e:
+            logger.warning("inline_research_synth_role_llm_unavailable error=%s", e)
+
+        synthesizer = ResultSynthesizer(role_llm=role_llm)
+        display_summary, voice_summary = await synthesizer.synthesize(
+            query,
+            sources,
+            voice_mode=voice_mode,
+        )
+        synth_ms = int(max(0.0, (time.monotonic() - synth_started) * 1000.0))
+
+        self.log_research_stage_metrics(
+            query=query,
+            plan_ms=plan_ms,
+            search_ms=search_ms,
+            synth_ms=synth_ms,
+            source_count=len(sources),
+            trace_id=trace_id,
+            enable_llm_planner=enable_llm_planner,
+        )
+        total_ms = int(max(0.0, (time.monotonic() - started) * 1000.0))
+        return ResearchResult(
+            summary=display_summary,
+            voice_summary=voice_summary,
+            sources=sources,
+            query=query,
+            trace_id=trace_id,
+            duration_ms=total_ms,
+            voice_mode=voice_mode,
+        )

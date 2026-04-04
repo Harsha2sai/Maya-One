@@ -22,6 +22,7 @@ from core.memory.hybrid_memory_manager import HybridMemoryManager
 from core.memory.preference_manager import PreferenceManager
 from core.orchestrator.agent_router import AgentRouter
 from core.orchestrator.pronoun_rewriter import PronounRewriter
+from core.orchestrator.research_handler import ResearchHandler
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
 from core.security.input_guard import InputGuard
@@ -275,6 +276,11 @@ class AgentOrchestrator:
         self._research_context_ttl_s = max(
             10.0,
             float(os.getenv("RESEARCH_CONTEXT_TTL_S", "90")),
+        )
+        self._research_handler = ResearchHandler(
+            context_ttl_s=self._research_context_ttl_s,
+            get_conversation_history=lambda: self._conversation_history,
+            spawn_background_task=self._spawn_background_task,
         )
         self._enable_research_llm_planner = self._is_truthy_env(
             os.getenv("ENABLE_RESEARCH_LLM_PLANNER", "false")
@@ -650,32 +656,11 @@ class AgentOrchestrator:
         return self._research_agent
 
     async def _build_research_tasks_inline(self, query: str) -> tuple[list[Any], str]:
-        from core.research.research_planner import ResearchPlanner
-        from core.research.research_task_builder import build_research_tasks
-
-        tasks, fallback_query = build_research_tasks(query)
-        if tasks and not self._enable_research_llm_planner:
-            return tasks, fallback_query
-
-        if not self._enable_research_llm_planner:
-            return tasks, fallback_query
-
-        role_llm = None
-        try:
-            from core.llm.role_llm import RoleLLM
-
-            smart_llm = getattr(self.agent, "smart_llm", None)
-            if smart_llm is not None:
-                role_llm = RoleLLM(smart_llm)
-        except Exception as e:
-            logger.warning("inline_research_planner_role_llm_unavailable error=%s", e)
-
-        planner = ResearchPlanner(role_llm=role_llm)
-        llm_plan = await planner.plan(query)
-        if llm_plan.tasks:
-            return llm_plan.tasks, llm_plan.fallback_query or fallback_query
-
-        return tasks, fallback_query
+        return await self._research_handler.build_research_tasks_inline(
+            query,
+            enable_llm_planner=self._enable_research_llm_planner,
+            smart_llm=getattr(self.agent, "smart_llm", None),
+        )
 
     def _log_research_stage_metrics(
         self,
@@ -687,21 +672,14 @@ class AgentOrchestrator:
         source_count: int,
         trace_id: str,
     ) -> None:
-        total_ms = max(0, plan_ms + search_ms + synth_ms)
-        logger.info(
-            "research_pipeline_mode=inline_main llm_planner_enabled=%s query=%s",
-            self._enable_research_llm_planner,
-            query[:120],
-            extra={"trace_id": trace_id},
-        )
-        logger.info(
-            "research_stage_timing plan_ms=%s search_ms=%s synth_ms=%s total_ms=%s source_count=%s",
-            plan_ms,
-            search_ms,
-            synth_ms,
-            total_ms,
-            source_count,
-            extra={"trace_id": trace_id},
+        self._research_handler.log_research_stage_metrics(
+            query=query,
+            plan_ms=plan_ms,
+            search_ms=search_ms,
+            synth_ms=synth_ms,
+            source_count=source_count,
+            trace_id=trace_id,
+            enable_llm_planner=self._enable_research_llm_planner,
         )
 
     async def _run_inline_research_pipeline(
@@ -712,82 +690,14 @@ class AgentOrchestrator:
         session_id: str,
         trace_id: str,
     ) -> Any:
-        from core.research.research_models import ResearchResult
-        from core.research.result_synthesizer import ResultSynthesizer
-        from core.research.search_executor import SearchExecutor
-
-        started = time.monotonic()
-        plan_started = time.monotonic()
-        tasks, fallback_query = await self._build_research_tasks_inline(query)
-        plan_ms = int(max(0.0, (time.monotonic() - plan_started) * 1000.0))
-
-        search_started = time.monotonic()
-        executor = SearchExecutor()
-        sources = await executor.execute(tasks, fallback_query or query)
-        search_ms = int(max(0.0, (time.monotonic() - search_started) * 1000.0))
-
-        synth_started = time.monotonic()
-        voice_mode = "deep" if self._should_use_deep_research_voice(query) else "brief"
-        if not sources and not executor.has_configured_premium_provider():
-            synth_ms = int(max(0.0, (time.monotonic() - synth_started) * 1000.0))
-            self._log_research_stage_metrics(
-                query=query,
-                plan_ms=plan_ms,
-                search_ms=search_ms,
-                synth_ms=synth_ms,
-                source_count=0,
-                trace_id=trace_id,
-            )
-            total_ms = int(max(0.0, (time.monotonic() - started) * 1000.0))
-            low_confidence_message = (
-                "I can't produce a reliable research summary right now. "
-                "Search provider is not configured."
-            )
-            return ResearchResult(
-                summary=low_confidence_message,
-                voice_summary=low_confidence_message,
-                sources=[],
-                query=query,
-                trace_id=trace_id,
-                duration_ms=total_ms,
-                voice_mode=voice_mode,
-            )
-
-        role_llm = None
-        try:
-            from core.llm.role_llm import RoleLLM
-
-            smart_llm = getattr(self.agent, "smart_llm", None)
-            if smart_llm is not None:
-                role_llm = RoleLLM(smart_llm)
-        except Exception as e:
-            logger.warning("inline_research_synth_role_llm_unavailable error=%s", e)
-        synthesizer = ResultSynthesizer(role_llm=role_llm)
-        display_summary, voice_summary = await synthesizer.synthesize(
-            query,
-            sources,
-            voice_mode=voice_mode,
-        )
-        synth_ms = int(max(0.0, (time.monotonic() - synth_started) * 1000.0))
-
-        self._log_research_stage_metrics(
+        return await self._research_handler.run_inline_research_pipeline(
             query=query,
-            plan_ms=plan_ms,
-            search_ms=search_ms,
-            synth_ms=synth_ms,
-            source_count=len(sources),
+            user_id=user_id,
+            session_id=session_id,
             trace_id=trace_id,
-        )
-
-        total_ms = int(max(0.0, (time.monotonic() - started) * 1000.0))
-        return ResearchResult(
-            summary=display_summary,
-            voice_summary=voice_summary,
-            sources=sources,
-            query=query,
-            trace_id=trace_id,
-            duration_ms=total_ms,
-            voice_mode=voice_mode,
+            enable_llm_planner=self._enable_research_llm_planner,
+            smart_llm=getattr(self.agent, "smart_llm", None),
+            should_use_deep_voice=self._should_use_deep_research_voice(query),
         )
 
     async def _handle_identity_fast_path(
@@ -949,24 +859,21 @@ class AgentOrchestrator:
 
     def _store_research_context(self, query: str, summary: str, *, tool_context: Any = None) -> None:
         session_key = self._session_key_for_context(tool_context)
-        now = time.time()
-        subject = self._extract_subject_from_text(query) or self._extract_subject_from_text(summary)
-        summary_sentence = self._extract_summary_sentence(summary)
-        self._last_research_contexts[session_key] = {
-            "subject": subject,
-            "query": str(query or "").strip(),
-            "summary_sentence": summary_sentence,
-            "updated_at": now,
-            "expires_at": now + self._research_context_ttl_s,
-        }
-        logger.info(
-            "research_context_stored subject=%s ttl_s=%s",
-            (subject or "unknown")[:80],
-            int(self._research_context_ttl_s),
+        self._research_handler.store_research_context(
+            query=query,
+            summary=summary,
+            session_key=session_key,
         )
+        active = self._research_handler.get_active_research_context(session_key)
+        if active:
+            self._last_research_contexts[session_key] = dict(active)
 
     def _get_active_research_context(self, tool_context: Any = None) -> Optional[Dict[str, Any]]:
         session_key = self._session_key_for_context(tool_context)
+        context = self._research_handler.get_active_research_context(session_key)
+        if context:
+            self._last_research_contexts[session_key] = dict(context)
+            return context
         context = self._last_research_contexts.get(session_key)
         if not context:
             return None
@@ -1278,21 +1185,23 @@ class AgentOrchestrator:
                 trace_id=trace_id,
             )
 
-            synthetic_context = type("ResearchContext", (), {"session_id": session_id})()
-            self._store_research_context(
+            self._research_handler.store_research_context(
                 query=query,
                 summary=research_result.summary,
-                tool_context=synthetic_context,
+                session_key=session_id,
             )
-            subject = self._extract_subject_from_text(query) or "the requested topic"
-            summary_sentence = self._extract_summary_sentence(research_result.summary)
+            active = self._research_handler.get_active_research_context(session_id)
+            if active:
+                self._last_research_contexts[session_id] = dict(active)
+            subject = self._research_handler._extract_subject_from_text(query) or "the requested topic"
+            summary_sentence = self._research_handler._extract_summary_sentence(research_result.summary)
             history_summary = f"Research result: {subject}. {summary_sentence}".strip()
             self._append_conversation_history(
                 "assistant",
-            history_summary,
-            source="research_summary",
-            route="research",
-        )
+                history_summary,
+                source="research_summary",
+                route="research",
+            )
 
             logger.info(
                 "research_background_complete",
