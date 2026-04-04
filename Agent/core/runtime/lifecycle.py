@@ -110,6 +110,14 @@ class RuntimeLifecycleManager:
         
         # 3. Mode Specific Execution
         await self._boot_mode_specific(entrypoint_fnc)
+        logger.info(
+            "runtime_startup_summary mode=%s provider=%s tts=%s stt=%s environment=%s",
+            mode_str,
+            os.getenv("LLM_PROVIDER", "groq"),
+            os.getenv("TTS_PROVIDER", "edge_tts"),
+            os.getenv("STT_PROVIDER", "deepgram"),
+            os.getenv("ENVIRONMENT", "development"),
+        )
 
     async def shutdown(self):
         """Graceful shutdown of all services."""

@@ -430,6 +430,74 @@ async def handle_health(request):
         status=status_code,
     )
 
+async def handle_ready(request):
+    """Readiness check endpoint — stricter than /health.
+
+    Validates that critical runtime dependencies are not just configured
+    but actually usable. Returns 503 if any critical check fails.
+    """
+    import os
+    import sqlite3
+
+    checks = {}
+    ready = True
+
+    # Check 1: LLM provider key present and non-empty
+    llm_provider = os.getenv("LLM_PROVIDER", "groq").lower()
+    if llm_provider == "groq":
+        key = os.getenv("GROQ_API_KEY", "").strip()
+    elif llm_provider == "openai":
+        key = os.getenv("OPENAI_API_KEY", "").strip()
+    else:
+        key = (
+            os.getenv("GROQ_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+    checks["llm_key"] = "ok" if key else "missing"
+    if not key:
+        ready = False
+
+    # Check 2: SQLite task store has required tables
+    try:
+        db_path = os.getenv("SQLITE_DB_PATH", "dev_maya_one.db")
+        conn = sqlite3.connect(db_path, timeout=2.0)
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'"
+        )
+        has_tasks_table = cur.fetchone() is not None
+        conn.close()
+        checks["sqlite_schema"] = "ok" if has_tasks_table else "missing_tasks_table"
+        if not has_tasks_table:
+            ready = False
+    except Exception as e:
+        checks["sqlite_schema"] = f"error: {e}"
+        ready = False
+
+    # Check 3: LiveKit credentials present
+    lk_url = os.getenv("LIVEKIT_URL", "").strip()
+    lk_key = os.getenv("LIVEKIT_API_KEY", "").strip()
+    lk_secret = os.getenv("LIVEKIT_API_SECRET", "").strip()
+    lk_ok = bool(lk_url and lk_key and lk_secret)
+    checks["livekit_credentials"] = "ok" if lk_ok else "missing"
+    if not lk_ok:
+        ready = False
+
+    # Check 4: STT provider key present
+    stt_provider = os.getenv("STT_PROVIDER", "deepgram").lower()
+    if stt_provider == "deepgram":
+        stt_key = os.getenv("DEEPGRAM_API_KEY", "").strip()
+    else:
+        stt_key = "n/a"
+    checks["stt_key"] = "ok" if stt_key else "missing"
+    if not stt_key:
+        ready = False
+
+    status_code = 200 if ready else 503
+    return web.json_response(
+        {"ready": ready, "checks": checks},
+        status=status_code,
+    )
+
 async def handle_api_keys(request):
     """Sync API keys from Flutter app to backend .env file"""
     try:

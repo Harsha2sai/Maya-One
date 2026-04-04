@@ -5,6 +5,7 @@ from aiohttp import web
 from .handlers import (
     handle_token,
     handle_health,
+    handle_ready,
     handle_api_keys,
     handle_get_api_status,
     handle_send_message,
@@ -47,6 +48,7 @@ async def run_token_server(port=5050, host='0.0.0.0'):
         handle_upload,
         handle_token,
         handle_health,
+        handle_ready,
         handle_api_keys,
         handle_get_api_status,
         handle_send_message,
@@ -55,6 +57,7 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     app.router.add_post('/token', handle_token)
     app.router.add_post('/send_message', handle_send_message)
     app.router.add_get('/health', handle_health)
+    app.router.add_get('/ready', handle_ready)
     app.router.add_post('/api-keys', handle_api_keys)
     app.router.add_get('/api-keys/status', handle_get_api_status)
     
