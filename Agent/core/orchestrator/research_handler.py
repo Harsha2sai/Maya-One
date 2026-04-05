@@ -19,8 +19,13 @@ Usage:
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
+
+from core.communication import publish_agent_thinking, publish_tool_execution
+from core.observability.trace_context import current_trace_id
+from core.response.agent_response import AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +102,7 @@ class ResearchHandler:
         context_ttl_s: float = DEFAULT_CONTEXT_TTL_S,
         get_conversation_history: Optional[Callable[[], List[Dict[str, Any]]]] = None,
         spawn_background_task: Optional[Callable[[Any], None]] = None,
+        owner: Any = None,
     ):
         """
         Initialize the ResearchHandler.
@@ -109,6 +115,7 @@ class ResearchHandler:
         self._context_ttl_s = context_ttl_s
         self._get_conversation_history = get_conversation_history
         self._spawn_background_task = spawn_background_task
+        self._owner = owner
         # Session-keyed research contexts
         self._last_research_contexts: Dict[str, Dict[str, Any]] = {}
 
@@ -535,3 +542,247 @@ class ResearchHandler:
             duration_ms=total_ms,
             voice_mode=voice_mode,
         )
+
+    # -------------------------------------------------------------------------
+    # Route Execution (delegated from AgentOrchestrator)
+    # -------------------------------------------------------------------------
+
+    async def handle_research_route(
+        self,
+        *,
+        message: str,
+        user_id: str,
+        tool_context: Any,
+        query_rewritten: bool = False,
+        query_ambiguous: bool = False,
+        publish_agent_thinking_fn: Callable[..., Any] = publish_agent_thinking,
+        publish_tool_execution_fn: Callable[..., Any] = publish_tool_execution,
+    ) -> AgentResponse:
+        """Run research in background and return immediate acknowledgement."""
+        owner = self._owner
+        if owner is None:
+            raise RuntimeError("ResearchHandler owner is not configured")
+
+        handoff_target = owner._consume_handoff_signal(
+            target_agent="research",
+            execution_mode="inline",
+            reason="research_route_selected",
+            context_hint=str(message or "")[:160],
+        )
+        handoff_request = owner._build_handoff_request(
+            target_agent=handoff_target,
+            message=message,
+            user_id=user_id,
+            execution_mode="inline",
+            tool_context=tool_context,
+            handoff_reason="research_route_selected",
+        )
+        handoff_result = await owner._handoff_manager.delegate(handoff_request)
+        if handoff_result.status == "failed":
+            logger.warning(
+                "research_handoff_fallback trace_id=%s error_code=%s",
+                handoff_request.trace_id,
+                handoff_result.error_code,
+            )
+
+        session_id = (
+            getattr(tool_context, "session_id", None)
+            or owner._current_session_id
+            or getattr(getattr(owner, "room", None), "name", None)
+            or "console_session"
+        )
+        trace_id = (
+            getattr(tool_context, "trace_id", None)
+            or current_trace_id()
+            or str(uuid.uuid4())
+        )
+        turn_id = str(uuid.uuid4())
+        research_query = (owner._extract_user_message_segment(message) or message).strip()
+        if not research_query:
+            research_query = str(message or "").strip()
+
+        room = getattr(tool_context, "room", None)
+        active_session = getattr(owner, "_session", None) or getattr(owner, "session", None)
+        background_kwargs = {
+            "query": research_query,
+            "user_id": user_id,
+            "session_id": session_id,
+            "trace_id": trace_id,
+            "turn_id": turn_id,
+            "room": room,
+            "session": active_session,
+            "task_id": getattr(tool_context, "task_id", None),
+            "conversation_id": getattr(tool_context, "conversation_id", None),
+        }
+
+        if room is not None:
+            await publish_agent_thinking_fn(room, turn_id, "searching")
+            await publish_tool_execution_fn(
+                room,
+                turn_id,
+                "web_search",
+                "started",
+                message="Searching the web for research context.",
+                task_id=background_kwargs["task_id"],
+                conversation_id=background_kwargs["conversation_id"],
+            )
+
+        if room is not None or active_session is not None:
+            owner._spawn_background_task(self.run_research_background(**background_kwargs))
+        else:
+            await self.run_research_background(**background_kwargs)
+
+        owner._append_conversation_history(
+            "user",
+            message,
+            source="history",
+            route="research",
+        )
+
+        logger.info(
+            "research_dispatched_to_background",
+            extra={
+                "trace_id": trace_id,
+                "query": research_query,
+                "research_query_rewritten": query_rewritten,
+                "research_query_ambiguous": query_ambiguous,
+            },
+        )
+
+        return AgentResponse(
+            display_text="",
+            voice_text="",
+            structured_data={
+                "_routing_mode_type": "research_pending",
+                "_interaction_mode": "silent_ack",
+                "_suppress_assistant_output": True,
+                "turn_id": turn_id,
+            },
+        )
+
+    async def run_research_background(
+        self,
+        *,
+        query: str,
+        user_id: str,
+        session_id: str,
+        trace_id: str,
+        turn_id: str,
+        room: Any,
+        session: Any,
+        task_id: str | None = None,
+        conversation_id: str | None = None,
+        publish_tool_execution_fn: Callable[..., Any] = publish_tool_execution,
+    ) -> None:
+        """Background research task. Publishes result to Flutter when done."""
+        owner = self._owner
+        if owner is None:
+            raise RuntimeError("ResearchHandler owner is not configured")
+
+        from core.communication import publish_research_result
+
+        try:
+            research_result = await owner._run_inline_research_pipeline(
+                query=query,
+                user_id=user_id,
+                session_id=session_id,
+                trace_id=trace_id,
+            )
+
+            self.store_research_context(
+                query=query,
+                summary=research_result.summary,
+                session_key=session_id,
+            )
+            active = self.get_active_research_context(session_id)
+            if active:
+                owner._last_research_contexts[session_id] = dict(active)
+            subject = self._extract_subject_from_text(query) or "the requested topic"
+            summary_sentence = self._extract_summary_sentence(research_result.summary)
+            history_summary = f"Research result: {subject}. {summary_sentence}".strip()
+            owner._append_conversation_history(
+                "assistant",
+                history_summary,
+                source="research_summary",
+                route="research",
+            )
+
+            logger.info(
+                "research_background_complete",
+                extra={"trace_id": trace_id, "source_count": len(research_result.sources)},
+            )
+
+            if room is not None:
+                await publish_tool_execution_fn(
+                    room,
+                    turn_id,
+                    "web_search",
+                    "finished",
+                    message="Research context is ready.",
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                )
+                await publish_research_result(
+                    room,
+                    turn_id=turn_id,
+                    query=query,
+                    summary=research_result.summary,
+                    sources=[s.to_dict() for s in research_result.sources],
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                )
+            else:
+                logger.info(
+                    "research_result_console",
+                    extra={"display": research_result.summary[:200] if research_result.summary else "(empty)"},
+                )
+
+            sanitized_voice, sanitize_mode = owner._sanitize_research_voice_for_tts(
+                research_result.voice_summary,
+                research_result.summary,
+                voice_mode=str(getattr(research_result, "voice_mode", "brief") or "brief"),
+            )
+            logger.info(
+                "research_voice_tts_sanitized mode=%s before_len=%d after_len=%d",
+                sanitize_mode,
+                len(research_result.voice_summary or ""),
+                len(sanitized_voice or ""),
+            )
+
+            if sanitized_voice:
+                logger.info("tts_voice_summary: %s", (sanitized_voice or "")[:120])
+                logger.info(
+                    "research_voice_speak turn_id=%s voice_summary_len=%d",
+                    turn_id,
+                    len(sanitized_voice or ""),
+                )
+
+                if session is not None:
+                    if getattr(owner, "_turn_in_progress", False):
+                        logger.info(
+                            "research_voice_skipped_turn_active turn_id=%s",
+                            turn_id,
+                        )
+                    else:
+                        await session.say(
+                            sanitized_voice,
+                            allow_interruptions=True,
+                        )
+                else:
+                    logger.info("research_voice_skipped reason=no_session turn_id=%s", turn_id)
+        except Exception as exc:
+            if room is not None:
+                await publish_tool_execution_fn(
+                    room,
+                    turn_id,
+                    "web_search",
+                    "failed",
+                    message="Research request failed before results were ready.",
+                    task_id=task_id,
+                    conversation_id=conversation_id,
+                )
+            logger.error(
+                "research_background_error",
+                extra={"trace_id": trace_id, "error": str(exc)},
+            )

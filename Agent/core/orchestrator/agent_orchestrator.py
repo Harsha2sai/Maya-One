@@ -29,6 +29,8 @@ from core.orchestrator.onboarding import (
 )
 from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.orchestrator.research_handler import ResearchHandler
+from core.orchestrator.media_handler import MediaHandler
+from core.orchestrator.scheduling_handler import SchedulingHandler
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
 from core.security.input_guard import InputGuard
@@ -287,7 +289,10 @@ class AgentOrchestrator(ChatResponseMixin):
             context_ttl_s=self._research_context_ttl_s,
             get_conversation_history=lambda: self._conversation_history,
             spawn_background_task=self._spawn_background_task,
+            owner=self,
         )
+        self._media_handler = MediaHandler(owner=self)
+        self._scheduling_handler = SchedulingHandler(owner=self)
         self._enable_research_llm_planner = self._is_truthy_env(
             os.getenv("ENABLE_RESEARCH_LLM_PLANNER", "false")
         )
@@ -523,46 +528,6 @@ class AgentOrchestrator(ChatResponseMixin):
         "downlodes": "downloads",
         "donwloads": "downloads",
         "downloades": "downloads",
-    }
-    _RESEARCH_PRONOUN_TOKENS = {
-        "him",
-        "her",
-        "he",
-        "she",
-        "it",
-        "that",
-        "this",
-        "they",
-        "them",
-        "his",
-        "their",
-    }
-    _RESEARCH_SUBJECT_STOPWORDS = {
-        "i",
-        "you",
-        "we",
-        "he",
-        "she",
-        "it",
-        "they",
-        "him",
-        "her",
-        "them",
-        "this",
-        "that",
-        "who",
-        "what",
-        "when",
-        "where",
-        "why",
-        "how",
-        "tell",
-        "about",
-        "me",
-        "us",
-        "the",
-        "a",
-        "an",
     }
     _VOICE_SHORT_COMMAND_ALLOWLIST = {
         "yes",
@@ -943,6 +908,34 @@ class AgentOrchestrator(ChatResponseMixin):
                 changed = True
         return normalized, changed
 
+    async def _handle_media_route(
+        self,
+        *,
+        message: str,
+        user_id: str,
+        tool_context: Any,
+    ) -> AgentResponse:
+        """Backward-compatible wrapper that delegates media route handling."""
+        return await self._media_handler.handle_media_route(
+            message=message,
+            user_id=user_id,
+            tool_context=tool_context,
+        )
+
+    async def _handle_scheduling_route(
+        self,
+        *,
+        message: str,
+        user_id: str,
+        tool_context: Any,
+    ) -> AgentResponse:
+        """Backward-compatible wrapper that delegates scheduling route handling."""
+        return await self._scheduling_handler.handle_scheduling_route(
+            message=message,
+            user_id=user_id,
+            tool_context=tool_context,
+        )
+
     async def _handle_research_route(
         self,
         *,
@@ -952,107 +945,15 @@ class AgentOrchestrator(ChatResponseMixin):
         query_rewritten: bool = False,
         query_ambiguous: bool = False,
     ) -> AgentResponse:
-        """Run research in background, return immediate ack to voice."""
-        handoff_target = self._consume_handoff_signal(
-            target_agent="research",
-            execution_mode="inline",
-            reason="research_route_selected",
-            context_hint=str(message or "")[:160],
-        )
-        handoff_request = self._build_handoff_request(
-            target_agent=handoff_target,
+        """Backward-compatible wrapper that delegates research route handling."""
+        return await self._research_handler.handle_research_route(
             message=message,
             user_id=user_id,
-            execution_mode="inline",
             tool_context=tool_context,
-            handoff_reason="research_route_selected",
-        )
-        handoff_result = await self._handoff_manager.delegate(handoff_request)
-        if handoff_result.status == "failed":
-            logger.warning(
-                "research_handoff_fallback trace_id=%s error_code=%s",
-                handoff_request.trace_id,
-                handoff_result.error_code,
-            )
-
-        session_id = (
-            getattr(tool_context, "session_id", None)
-            or self._current_session_id
-            or getattr(getattr(self, "room", None), "name", None)
-            or "console_session"
-        )
-        trace_id = (
-            getattr(tool_context, "trace_id", None)
-            or current_trace_id()
-            or str(uuid.uuid4())
-        )
-        turn_id = str(uuid.uuid4())
-        research_query = (self._extract_user_message_segment(message) or message).strip()
-        if not research_query:
-            research_query = str(message or "").strip()
-
-        # Resolve room for data channel publish (may be None in console mode)
-        room = getattr(tool_context, "room", None)
-
-        active_session = getattr(self, "_session", None) or getattr(self, "session", None)
-        background_kwargs = {
-            "query": research_query,
-            "user_id": user_id,
-            "session_id": session_id,
-            "trace_id": trace_id,
-            "turn_id": turn_id,
-            "room": room,
-            "session": active_session,
-            "task_id": getattr(tool_context, "task_id", None),
-            "conversation_id": getattr(tool_context, "conversation_id", None),
-        }
-
-        if room is not None:
-            await publish_agent_thinking(room, turn_id, "searching")
-            await publish_tool_execution(
-                room,
-                turn_id,
-                "web_search",
-                "started",
-                message="Searching the web for research context.",
-                task_id=background_kwargs["task_id"],
-                conversation_id=background_kwargs["conversation_id"],
-            )
-
-        # In voice/live room mode keep research async. In console mode run inline so
-        # the process does not exit before provider chain/synthesis completes.
-        if room is not None or active_session is not None:
-            self._spawn_background_task(self._run_research_background(**background_kwargs))
-        else:
-            await self._run_research_background(**background_kwargs)
-
-        self._append_conversation_history(
-            "user",
-            message,
-            source="history",
-            route="research",
-        )
-
-        # Immediate acknowledgement — routed silently and surfaced via chat events/UI
-        logger.info(
-            "research_dispatched_to_background",
-            extra={
-                "trace_id": trace_id,
-                "query": research_query,
-                "research_query_rewritten": query_rewritten,
-                "research_query_ambiguous": query_ambiguous,
-            },
-        )
-
-        return AgentResponse(
-            display_text="",
-            voice_text="",
-            structured_data={
-                "_routing_mode_type": "research_pending",
-                "_interaction_mode": "silent_ack",
-                "_suppress_assistant_output": True,
-                "turn_id": turn_id,
-            },
+            query_rewritten=query_rewritten,
+            query_ambiguous=query_ambiguous,
+            publish_agent_thinking_fn=publish_agent_thinking,
+            publish_tool_execution_fn=publish_tool_execution,
         )
 
     async def _run_research_background(
@@ -1068,118 +969,19 @@ class AgentOrchestrator(ChatResponseMixin):
         task_id: str | None = None,
         conversation_id: str | None = None,
     ) -> None:
-        """Background research task. Publishes result to Flutter when done."""
-        from core.communication import publish_research_result
-
-        try:
-            research_result = await self._run_inline_research_pipeline(
-                query=query,
-                user_id=user_id,
-                session_id=session_id,
-                trace_id=trace_id,
-            )
-
-            self._research_handler.store_research_context(
-                query=query,
-                summary=research_result.summary,
-                session_key=session_id,
-            )
-            active = self._research_handler.get_active_research_context(session_id)
-            if active:
-                self._last_research_contexts[session_id] = dict(active)
-            subject = self._research_handler._extract_subject_from_text(query) or "the requested topic"
-            summary_sentence = self._research_handler._extract_summary_sentence(research_result.summary)
-            history_summary = f"Research result: {subject}. {summary_sentence}".strip()
-            self._append_conversation_history(
-                "assistant",
-                history_summary,
-                source="research_summary",
-                route="research",
-            )
-
-            logger.info(
-                "research_background_complete",
-                extra={"trace_id": trace_id,
-                       "source_count": len(research_result.sources)},
-            )
-
-            # Push rich result to Flutter data channel
-            if room is not None:
-                await publish_tool_execution(
-                    room,
-                    turn_id,
-                    "web_search",
-                    "finished",
-                    message="Research context is ready.",
-                    task_id=task_id,
-                    conversation_id=conversation_id,
-                )
-                await publish_research_result(
-                    room,
-                    turn_id=turn_id,
-                    query=query,
-                    summary=research_result.summary,
-                    sources=[s.to_dict() for s in research_result.sources],
-                    trace_id=trace_id,
-                    task_id=task_id,
-                    conversation_id=conversation_id,
-                )
-            else:
-                # Console mode — log result for debugging
-                logger.info(
-                    "research_result_console",
-                    extra={"display": research_result.summary[:200] if research_result.summary else "(empty)"}
-                )
-
-            sanitized_voice, sanitize_mode = self._sanitize_research_voice_for_tts(
-                research_result.voice_summary,
-                research_result.summary,
-                voice_mode=str(getattr(research_result, "voice_mode", "brief") or "brief"),
-            )
-            logger.info(
-                "research_voice_tts_sanitized mode=%s before_len=%d after_len=%d",
-                sanitize_mode,
-                len(research_result.voice_summary or ""),
-                len(sanitized_voice or ""),
-            )
-
-            if sanitized_voice:
-                logger.info("tts_voice_summary: %s", (sanitized_voice or "")[:120])
-                logger.info(
-                    "research_voice_speak turn_id=%s voice_summary_len=%d",
-                    turn_id,
-                    len(sanitized_voice or ""),
-                )
-
-                if session is not None:
-                    # Do not speak if a new turn has started since research was dispatched
-                    if getattr(self, "_turn_in_progress", False):
-                        logger.info(
-                            "research_voice_skipped_turn_active turn_id=%s",
-                            turn_id,
-                        )
-                    else:
-                        await session.say(
-                            sanitized_voice,
-                            allow_interruptions=True,
-                        )
-                else:
-                    logger.info("research_voice_skipped reason=no_session turn_id=%s", turn_id)
-        except Exception as exc:
-            if room is not None:
-                await publish_tool_execution(
-                    room,
-                    turn_id,
-                    "web_search",
-                    "failed",
-                    message="Research request failed before results were ready.",
-                    task_id=task_id,
-                    conversation_id=conversation_id,
-                )
-            logger.error(
-                "research_background_error",
-                extra={"trace_id": trace_id, "error": str(exc)}
-            )
+        """Backward-compatible wrapper that delegates research background execution."""
+        await self._research_handler.run_research_background(
+            query=query,
+            user_id=user_id,
+            session_id=session_id,
+            trace_id=trace_id,
+            turn_id=turn_id,
+            room=room,
+            session=session,
+            task_id=task_id,
+            conversation_id=conversation_id,
+            publish_tool_execution_fn=publish_tool_execution,
+        )
 
     def _is_media_query(self, message: str) -> bool:
         text = str(message or "").strip().lower()
