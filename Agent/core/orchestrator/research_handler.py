@@ -50,6 +50,46 @@ class ResearchHandler:
 
     # Default TTL for research context (15 minutes)
     DEFAULT_CONTEXT_TTL_S = 900
+    _RESEARCH_PRONOUN_TOKENS = {
+        "him",
+        "her",
+        "he",
+        "she",
+        "it",
+        "that",
+        "this",
+        "they",
+        "them",
+        "his",
+        "their",
+    }
+    _RESEARCH_SUBJECT_STOPWORDS = {
+        "i",
+        "you",
+        "we",
+        "he",
+        "she",
+        "it",
+        "they",
+        "him",
+        "her",
+        "them",
+        "this",
+        "that",
+        "who",
+        "what",
+        "when",
+        "where",
+        "why",
+        "how",
+        "tell",
+        "about",
+        "me",
+        "us",
+        "the",
+        "a",
+        "an",
+    }
 
     def __init__(
         self,
@@ -133,6 +173,87 @@ class ResearchHandler:
         """Clear research context for a session."""
         self._last_research_contexts.pop(session_key, None)
 
+    def resolve_research_subject_from_context(
+        self,
+        *,
+        research_context: Optional[Dict[str, Any]] = None,
+        conversation_history: Optional[List[Dict[str, Any]]] = None,
+        bootstrap_payload: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Resolve subject for pronoun follow-up from available contexts.
+
+        Source order:
+        1. Active research context
+        2. History user entries with route=research
+        3. History assistant entries with route=research
+        4. Session continuity items
+        5. Bootstrap topic summary / recent events
+        """
+        context = research_context or {}
+        if context:
+            candidate = str(context.get("subject") or "").strip()
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+            candidate = self._extract_subject_from_text(str(context.get("query") or ""))
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+
+        history: List[Dict[str, Any]]
+        if conversation_history is not None:
+            history = list(conversation_history)
+        elif self._get_conversation_history:
+            history = list(self._get_conversation_history() or [])
+        else:
+            history = []
+
+        for item in reversed(history):
+            if str(item.get("source") or "history") != "history":
+                continue
+            if str(item.get("role") or "").strip().lower() != "user":
+                continue
+            if str(item.get("route") or "") != "research":
+                continue
+            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+
+        for item in reversed(history):
+            if str(item.get("source") or "history") != "history":
+                continue
+            if str(item.get("role") or "").strip().lower() != "assistant":
+                continue
+            if str(item.get("route") or "") != "research":
+                continue
+            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+
+        for item in reversed(history):
+            if str(item.get("source") or "") != "session_continuity":
+                continue
+            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+
+        payload = bootstrap_payload or {}
+        topic_summary = str(payload.get("topic_summary") or "").strip()
+        if topic_summary:
+            candidate = self._extract_subject_from_text(topic_summary)
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+
+        recent_events = payload.get("recent_events") or []
+        if isinstance(recent_events, list):
+            for event in reversed(recent_events):
+                if not isinstance(event, dict):
+                    continue
+                candidate = self._extract_subject_from_text(str(event.get("content") or ""))
+                if candidate and not self._is_bad_subject(candidate):
+                    return candidate
+
+        return ""
+
     # -------------------------------------------------------------------------
     # Subject Extraction
     # -------------------------------------------------------------------------
@@ -164,9 +285,27 @@ class ResearchHandler:
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if not match:
                 continue
-            candidate = match.group(1).strip()
-            if candidate and not self._is_bad_subject(candidate):
+            candidate = re.sub(r"\s+", " ", str(match.group(1) or "")).strip(" .?!,;:")
+            if not candidate:
+                continue
+            tokens = [token.lower() for token in re.findall(r"[A-Za-z']+", candidate)]
+            if any(token in self._RESEARCH_PRONOUN_TOKENS for token in tokens):
+                continue
+            if candidate.lower() in self._RESEARCH_SUBJECT_STOPWORDS:
+                continue
+            if len(tokens) <= 10:
                 return candidate
+
+        named_candidates = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b", text)
+        for candidate in named_candidates:
+            cleaned = candidate.strip()
+            if not cleaned:
+                continue
+            if cleaned.lower() in self._RESEARCH_SUBJECT_STOPWORDS:
+                continue
+            if len(cleaned.split()) == 1 and len(cleaned) <= 3:
+                continue
+            return cleaned
 
         return ""
 
@@ -206,17 +345,17 @@ class ResearchHandler:
         Returns:
             First sentence, truncated if necessary
         """
-        if not summary:
+        text = str(summary or "").strip()
+        if not text:
             return ""
-        # Split on sentence boundaries
-        sentences = re.split(r"[.!?]\s+", summary)
-        if sentences:
-            first = sentences[0].strip()
-            # Truncate to reasonable length
-            if len(first) > 200:
-                first = first[:197] + "..."
-            return first
-        return ""
+        text = re.sub(r"(?im)^\s*sources?\s*:.*$", "", text)
+        text = re.sub(r"(?im)^\s*[-*•🔹✅🚀]\s*", "", text)
+        text = re.sub(r"[*_`#>~]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            return ""
+        sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
+        return sentence.rstrip(" ,;:")
 
     # -------------------------------------------------------------------------
     # Context Key Helpers

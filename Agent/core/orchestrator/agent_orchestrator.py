@@ -804,43 +804,8 @@ class AgentOrchestrator(ChatResponseMixin):
         return None
 
     def _extract_subject_from_text(self, raw_text: str) -> str:
-        text = re.sub(r"\s+", " ", str(raw_text or "")).strip()
-        if not text:
-            return ""
-
-        capture_patterns = (
-            r"\bwho is (?:the )?(.+?)(?:\?|$)",
-            r"\btell me about (.+?)(?:\?|$)",
-            r"\bwhat about (.+?)(?:\?|$)",
-            r"\bi asked you about (.+?)(?:\?|$)",
-            r"\b(?:is|was)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b",
-        )
-        for pattern in capture_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if not match:
-                continue
-            candidate = re.sub(r"\s+", " ", str(match.group(1) or "")).strip(" .?!,;:")
-            if not candidate:
-                continue
-            tokens = [token.lower() for token in re.findall(r"[A-Za-z']+", candidate)]
-            if any(token in self._RESEARCH_PRONOUN_TOKENS for token in tokens):
-                continue
-            if candidate.lower() in self._RESEARCH_SUBJECT_STOPWORDS:
-                continue
-            if len(tokens) <= 10:
-                return candidate
-
-        named_candidates = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b", text)
-        for candidate in named_candidates:
-            cleaned = candidate.strip()
-            if not cleaned:
-                continue
-            if cleaned.lower() in self._RESEARCH_SUBJECT_STOPWORDS:
-                continue
-            if len(cleaned.split()) == 1 and len(cleaned) <= 3:
-                continue
-            return cleaned
-        return ""
+        # Backward-compatible wrapper: subject extraction logic lives in ResearchHandler.
+        return self._research_handler._extract_subject_from_text(raw_text)
 
     def _session_key_for_context(self, tool_context: Any = None) -> str:
         return (
@@ -851,17 +816,8 @@ class AgentOrchestrator(ChatResponseMixin):
         )
 
     def _extract_summary_sentence(self, summary: str) -> str:
-        text = str(summary or "").strip()
-        if not text:
-            return ""
-        text = re.sub(r"(?im)^\s*sources?\s*:.*$", "", text)
-        text = re.sub(r"(?im)^\s*[-*•🔹✅🚀]\s*", "", text)
-        text = re.sub(r"[*_`#>~]", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        if not text:
-            return ""
-        sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
-        return sentence.rstrip(" ,;:")
+        # Backward-compatible wrapper: summary extraction logic lives in ResearchHandler.
+        return self._research_handler._extract_summary_sentence(summary)
 
     def _store_research_context(self, query: str, summary: str, *, tool_context: Any = None) -> None:
         session_key = self._session_key_for_context(tool_context)
@@ -890,64 +846,7 @@ class AgentOrchestrator(ChatResponseMixin):
         return context
 
     def _resolve_research_subject_from_context(self, tool_context: Any = None) -> str:
-        def _is_bad_subject(candidate: str) -> bool:
-            if not candidate:
-                return True
-            lowered = candidate.strip().lower()
-            if not lowered:
-                return True
-            # Avoid filesystem/location nouns from task requests (e.g., "Downloads").
-            if lowered in {"downloads", "download", "desktop", "documents", "folder", "file", "pdf"}:
-                return True
-            if "/" in lowered or "\\" in lowered:
-                return True
-            return False
-
-        # Source 1: most recent completed research result (session-scoped, TTL guarded)
-        context = self._get_active_research_context(tool_context)
-        if context:
-            candidate = str(context.get("subject") or "").strip()
-            if candidate and not _is_bad_subject(candidate):
-                return candidate
-            candidate = self._extract_subject_from_text(str(context.get("query") or ""))
-            if candidate and not _is_bad_subject(candidate):
-                return candidate
-
-        history = list(self._conversation_history or [])
-
-        # Source 1: in-session user history (prefer user intent over assistant phrasing)
-        for item in reversed(history):
-            if str(item.get("source") or "history") != "history":
-                continue
-            if str(item.get("role") or "").strip().lower() != "user":
-                continue
-            if str(item.get("route") or "") != "research":
-                continue
-            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
-            if candidate and not _is_bad_subject(candidate):
-                return candidate
-
-        # Source 2: in-session assistant history
-        for item in reversed(history):
-            if str(item.get("source") or "history") != "history":
-                continue
-            if str(item.get("role") or "").strip().lower() != "assistant":
-                continue
-            if str(item.get("route") or "") != "research":
-                continue
-            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
-            if candidate and not _is_bad_subject(candidate):
-                return candidate
-
-        # Source 3: injected continuity summary
-        for item in reversed(history):
-            if str(item.get("source") or "") != "session_continuity":
-                continue
-            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
-            if candidate and not _is_bad_subject(candidate):
-                return candidate
-
-        # Source 4: bootstrap payload
+        # Backward-compatible wrapper: route-filtered resolution logic lives in ResearchHandler.
         session_key = (
             getattr(tool_context, "session_id", None)
             or self._current_session_id
@@ -955,22 +854,11 @@ class AgentOrchestrator(ChatResponseMixin):
             or ""
         )
         payload = self._session_bootstrap_contexts.get(str(session_key or "").strip()) or {}
-        topic_summary = str(payload.get("topic_summary") or "").strip()
-        if topic_summary:
-            candidate = self._extract_subject_from_text(topic_summary)
-            if candidate and not _is_bad_subject(candidate):
-                return candidate
-
-        recent_events = payload.get("recent_events") or []
-        if isinstance(recent_events, list):
-            for event in reversed(recent_events):
-                if not isinstance(event, dict):
-                    continue
-                candidate = self._extract_subject_from_text(str(event.get("content") or ""))
-                if candidate and not _is_bad_subject(candidate):
-                    return candidate
-
-        return ""
+        return self._research_handler.resolve_research_subject_from_context(
+            research_context=self._get_active_research_context(tool_context),
+            conversation_history=self._conversation_history,
+            bootstrap_payload=payload,
+        )
 
     def rewrite_research_query_for_context(
         self,
@@ -1026,13 +914,15 @@ class AgentOrchestrator(ChatResponseMixin):
         if not self._pronoun_rewriter.should_check_rewrite(query):
             return query, False, False
 
-        # Delegate to main rewrite method
+        # Delegate to main rewrite method. Restrict history scan to research route
+        # to avoid non-research subject contamination in pre-router override.
         research_context = self._get_active_research_context(tool_context)
         return self._pronoun_rewriter.rewrite(
             query,
             conversation_history=self._conversation_history,
             research_context=research_context,
             tool_context=tool_context,
+            history_route_filter="research",
         )
 
     def _normalize_voice_transcription_for_routing(self, message: str) -> tuple[str, bool]:

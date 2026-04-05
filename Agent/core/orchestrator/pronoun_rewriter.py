@@ -79,6 +79,7 @@ class PronounRewriter:
         conversation_history: Optional[List[Dict[str, Any]]] = None,
         research_context: Optional[Dict[str, Any]] = None,
         tool_context: Any = None,
+        history_route_filter: Optional[str] = None,
     ) -> Tuple[str, bool, bool]:
         """
         Rewrite a query by resolving pronouns to their antecedent subjects.
@@ -116,6 +117,7 @@ class PronounRewriter:
             research_context=research_context,
             conversation_history=conversation_history,
             tool_context=tool_context,
+            history_route_filter=history_route_filter,
         )
 
         if not subject:
@@ -160,6 +162,7 @@ class PronounRewriter:
         research_context: Optional[Dict[str, Any]],
         conversation_history: Optional[List[Dict[str, Any]]],
         tool_context: Any = None,
+        history_route_filter: Optional[str] = None,
     ) -> str:
         """
         Resolve the pronoun antecedent from available contexts.
@@ -197,6 +200,8 @@ class PronounRewriter:
                 if str(item.get("source") or "history") != "history":
                     continue
                 if str(item.get("role") or "").strip().lower() != "user":
+                    continue
+                if history_route_filter is not None and str(item.get("route") or "") != history_route_filter:
                     continue
                 # Try to extract subject from user message
                 content = str(item.get("content") or "")
