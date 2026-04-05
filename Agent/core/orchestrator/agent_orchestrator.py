@@ -921,8 +921,7 @@ class AgentOrchestrator(ChatResponseMixin):
                 continue
             if str(item.get("role") or "").strip().lower() != "user":
                 continue
-            item_route = str(item.get("route") or "")
-            if item_route and item_route != "research":
+            if str(item.get("route") or "") != "research":
                 continue
             candidate = self._extract_subject_from_text(str(item.get("content") or ""))
             if candidate and not _is_bad_subject(candidate):
@@ -934,8 +933,7 @@ class AgentOrchestrator(ChatResponseMixin):
                 continue
             if str(item.get("role") or "").strip().lower() != "assistant":
                 continue
-            item_route = str(item.get("route") or "")
-            if item_route and item_route != "research":
+            if str(item.get("route") or "") != "research":
                 continue
             candidate = self._extract_subject_from_text(str(item.get("content") or ""))
             if candidate and not _is_bad_subject(candidate):
