@@ -22,6 +22,11 @@ from core.memory.hybrid_memory_manager import HybridMemoryManager
 from core.memory.preference_manager import PreferenceManager
 from core.orchestrator.agent_router import AgentRouter
 from core.orchestrator.chat_mixin import ChatResponseMixin
+from core.orchestrator.onboarding import (
+    build_onboarding_system_note,
+    extract_onboarding_prefs,
+    is_onboarding_complete,
+)
 from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.orchestrator.research_handler import ResearchHandler
 from core.tools.livekit_tool_adapter import adapt_tool_list
@@ -3472,6 +3477,29 @@ class AgentOrchestrator(ChatResponseMixin):
 
             # Phase <= 3 keeps chat/tool-only route.
             if not self.enable_task_pipeline:
+                pref_manager = getattr(self, "_preference_manager", None) or self.preference_manager
+                if pref_manager:
+                    try:
+                        get_all = getattr(pref_manager, "get_all", None)
+                        _prefs = await get_all(user_id or "") if callable(get_all) else {}
+                        if not is_onboarding_complete(_prefs):
+                            _extracted = extract_onboarding_prefs(message)
+                            if _extracted:
+                                for _k, _v in _extracted.items():
+                                    await pref_manager.set(user_id or "", _k, _v)
+                                logger.info(
+                                    "onboarding_prefs_captured user_id=%s keys=%s",
+                                    user_id,
+                                    list(_extracted.keys()),
+                                )
+                            else:
+                                logger.info(
+                                    "onboarding_prompt_needed user_id=%s note=%s",
+                                    user_id,
+                                    build_onboarding_system_note()[:120],
+                                )
+                    except Exception as _onb_err:
+                        logger.warning("onboarding_check_failed error=%s", _onb_err)
                 return await self._handle_chat_response(
                     effective_message,
                     user_id,
@@ -3579,6 +3607,29 @@ class AgentOrchestrator(ChatResponseMixin):
                 )
                 return response
             else:
+                pref_manager = getattr(self, "_preference_manager", None) or self.preference_manager
+                if pref_manager:
+                    try:
+                        get_all = getattr(pref_manager, "get_all", None)
+                        _prefs = await get_all(user_id or "") if callable(get_all) else {}
+                        if not is_onboarding_complete(_prefs):
+                            _extracted = extract_onboarding_prefs(message)
+                            if _extracted:
+                                for _k, _v in _extracted.items():
+                                    await pref_manager.set(user_id or "", _k, _v)
+                                logger.info(
+                                    "onboarding_prefs_captured user_id=%s keys=%s",
+                                    user_id,
+                                    list(_extracted.keys()),
+                                )
+                            else:
+                                logger.info(
+                                    "onboarding_prompt_needed user_id=%s note=%s",
+                                    user_id,
+                                    build_onboarding_system_note()[:120],
+                                )
+                    except Exception as _onb_err:
+                        logger.warning("onboarding_check_failed error=%s", _onb_err)
                 response = await self._handle_chat_response(
                     effective_message,
                     user_id,
