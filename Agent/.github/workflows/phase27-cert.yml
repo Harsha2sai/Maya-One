@@ -1,0 +1,210 @@
+name: Phase 27 - Voice Certification
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      debug_mode:
+        description: 'Enable debug logging'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+  LIVEKIT_AGENT_NAME: maya-one
+
+jobs:
+  regression:
+    name: Full Regression Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile check
+        run: |
+          python -m py_compile agent.py
+          python -m py_compile api/server.py
+          echo "✅ Compile check passed"
+
+      - name: Run full regression
+        run: |
+          python -m pytest tests/ -q --tb=short 2>&1 | tee /tmp/regression.log
+          echo "REGRESSION_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+
+      - name: Upload regression log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-log
+          path: /tmp/regression.log
+          retention-days: 7
+
+      - name: Fail if regression failed
+        if: env.REGRESSION_EXIT_CODE != '0'
+        run: |
+          echo "❌ Regression suite failed"
+          exit 1
+
+  voice-certification:
+    name: Voice Certification Probes
+    runs-on: ubuntu-latest
+    needs: []  # Run in parallel with regression
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start agent worker
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+        run: |
+          echo "🚀 Starting agent worker..."
+          python agent.py &
+          AGENT_PID=$!
+          echo "AGENT_PID=$AGENT_PID" >> $GITHUB_ENV
+
+          # Wait for health endpoint
+          echo "⏳ Waiting for token server health..."
+          for i in {1..30}; do
+            if curl -s http://127.0.0.1:5050/health > /dev/null 2>&1; then
+              echo "✅ Token server ready"
+              break
+            fi
+            sleep 1
+          done
+
+          # Verify health
+          curl -s http://127.0.0.1:5050/health | tee /tmp/health_check.json
+
+      - name: Run voice certification
+        env:
+          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
+          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
+          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          LIVEKIT_AGENT_NAME: ${{ env.LIVEKIT_AGENT_NAME }}
+        run: |
+          echo "🎙️ Running voice certification probes..."
+          ./scripts/run_phase27_voice_certification.sh 2>&1 | tee /tmp/certification.log
+          echo "CERT_EXIT_CODE=${PIPESTATUS[0]}" >> $GITHUB_ENV
+
+      - name: Parse certification result
+        if: always()
+        run: |
+          if [ -f /tmp/cert_report.json ]; then
+            echo "📊 Certification report found"
+            cat /tmp/cert_report.json | jq '.'
+
+            # Extract summary for GitHub Actions
+            STATUS=$(cat /tmp/cert_report.json | jq -r '.status // "unknown"')
+            PASSED=$(cat /tmp/cert_report.json | jq -r '.overall_passed // false')
+
+            echo "CERT_STATUS=$STATUS" >> $GITHUB_ENV
+            echo "CERT_PASSED=$PASSED" >> $GITHUB_ENV
+
+            echo "Certification Status: $STATUS"
+            echo "Overall Passed: $PASSED"
+          else
+            echo "⚠️ No certification report found"
+            echo "CERT_STATUS=missing_report" >> $GITHUB_ENV
+            echo "CERT_PASSED=false" >> $GITHUB_ENV
+          fi
+
+      - name: Upload certification artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: certification-artifacts
+          path: |
+            /tmp/cert_report.json
+            /tmp/certification.log
+            /tmp/health_check.json
+          retention-days: 7
+
+      - name: Cleanup agent worker
+        if: always()
+        run: |
+          if [ -n "$AGENT_PID" ]; then
+            echo "🛑 Stopping agent worker (PID: $AGENT_PID)..."
+            kill $AGENT_PID 2>/dev/null || true
+            sleep 2
+          fi
+
+      - name: Fail if certification failed
+        if: always()
+        run: |
+          if [ "$CERT_PASSED" != "true" ]; then
+            echo "❌ Voice certification failed (status: $CERT_STATUS)"
+            echo ""
+            echo "Probe results from log:"
+            grep -E "(PROBE|CERT_RESULT)" /tmp/certification.log || echo "No probe results found"
+            exit 1
+          fi
+          echo "✅ Voice certification passed"
+
+  final-status:
+    name: Final Certification Status
+    runs-on: ubuntu-latest
+    needs: [regression, voice-certification]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          echo "Regression: ${{ needs.regression.result }}"
+          echo "Voice Certification: ${{ needs.voice-certification.result }}"
+
+          if [ "${{ needs.regression.result }}" != "success" ]; then
+            echo "❌ Regression failed"
+            exit 1
+          fi
+
+          if [ "${{ needs.voice-certification.result }}" != "success" ]; then
+            echo "❌ Voice certification failed"
+            exit 1
+          fi
+
+          echo "✅ Phase 27 certification complete - all gates passed"
