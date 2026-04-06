@@ -2,7 +2,6 @@
 import logging
 import asyncio
 import uuid
-import json
 import re
 import inspect
 import os
@@ -22,18 +21,20 @@ from core.memory.preference_manager import PreferenceManager
 from core.orchestrator.agent_router import AgentRouter
 from core.orchestrator.chat_mixin import ChatResponseMixin
 from core.orchestrator.fast_path_router import FastPathRouter, DirectToolIntent
+from core.orchestrator.media_resolver import MediaResolver
 from core.orchestrator.orchestration_flow import OrchestrationFlow
 from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.orchestrator.research_handler import ResearchHandler
 from core.orchestrator.media_handler import MediaHandler
 from core.orchestrator.scheduling_handler import SchedulingHandler
+from core.orchestrator.tool_executor import ToolExecutor
+from core.orchestrator.tool_response_builder import ToolResponseBuilder
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
 from core.security.input_guard import InputGuard
 from core.governance.types import UserRole
 from core.utils.intent_utils import normalize_intent
 from core.utils.small_talk_detector import is_small_talk
-from core.utils.context_signal import get_music_query
 from core.agents.contracts import AgentHandoffRequest, HandoffSignal
 from core.agents.handoff_manager import get_handoff_manager
 from core.agents.registry import get_agent_registry
@@ -288,6 +289,9 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             parse_multi_app_fn=self._parse_multi_app,
             is_recall_exclusion_intent_fn=self._is_recall_exclusion_intent,
         )
+        self._tool_response_builder = ToolResponseBuilder(owner=self)
+        self._tool_executor = ToolExecutor(owner=self, coerce_user_role_fn=_coerce_user_role)
+        self._media_resolver = MediaResolver(owner=self)
         self._router = AgentRouter(_RouterLLMAdapter(agent))
         self._agent_registry = get_agent_registry()
         self._handoff_manager = get_handoff_manager(self._agent_registry)
@@ -562,21 +566,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
     }
 
     def _classify_tool_intent_type(self, tool_name: str) -> str:
-        name = (tool_name or "").strip().lower()
-        if name in {
-            "get_time",
-            "get_date",
-            "get_current_datetime",
-            "get_weather",
-            "web_search",
-            "list_alarms",
-            "list_reminders",
-            "list_notes",
-            "list_calendar_events",
-            "read_note",
-        }:
-            return "informational"
-        return "direct_action"
+        return self._tool_response_builder.classify_tool_intent_type(tool_name)
 
     def _tag_response_with_routing_type(
         self,
@@ -2306,77 +2296,18 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_args: Dict[str, Any],
         user_id: str,
     ) -> None:
-        app_name = ""
-        if tool_name == "open_app":
-            app_name = str(tool_args.get("app_name") or "").strip().lower()
-            for browser in ("firefox", "chrome", "brave", "edge"):
-                if browser in app_name:
-                    self._queue_preference_update(
-                        user_id,
-                        "preferred_browser",
-                        browser,
-                        source="direct_open_app",
-                    )
-                    break
-            for music_app in ("spotify", "youtube", "vlc"):
-                if music_app in app_name:
-                    self._queue_preference_update(
-                        user_id,
-                        "music_app",
-                        music_app,
-                        source="direct_open_app",
-                    )
-                    break
-        elif tool_name == "set_volume":
-            try:
-                percent = int(tool_args.get("percent"))
-            except Exception:
-                return
-            if 0 <= percent <= 100:
-                self._queue_preference_update(
-                    user_id,
-                    "preferred_volume",
-                    percent,
-                    source="direct_set_volume",
-                )
+        self._tool_executor.capture_implicit_preference_from_direct_tool(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            user_id=user_id,
+        )
 
     @staticmethod
     def _is_generic_music_request(message: str) -> bool:
-        text = str(message or "").strip().lower()
-        return bool(
-            re.search(
-                r"\b(play|start|put on)\b(?:\s+(?:some|any))?\s+\b(music|songs?)\b",
-                text,
-                re.IGNORECASE,
-            )
-        )
+        return MediaResolver.is_generic_music_request(message)
 
     async def _resolve_media_query_from_preferences(self, message: str, user_id: str) -> str:
-        if not self.preference_manager:
-            return message
-        if not self._is_generic_music_request(message):
-            return message
-
-        get_pref = getattr(self.preference_manager, "get_all", None)
-        if not callable(get_pref):
-            get_pref = getattr(self.preference_manager, "get_preferences", None)
-        if not callable(get_pref):
-            return message
-
-        try:
-            prefs = await get_pref(user_id)
-        except Exception as pref_err:
-            logger.debug("media_preference_lookup_failed user_id=%s error=%s", user_id, pref_err)
-            return message
-
-        music_app = str((prefs or {}).get("music_app") or "").strip().lower()
-        music_genre = str((prefs or {}).get("music_genre") or "").strip().lower()
-        if not music_app or not music_genre:
-            return message
-
-        query = get_music_query(music_genre)
-        logger.info("media_preference_resolved app=%s query=%s user_id=%s", music_app, query, user_id)
-        return f"play {query} on {music_app}"
+        return await self._media_resolver.resolve_media_query_from_preferences(message, user_id)
 
     def _detect_direct_tool_intent(self, message: str, origin: str = "chat") -> Optional[DirectToolIntent]:
         """Backward-compatible wrapper for deterministic fast-path routing."""
@@ -2390,72 +2321,12 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_context: Any = None,
     ) -> tuple[Any, "ToolInvocation"]:
         """Execute one tool through the router with governance context."""
-        from core.response.agent_response import ToolInvocation
-        import time
-
-        router = get_router()
-        logger.info(f"🔧 CHAT path executing tool: {tool_name}({args})")
-        if not router.tool_executor:
-            return (
-                self._normalize_tool_result(
-                    tool_name=tool_name,
-                    raw_result=None,
-                    error_code="tool_not_wired",
-                ),
-                ToolInvocation(tool_name=tool_name, status="failed", latency_ms=None),
-            )
-
-        if tool_context is None:
-            default_role = _coerce_user_role(
-                getattr(settings, "default_client_role", "USER"),
-                default_role=UserRole.USER,
-            )
-            tool_context = type(
-                "ToolExecutionContext",
-                (),
-                {
-                    "user_id": user_id,
-                    "user_role": default_role,
-                    "room": self.room,
-                    "turn_id": None,
-                },
-            )()
-
-        start = time.time()
-        try:
-            raw_result = await router.tool_executor(
-                tool_name,
-                args,
-                context=tool_context,
-            )
-            latency_ms = int((time.time() - start) * 1000)
-            result = self._normalize_tool_result(
-                tool_name=tool_name,
-                raw_result=raw_result,
-            )
-            status = "success" if result.get("success", True) else "failed"
-            logger.info(
-                "tool_invoked tool_name=%s status=%s latency_ms=%s",
-                tool_name,
-                status,
-                latency_ms,
-            )
-            return result, ToolInvocation(tool_name=tool_name, status=status, latency_ms=latency_ms)
-        except Exception as e:
-            latency_ms = int((time.time() - start) * 1000)
-            logger.warning(
-                "tool_call_failed_safe_wrap tool_name=%s error=%s",
-                tool_name,
-                e,
-            )
-            return (
-                self._normalize_tool_result(
-                    tool_name=tool_name,
-                    raw_result=None,
-                    error_code="tool_exception",
-                ),
-                ToolInvocation(tool_name=tool_name, status="failed", latency_ms=latency_ms),
-            )
+        return await self._tool_executor.execute_tool_call(
+            tool_name=tool_name,
+            args=args,
+            user_id=user_id,
+            tool_context=tool_context,
+        )
 
     def _normalize_tool_result(
         self,
@@ -2464,52 +2335,11 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         raw_result: Any,
         error_code: Optional[str] = None,
     ) -> Dict[str, Any]:
-        safe_message = "I was unable to complete that."
-        if error_code:
-            return {
-                "success": False,
-                "message": safe_message,
-                "error_code": error_code,
-                "result": "",
-            }
-
-        if isinstance(raw_result, dict):
-            if raw_result.get("success") is False:
-                message = str(raw_result.get("message") or safe_message).strip() or safe_message
-                return {
-                    **raw_result,
-                    "success": False,
-                    "message": message,
-                    "error_code": raw_result.get("error_code") or "tool_failed",
-                }
-            if raw_result.get("error"):
-                return {
-                    **raw_result,
-                    "success": False,
-                    "message": safe_message,
-                    "error_code": str(raw_result.get("error")),
-                }
-            return {
-                **raw_result,
-                "success": True,
-                "message": str(raw_result.get("message") or "").strip(),
-            }
-
-        text = str(raw_result or "").strip()
-        if not text:
-            return {"success": True, "message": "", "result": ""}
-        if self._TOOL_ERROR_HINT_PATTERN.search(text):
-            return {
-                "success": False,
-                "message": safe_message,
-                "error_code": f"{tool_name}_error_text",
-                "result": "",
-            }
-        return {
-            "success": True,
-            "message": "",
-            "result": text,
-        }
+        return self._tool_response_builder.normalize_tool_result(
+            tool_name=tool_name,
+            raw_result=raw_result,
+            error_code=error_code,
+        )
 
     async def _generate_voice_text(self, role_llm: Any, display_text: str) -> str:
         from livekit.agents.llm import ChatContext, ChatMessage
@@ -2662,59 +2492,11 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         structured_data: Optional[Dict[str, Any]],
         mode: str = "normal",
     ) -> Optional[str]:
-        data = structured_data or {}
-        name = (tool_name or "").strip().lower()
-
-        if name in {"open_app", "close_app"}:
-            app_name = str(data.get("app_name") or data.get("app") or "").strip(" .")
-            if app_name:
-                verb = "Opened" if name == "open_app" else "Closed"
-                return f"{verb} {app_name}."
-            return "Done."
-
-        if name == "open_folder":
-            folder = str(data.get("folder_name") or data.get("folder_key") or "").strip(" .")
-            return f"Opened {folder} folder." if folder else "Opened folder."
-
-        if name == "web_search":
-            query = str(data.get("query") or "").strip(" .")
-            return f"I found results for {query}." if query else "I found results."
-
-        if name in {"set_alarm", "set_reminder"}:
-            return "Reminder set."
-
-        if name == "media_next":
-            return "Next track."
-        if name == "media_previous":
-            return "Previous track."
-        if name == "media_play_pause":
-            return "Playback toggled."
-        if name == "media_stop":
-            return "Stopped."
-
-        if name == "get_time":
-            value = str(data.get("time") or data.get("result") or "").strip(" .")
-            return f"It's {value}." if value else "Here's the current time."
-
-        if name in {"get_date", "get_current_datetime"}:
-            value = str(data.get("date") or data.get("result") or "").strip(" .")
-            return f"Today is {value}." if value else "Here's today's date."
-
-        if name == "get_weather":
-            summary = str(data.get("summary") or "").strip(" .")
-            if summary:
-                return summary if summary.endswith(".") else f"{summary}."
-            condition = str(data.get("condition") or "").strip()
-            temp = str(data.get("temp") or data.get("temperature") or "").strip()
-            if condition and temp:
-                return f"Currently {condition}, {temp}."
-            if condition:
-                return f"Currently {condition}."
-            return "I checked the weather."
-
-        if mode == "direct":
-            return "Done."
-        return None
+        return self._tool_response_builder.get_tool_response_template(
+            tool_name,
+            structured_data,
+            mode=mode,
+        )
 
     async def _build_agent_response(
         self,
@@ -2761,10 +2543,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         return response
 
     def _safe_json_dump(self, data: Any) -> str:
-        try:
-            return json.dumps(data, ensure_ascii=False)
-        except Exception:
-            return json.dumps(str(data), ensure_ascii=False)
+        return self._tool_response_builder.safe_json_dump(data)
 
     async def _synthesize_tool_response(
         self,
@@ -2775,102 +2554,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_invocation: ToolInvocation,
         mode: str = "normal",
     ) -> AgentResponse:
-        from livekit.agents.llm import ChatContext, ChatMessage
-
-        structured_data: Optional[Dict[str, Any]] = None
-        if isinstance(tool_output, dict):
-            structured_data = tool_output
-        elif tool_output is not None:
-            structured_data = {"result": str(tool_output)}
-        if isinstance(structured_data, dict) and structured_data.get("success") is False:
-            safe_text = str(structured_data.get("message") or "I was unable to complete that.").strip()
-            response = ResponseFormatter.build_response(
-                display_text=safe_text,
-                voice_text=safe_text,
-                tool_invocations=[tool_invocation],
-                mode=mode,
-                structured_data=structured_data,
-            )
-            return self._tag_response_with_routing_type(
-                response,
-                self._classify_tool_intent_type(tool_name),
-            )
-
-        sources = ResponseFormatter.derive_sources(structured_data)
-        source_hint = ""
-        if sources:
-            source_hint = "\nSources:\n" + "\n".join(
-                [f"[{idx+1}] {s.title} - {s.url} ({s.snippet or ''})" for idx, s in enumerate(sources)]
-            )
-
-        system_prompt = (
-            "You are Response Synthesis. Use the tool results to answer the user. "
-            "Return ONLY a JSON object with keys: display_text, voice_text, confidence, mode. "
-            "display_text must be a single unified answer with inline citations like [1]. "
-            "voice_text must be short, URL-free, and markdown-free."
-        )
-        user_payload = (
-            f"User question: {user_message}\n"
-            f"Tool used: {tool_name}\n"
-            f"Tool output: {self._safe_json_dump(structured_data)}"
-            f"{source_hint}"
-        )
-        chat_ctx = ChatContext(
-            [
-                ChatMessage(role="system", content=[system_prompt]),
-                ChatMessage(role="user", content=[user_payload]),
-            ]
-        )
-        synthesis_fallback_used = False
-        synthesis_status = "ok"
-        fallback_source = "none"
-        try:
-            logger.info("🧪 synthesis_mode=toolless_explicit target=tool_response")
-            synthesis, synthesis_status = await self._run_theless_synthesis_with_timeout(
-                chat_ctx,
-                role_llm=role_llm,
-            )
-        except Exception as e:
-            logger.warning(f"⚠️ Tool synthesis failed: {e}")
-            synthesis = ""
-            synthesis_status = "error"
-
-        if not synthesis.strip():
-            display_candidate = ResponseFormatter.extract_display_candidate(structured_data, tool_name)
-            if display_candidate:
-                synthesis = display_candidate
-                fallback_source = "display_candidate"
-            else:
-                template = self._get_tool_response_template(tool_name, structured_data, mode=mode)
-                if template:
-                    synthesis = template
-                    fallback_source = "tool_template"
-                else:
-                    synthesis = "I completed the action."
-                    fallback_source = "generic_ack"
-            synthesis_fallback_used = True
-
-        response = await self._build_agent_response(
-            role_llm,
-            synthesis,
-            mode=mode,
-            tool_invocations=[tool_invocation],
-            structured_data=structured_data,
-        )
-        self._record_synthesis_metrics(
-            synthesis_status=synthesis_status,
-            fallback_used=synthesis_fallback_used,
-            fallback_source=fallback_source,
+        return await self._tool_response_builder.synthesize_tool_response(
+            role_llm=role_llm,
+            user_message=user_message,
             tool_name=tool_name,
+            tool_output=tool_output,
+            tool_invocation=tool_invocation,
             mode=mode,
         )
-        response = self._tag_response_with_routing_type(
-            response,
-            self._classify_tool_intent_type(tool_name),
-        )
-        if sources:
-            response.sources = sources
-        return response
 
     async def _build_direct_tool_response(
         self,
@@ -2878,24 +2569,10 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_output: Any,
         tool_invocation: ToolInvocation,
     ) -> AgentResponse:
-        structured_data = tool_output if isinstance(tool_output, dict) else {"result": str(tool_output or "")}
-        raw_text = ResponseFormatter.extract_display_candidate(structured_data, tool_invocation.tool_name) or ""
-        if not raw_text:
-            raw_text = self._get_tool_response_template(
-                tool_invocation.tool_name,
-                structured_data,
-                mode="direct",
-            ) or "I completed the action."
-        response = await self._build_agent_response(
-            role_llm,
-            raw_text,
-            mode="direct",
-            tool_invocations=[tool_invocation],
-            structured_data=structured_data,
-        )
-        return self._tag_response_with_routing_type(
-            response,
-            self._classify_tool_intent_type(tool_invocation.tool_name),
+        return await self._tool_response_builder.build_direct_tool_response(
+            role_llm=role_llm,
+            tool_output=tool_output,
+            tool_invocation=tool_invocation,
         )
 
     async def handle_intent(self, message: str, user_id: str = "test_user") -> AgentResponse:
