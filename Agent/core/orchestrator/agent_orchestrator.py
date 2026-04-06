@@ -5,8 +5,6 @@ import uuid
 import re
 import inspect
 import os
-import queue
-import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -26,7 +24,9 @@ from core.orchestrator.orchestration_flow import OrchestrationFlow
 from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.orchestrator.research_handler import ResearchHandler
 from core.orchestrator.media_handler import MediaHandler
+from core.orchestrator.memory_context_service import MemoryContextService
 from core.orchestrator.scheduling_handler import SchedulingHandler
+from core.orchestrator.response_synthesizer import ResponseSynthesizer
 from core.orchestrator.tool_executor import ToolExecutor
 from core.orchestrator.tool_response_builder import ToolResponseBuilder
 from core.tools.livekit_tool_adapter import adapt_tool_list
@@ -34,7 +34,6 @@ from core.routing.router import get_router
 from core.security.input_guard import InputGuard
 from core.governance.types import UserRole
 from core.utils.intent_utils import normalize_intent
-from core.utils.small_talk_detector import is_small_talk
 from core.agents.contracts import AgentHandoffRequest, HandoffSignal
 from core.agents.handoff_manager import get_handoff_manager
 from core.agents.registry import get_agent_registry
@@ -292,6 +291,8 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._tool_response_builder = ToolResponseBuilder(owner=self)
         self._tool_executor = ToolExecutor(owner=self, coerce_user_role_fn=_coerce_user_role)
         self._media_resolver = MediaResolver(owner=self)
+        self._memory_context_service = MemoryContextService(owner=self)
+        self._response_synthesizer = ResponseSynthesizer(owner=self)
         self._router = AgentRouter(_RouterLLMAdapter(agent))
         self._agent_registry = get_agent_registry()
         self._handoff_manager = get_handoff_manager(self._agent_registry)
@@ -1886,37 +1887,16 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_id: str | None = None,
         origin: str = "chat",
     ) -> List[Dict[str, Any]]:
-        """
-        Retrieve relevant long-term memories.
-        Skips memory retrieval for small talk messages to reduce latency and tokens.
-        """
-        if is_small_talk(user_input):
-            logger.debug(f"Small talk detected, skipping memory retrieval for: {user_input[:30]}...")
-            return []
-
-        try:
-            memories = self.memory.retrieve_relevant_memories(
-                user_input,
-                k=k,
-                user_id=user_id,
-                session_id=session_id,
-                origin=origin,
-            )
-            if not memories:
-                return []
-            RuntimeMetrics.increment("memory_hits_total")
-            return memories
-        except Exception as e:
-            logger.error(f"Error retrieving memory context: {e}")
-            return []
+        return self._memory_context_service.retrieve_memories(
+            user_input,
+            k=k,
+            user_id=user_id,
+            session_id=session_id,
+            origin=origin,
+        )
 
     def _format_memory_context(self, memories: List[Dict[str, Any]]) -> str:
-        if not memories:
-            return ""
-        formatted = "\n".join([f"- {m['text']}" for m in memories if isinstance(m, dict) and m.get("text")])
-        if not formatted:
-            return ""
-        return f"\nRelevant past memories:\n{formatted}\n"
+        return self._memory_context_service.format_memory_context(memories)
 
     def _retrieve_memory_context(
         self,
@@ -1926,14 +1906,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_id: str | None = None,
         origin: str = "chat",
     ) -> str:
-        memories = self._retrieve_memories(
+        return self._memory_context_service.retrieve_memory_context(
             user_input,
             k=k,
             user_id=user_id,
             session_id=session_id,
             origin=origin,
         )
-        return self._format_memory_context(memories)
 
     async def _run_sync_with_timeout(
         self,
@@ -1941,48 +1920,20 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         *args: Any,
         timeout_s: float,
     ) -> Any:
-        """Run a blocking fallback in a daemon thread without tying up the loop executor."""
-        loop = asyncio.get_running_loop()
-        result_queue: "queue.Queue[tuple[bool, Any]]" = queue.Queue(maxsize=1)
-
-        def _runner() -> None:
-            try:
-                result_queue.put((True, func(*args)))
-            except BaseException as exc:  # pragma: no cover - defensive wrapper
-                result_queue.put((False, exc))
-
-        threading.Thread(target=_runner, daemon=True).start()
-
-        deadline = loop.time() + timeout_s
-        while True:
-            try:
-                ok, payload = result_queue.get_nowait()
-            except queue.Empty:
-                if loop.time() >= deadline:
-                    raise asyncio.TimeoutError()
-                await asyncio.sleep(0.01)
-                continue
-
-            if ok:
-                return payload
-            raise payload
+        return await self._memory_context_service.run_sync_with_timeout(
+            func,
+            *args,
+            timeout_s=timeout_s,
+        )
 
     def _is_tool_focused_query(self, message: str) -> bool:
-        """Fast heuristic to skip expensive retrieval for obvious tool-style queries."""
-        text = (message or "").lower()
-        keywords = (
-            "time", "date", "today", "weather", "alarm", "reminder", "note", "calendar",
-            "email", "search", "find", "tool", "use ", "what is", "what's", "tell me",
-        )
-        return any(k in text for k in keywords)
+        return self._memory_context_service.is_tool_focused_query(message)
 
     def _is_memory_relevant(self, text: str) -> bool:
-        sample = (text or "").lower()
-        return any(re.search(pattern, sample) for pattern in self.CONVERSATIONAL_MEMORY_TRIGGERS)
+        return self._memory_context_service.is_memory_relevant(text)
 
     def _is_recall_exclusion_intent(self, text: str) -> bool:
-        sample = (text or "").lower()
-        return any(re.search(pattern, sample) for pattern in self.RECALL_EXCLUSION_PATTERNS)
+        return self._memory_context_service.is_recall_exclusion_intent(text)
 
     def _should_skip_memory(
         self,
@@ -1990,25 +1941,11 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         origin: str,
         routing_mode_type: str,
     ) -> tuple[bool, str]:
-        if self._is_name_query(text) or self._is_creator_query(text):
-            return True, "capability_or_identity_query"
-
-        if re.search(
-            r"\b(introduce yourself|tell me about yourself|what can you do|what are your capabilities|are you an ai|are you a bot|what is maya|what are your features)\b",
-            (text or "").lower(),
-        ):
-            return True, "capability_or_identity_query"
-
-        if origin != "voice":
-            return False, "not_voice"
-
-        if routing_mode_type in ("fast_path", "direct_action"):
-            return True, routing_mode_type
-
-        if self._is_memory_relevant(text):
-            return False, "conversational"
-
-        return True, "no_recall_trigger"
+        return self._memory_context_service.should_skip_memory(
+            text,
+            origin,
+            routing_mode_type,
+        )
 
     async def _retrieve_memory_context_async(
         self,
@@ -2019,107 +1956,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
-        """
-        Retrieve memory without blocking the event loop.
-        Time-box retrieval to prevent worker unresponsive kills on heavy first-load paths.
-        """
-        if str(os.getenv("MAYA_DISABLE_MEMORY_RETRIEVAL", "false")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            logger.info(
-                "🧠 memory_skipped=true memory_skip_reason=disabled origin=%s routing_mode_type=%s",
-                origin,
-                routing_mode_type,
-            )
-            return ""
-
-        skip_memory, skip_reason = self._should_skip_memory(user_input, origin, routing_mode_type)
-        if skip_memory:
-            logger.info(
-                "🧠 memory_skipped=true memory_skip_reason=%s origin=%s routing_mode_type=%s",
-                skip_reason,
-                origin,
-                routing_mode_type,
-            )
-            return ""
-
-        if origin != "voice" and self._is_tool_focused_query(user_input):
-            logger.info(
-                "🧠 memory_skipped=true memory_skip_reason=tool_focused_chat origin=%s routing_mode_type=%s",
-                origin,
-                routing_mode_type,
-            )
-            return ""
-
-        loop = asyncio.get_running_loop()
-        if loop.time() < self._memory_disabled_until:
-            logger.info(
-                "🧠 memory_skipped=true memory_skip_reason=temporary_disable origin=%s routing_mode_type=%s",
-                origin,
-                routing_mode_type,
-            )
-            return ""
-
-        voice_memory_max_results = max(1, int(os.getenv("VOICE_MEMORY_MAX_RESULTS", "2")))
-        max_results = voice_memory_max_results if origin == "voice" else 5
-        fallback_timeout_s = max(0.1, float(os.getenv("VOICE_MEMORY_TIMEOUT_S", "0.60"))) if origin == "voice" else 2.0
-        started = loop.time()
-
-        try:
-            if hasattr(self.memory, "retrieve_relevant_memories_with_scope_fallback_async"):
-                memories = await self.memory.retrieve_relevant_memories_with_scope_fallback_async(
-                    user_input,
-                    k=max_results,
-                    user_id=user_id,
-                    session_id=session_id,
-                    origin=origin,
-                )
-            elif hasattr(self.memory, "retrieve_relevant_memories_async"):
-                memories = await self.memory.retrieve_relevant_memories_async(
-                    user_input,
-                    k=max_results,
-                    user_id=user_id,
-                    session_id=session_id,
-                    origin=origin,
-                )
-            else:
-                try:
-                    memories = await self._run_sync_with_timeout(
-                        self._retrieve_memories,
-                        user_input,
-                        max_results,
-                        user_id,
-                        session_id,
-                        origin,
-                        timeout_s=fallback_timeout_s,
-                    )
-                except TypeError:
-                    # Backward compatibility for tests/stubs monkeypatching legacy signature.
-                    memories = await self._run_sync_with_timeout(
-                        self._retrieve_memories,
-                        user_input,
-                        max_results,
-                        timeout_s=fallback_timeout_s,
-                    )
-            memory_context = self._format_memory_context(memories)
-            elapsed_ms = max(0.0, (loop.time() - started) * 1000.0)
-            self._memory_timeout_count = 0
-            logger.info(
-                "🧠 memory_skipped=false memory_skip_reason=%s memory_budget_s=%s memory_ms=%.2f memory_results_count=%s origin=%s routing_mode_type=%s",
-                skip_reason,
-                "managed_by_retriever",
-                elapsed_ms,
-                len(memories),
-                origin,
-                routing_mode_type,
-            )
-            return memory_context
-        except Exception as e:
-            logger.warning(f"⚠️ Async memory retrieval failed: {e}")
-            return ""
+        return await self._memory_context_service.retrieve_memory_context_async(
+            user_input,
+            origin=origin,
+            routing_mode_type=routing_mode_type,
+            user_id=user_id,
+            session_id=session_id,
+        )
 
     def _is_malformed_short_request(self, message: str) -> bool:
         """
@@ -2342,106 +2185,23 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         )
 
     async def _generate_voice_text(self, role_llm: Any, display_text: str) -> str:
-        from livekit.agents.llm import ChatContext, ChatMessage
-
-        if not display_text.strip():
-            return ""
-
-        system_prompt = (
-            "You generate short voice-safe summaries for spoken output. "
-            "Rules: 1-2 sentences max. No URLs. No markdown. No lists. "
-            "Do not mention sources."
-        )
-        chat_ctx = ChatContext(
-            [
-                ChatMessage(role="system", content=[system_prompt]),
-                ChatMessage(role="user", content=[display_text]),
-            ]
-        )
-        try:
-            logger.info("🧪 synthesis_mode=toolless_explicit target=voice_summary")
-            response_text, synthesis_status = await self._run_theless_synthesis_with_timeout(
-                chat_ctx,
-                role_llm=role_llm,
-            )
-            self._record_synthesis_metrics(
-                synthesis_status=synthesis_status,
-                fallback_used=not bool((response_text or "").strip()),
-                fallback_source="generic_ack" if not (response_text or "").strip() else "none",
-                tool_name="voice_summary",
-                mode="voice_summary",
-            )
-            return response_text.strip()
-        except Exception as e:
-            logger.warning(f"⚠️ Voice summary generation failed: {e}")
-            return ""
+        return await self._response_synthesizer.generate_voice_text(role_llm, display_text)
 
     async def _run_theless_synthesis_with_timeout(
         self,
         chat_ctx: Any,
         role_llm: Any = None,
     ) -> tuple[str, str]:
-        try:
-            text = await asyncio.wait_for(
-                self._run_theless_synthesis(chat_ctx, role_llm=role_llm),
-                timeout=self._synthesis_timeout_s,
-            )
-            return text, "ok"
-        except asyncio.TimeoutError:
-            return "", "timeout"
-        except Exception:
-            return "", "error"
+        return await self._response_synthesizer.run_theless_synthesis_with_timeout(
+            chat_ctx,
+            role_llm=role_llm,
+        )
 
     async def _run_theless_synthesis(self, chat_ctx: Any, role_llm: Any = None) -> str:
-        """
-        Execute synthesis with an isolated tool-less model path.
-        Planner tooling must never leak here.
-        """
-        stream = None
-        response_text = ""
-        try:
-            base_llm = getattr(getattr(self.agent, "smart_llm", None), "base_llm", None)
-            if base_llm is not None:
-                logger.info("🧪 synthesis_llm=base_llm_isolated")
-                stream = base_llm.chat(
-                    chat_ctx=chat_ctx,
-                    tools=[],
-                    tool_choice="none",
-                )
-            elif role_llm is not None:
-                from core.llm.llm_roles import LLMRole
-
-                logger.info("🧪 synthesis_llm=role_llm_fallback")
-                stream = await role_llm.chat(
-                    role=LLMRole.CHAT,
-                    chat_ctx=chat_ctx,
-                    tools=[],
-                    tool_choice="none",
-                )
-            else:
-                return ""
-
-            async for chunk in stream:
-                delta = ""
-                if hasattr(chunk, "choices") and chunk.choices:
-                    delta_obj = getattr(chunk.choices[0], "delta", None)
-                    if delta_obj:
-                        delta = getattr(delta_obj, "content", "") or ""
-                elif hasattr(chunk, "delta") and chunk.delta:
-                    delta = getattr(chunk.delta, "content", "") or ""
-                elif hasattr(chunk, "content"):
-                    delta = chunk.content or ""
-                if delta:
-                    response_text += delta
-        finally:
-            if stream is not None:
-                close_fn = getattr(stream, "aclose", None)
-                if callable(close_fn):
-                    try:
-                        await close_fn()
-                    except Exception:
-                        pass
-        return response_text.strip()
+        return await self._response_synthesizer.run_theless_synthesis(
+            chat_ctx,
+            role_llm=role_llm,
+        )
 
     def _record_synthesis_metrics(
         self,
@@ -2452,39 +2212,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_name: str,
         mode: str,
     ) -> None:
-        self._synthesis_total += 1
-        if synthesis_status == "timeout":
-            self._synthesis_timeout_total += 1
-        if fallback_used:
-            self._synthesis_fallback_total += 1
-        self._synthesis_fallback_window.append(bool(fallback_used))
-        fallback_rate = (
-            sum(1 for x in self._synthesis_fallback_window if x)
-            / float(len(self._synthesis_fallback_window))
-            if self._synthesis_fallback_window
-            else 0.0
+        self._response_synthesizer.record_synthesis_metrics(
+            synthesis_status=synthesis_status,
+            fallback_used=fallback_used,
+            fallback_source=fallback_source,
+            tool_name=tool_name,
+            mode=mode,
         )
-        logger.info(
-            "🧪 synthesis_status=%s synthesis_timeout_s=%.2f synthesis_fallback_used=%s "
-            "synthesis_fallback_source=%s synthesis_total=%s synthesis_timeout_total=%s "
-            "synthesis_fallback_total=%s synthesis_fallback_rate_last_n=%.3f tool_name=%s mode=%s",
-            synthesis_status,
-            self._synthesis_timeout_s,
-            fallback_used,
-            fallback_source,
-            self._synthesis_total,
-            self._synthesis_timeout_total,
-            self._synthesis_fallback_total,
-            fallback_rate,
-            tool_name,
-            mode,
-        )
-        if fallback_rate > self._synthesis_fallback_warn_rate:
-            logger.warning(
-                "⚠️ SYNTHESIS_FALLBACK_RATE_HIGH rate=%.3f window=%s",
-                fallback_rate,
-                len(self._synthesis_fallback_window),
-            )
 
     def _get_tool_response_template(
         self,
@@ -2507,40 +2241,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_invocations: Optional[List[ToolInvocation]] = None,
         structured_data: Optional[Dict[str, Any]] = None,
     ) -> AgentResponse:
-        sanitized_output = self._sanitize_response(raw_output)
-        parsed = ResponseFormatter.parse_agent_response_json(sanitized_output)
-        response = ResponseFormatter.normalize_response(
-            parsed if parsed else sanitized_output,
-            tool_invocations=tool_invocations,
+        return await self._response_synthesizer.build_agent_response(
+            role_llm,
+            raw_output,
             mode=mode,
+            tool_invocations=tool_invocations,
             structured_data=structured_data,
         )
-        clean_display = self._sanitize_response(response.display_text)
-        clean_voice = self._sanitize_response(response.voice_text)
-        if clean_display != response.display_text or clean_voice != response.voice_text:
-            response = ResponseFormatter.build_response(
-                display_text=clean_display or "I completed the action.",
-                voice_text=clean_voice or clean_display or "I completed the action.",
-                sources=response.sources,
-                tool_invocations=response.tool_invocations,
-                mode=response.mode,
-                memory_updated=response.memory_updated,
-                confidence=response.confidence,
-                structured_data=response.structured_data,
-            )
-        if not response.voice_text or response.voice_text.strip() == response.display_text.strip():
-            voice_candidate = await self._generate_voice_text(role_llm, response.display_text)
-            response = ResponseFormatter.build_response(
-                display_text=response.display_text,
-                voice_text=voice_candidate or response.voice_text,
-                sources=response.sources,
-                tool_invocations=response.tool_invocations,
-                mode=response.mode,
-                memory_updated=response.memory_updated,
-                confidence=response.confidence,
-                structured_data=response.structured_data,
-            )
-        return response
 
     def _safe_json_dump(self, data: Any) -> str:
         return self._tool_response_builder.safe_json_dump(data)
