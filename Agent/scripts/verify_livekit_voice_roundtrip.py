@@ -21,14 +21,95 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 from urllib import request
 
 from dotenv import load_dotenv
+
+
+def get_git_commit_hash() -> str:
+    """Get current git commit hash for traceability."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.stdout.strip() if result.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
+def get_certification_metadata() -> dict[str, Any]:
+    """Build standardized certification report metadata."""
+    return {
+        "version": "2.0",
+        "schema": "phase27_certification",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "commit_hash": get_git_commit_hash(),
+        "agent_name": os.getenv("LIVEKIT_AGENT_NAME", "maya-one"),
+    }
+
+
+def build_standardized_report(
+    *,
+    status: str,
+    overall_passed: bool,
+    room_name: str | None,
+    events: dict,
+    probes: list[dict],
+    start_time: float,
+    end_time: float,
+    error_reason: str = "",
+) -> dict[str, Any]:
+    """
+    Build a standardized certification report with full traceability.
+
+    Returns a dict matching the Phase 28 standardized format with:
+    - certification: metadata (version, timestamps, commit)
+    - environment: runtime info
+    - summary: high-level results
+    - details: full probe results and events
+    """
+    duration_ms = int((end_time - start_time) * 1000)
+
+    report: dict[str, Any] = {
+        "certification": get_certification_metadata(),
+        "timing": {
+            "started_at": datetime.fromtimestamp(start_time, tz=timezone.utc).isoformat(),
+            "completed_at": datetime.fromtimestamp(end_time, tz=timezone.utc).isoformat(),
+            "duration_ms": duration_ms,
+        },
+        "environment": {
+            "livekit_url": os.getenv("LIVEKIT_URL", "").split(".")[0] + ".***" if os.getenv("LIVEKIT_URL") else "not_set",
+            "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            "platform": sys.platform,
+        },
+        "summary": {
+            "status": status,
+            "overall_passed": overall_passed,
+            "total_probes": len(probes),
+            "passed_probes": sum(1 for p in probes if p.get("passed", False)),
+            "failed_probes": sum(1 for p in probes if not p.get("passed", False)),
+        },
+        "details": {
+            "room_name": room_name,
+            "events": events,
+            "probes": probes,
+        },
+    }
+
+    if error_reason:
+        report["summary"]["error_reason"] = error_reason
+
+    return report
 
 try:
     import edge_tts
@@ -548,21 +629,28 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     load_dotenv(".env")
     args = parse_args()
+    start_time = time.time()
 
     if not wait_health(args.health_url, timeout_s=args.health_timeout):
-        payload = {
-            "status": "setup_failure",
-            "reason": f"token_server_unreachable:{args.health_url}",
-            "overall_passed": False,
-            "probes": [],
-        }
-        print("CERT_RESULT", "SETUP_FAILURE", payload["reason"])
+        end_time = time.time()
+        payload = build_standardized_report(
+            status="setup_failure",
+            overall_passed=False,
+            room_name=None,
+            events={},
+            probes=[],
+            start_time=start_time,
+            end_time=end_time,
+            error_reason=f"token_server_unreachable:{args.health_url}",
+        )
+        print("CERT_RESULT", "SETUP_FAILURE", payload["summary"]["error_reason"])
         if args.json_output:
             write_json_report(args.json_output, payload)
         return 2
 
     try:
-        payload = asyncio.run(
+        end_time = time.time()
+        result_payload = asyncio.run(
             run_suite(
                 agent_name=args.agent_name,
                 room_prefix=args.room_prefix,
@@ -572,32 +660,55 @@ def main() -> int:
                 probes=default_probe_suite(),
             )
         )
+        # Convert old format to standardized format if needed
+        if "certification" not in result_payload:
+            end_time = time.time()
+            result_payload = build_standardized_report(
+                status=result_payload.get("status", "unknown"),
+                overall_passed=result_payload.get("overall_passed", False),
+                room_name=result_payload.get("room_name"),
+                events=result_payload.get("events", {}),
+                probes=result_payload.get("probes", []),
+                start_time=start_time,
+                end_time=end_time,
+                error_reason=result_payload.get("reason", ""),
+            )
+        payload = result_payload
     except Exception as exc:
-        payload = {
-            "status": "setup_failure",
-            "reason": f"runtime_error:{type(exc).__name__}:{exc}",
-            "overall_passed": False,
-            "probes": [],
-        }
+        end_time = time.time()
+        payload = build_standardized_report(
+            status="setup_failure",
+            overall_passed=False,
+            room_name=None,
+            events={},
+            probes=[],
+            start_time=start_time,
+            end_time=end_time,
+            error_reason=f"{type(exc).__name__}:{exc}",
+        )
 
     if args.json_output:
         write_json_report(args.json_output, payload)
 
-    status = payload.get("status")
-    for probe in payload.get("probes", []):
+    summary = payload.get("summary", payload)
+    status = summary.get("status", payload.get("status", "unknown"))
+    probes = payload.get("details", {}).get("probes", payload.get("probes", []))
+
+    for probe in probes:
         print(
             "PROBE",
-            probe.get("name"),
+            probe.get("name", "unknown"),
             "PASS" if probe.get("passed") else "FAIL",
             f"reason={probe.get('reason', '')}",
             f"forbidden={probe.get('forbidden_hit', '')}",
         )
 
     if status != "ok":
-        print("CERT_RESULT", "SETUP_FAILURE", payload.get("reason", "unknown"))
+        print("CERT_RESULT", "SETUP_FAILURE", summary.get("error_reason", "unknown"))
         return 2
 
-    if payload.get("overall_passed"):
+    overall_passed = summary.get("overall_passed", payload.get("overall_passed", False))
+    if overall_passed:
         print("CERT_RESULT", "PASS")
         return 0
 
