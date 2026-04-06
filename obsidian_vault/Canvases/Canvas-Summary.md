@@ -7,7 +7,7 @@
 - Project title and description
 - 7-Layer Runtime Chain (mermaid diagram)
 - Key components overview
-- Current status (Phase 9 Complete)
+- Current status (Phase 11 Active - Memory Stabilization)
 - Critical files and change risk levels
 - Database and configuration
 - Navigation links with quick commands
@@ -46,10 +46,20 @@
 - Performance metrics (Phase 6 improvements)
 - Known issues with impact assessment
 
+### 5. Maya-Flutter-Architecture.canvas (NEW)
+**Sector 5: Flutter Frontend Architecture**
+- UI Layer: SessionLayout, ChatOverlay, CosmicOrb, SettingsDialog
+- State Layer: AuthProvider, SettingsProvider, ChatProvider, SessionProvider
+- Service Layer: BackendSyncService, LiveKitService, SettingsService, SupabaseService
+- External Systems: Python Agent (WebSocket), LiveKit Server (WebRTC)
+- Data flow visualization (UI → Provider → Service → Backend)
+- Provider Pattern documentation
+- Connection: Links to Python backend via WebSocket/WebRTC
+
 ## External Integrations Canvas (Future)
 
-### 5. Maya-External-Integrations.canvas (Recommended Addition)
-**Sector 5: External Tool Ecosystem**
+### 6. Maya-External-Integrations.canvas (Recommended Addition)
+**Sector 6: External Tool Ecosystem**
 - MCP Integration architecture
 - Skills Marketplace flow
 - GSD Workflow integration
@@ -71,6 +81,7 @@
 3. **Component Interaction** - Flow from user message → LLM → task → response
 4. **Complete Runtime Flow** - Full 7-layer data flow
 5. **Memory System** - Query → detection → search → merge → context
+6. **Flutter Architecture** - UI → State → Service → Backend data flow
 
 ### Information Density
 - Each canvas contains 6-10 information nodes
@@ -79,11 +90,11 @@
 - Quick command references for testing
 
 ### Quality Metrics
-- **Total lines:** 346 lines across 4 canvases
-- **Total size:** 27.6KB
-- **Mermaid diagrams:** 5 comprehensive diagrams
-- **Connection edges:** 10+ connection paths
-- **Nodes:** 30+ information blocks
+- **Total lines:** 400+ lines across 5 canvases
+- **Total size:** 35KB+
+- **Mermaid diagrams:** 6 comprehensive diagrams
+- **Connection edges:** 15+ connection paths
+- **Nodes:** 40+ information blocks
 - **Color coding:** 6 visual categories
 
 ## How to Use
@@ -107,15 +118,43 @@
 2. **Maya-Architecture-Details.canvas** - Deep dive into 7-layer architecture
 3. **Maya-Component-Details.canvas** - Component specifications
 4. **Maya-Memory-System.canvas** - Memory system details
+5. **Maya-Flutter-Architecture.canvas** - Frontend architecture
 
 ## Related Files
 - [[Vault Index]] - Text-based vault overview
 - [[7-Layer Runtime Chain]] - Architecture note
 - [[GlobalAgentContainer]] - Component note
 - [[Hybrid Memory System]] - Memory architecture
-- [[Phase Architecture]] - Phase rollout status (Phase 9 complete)
+- [[Phase Architecture]] - Phase rollout status (Phase 11 active)
+- [[Flutter-Architecture-Overview]] - Frontend documentation
 
 ## Recent Updates (March 2026)
-- **Phase 9A-D** completed: Handoff contracts, media/scheduling agents
-- **External Integrations** completed: MCP, Skills Marketplace, GSD, Ralph Loop
-- Consider adding canvas for external integrations ecosystem
+
+### Phase 11 (Current)
+- **P11-01:** ✅ Provider supervisor configuration (resolved)
+- **P11-02:** 🔄 Chroma vector path issue (active)
+- **P11-03:** ⏳ Memory observability improvements
+- **P11-04:** ⏳ Session-scoped recall implementation
+
+### Recent Commits
+- `ff69c08` - fast-path contract + LiveKit metrics
+- `bddb61f` - memory recall stabilization
+- `94361fa` - memory timing fix (await before resolve)
+- `f526408` - user_id mismatch fix
+- `74c3012` - memory user_id tagging
+
+### Phase 10 (Completed)
+- v0.10.0 tagged and released
+- 186 tests passing across 4 batches
+- Memory pipeline audit logging added
+
+### Phase 9 (Completed)
+- **Phase 9A-D:** Handoff contracts, media/scheduling agents
+- **External Integrations:** MCP, Skills Marketplace, GSD, Ralph Loop
+- Handoff system fully operational
+
+### New Documentation (2026-03-30)
+- Created 09-Flutter folder in vault
+- Added Flutter architecture documentation
+- Created Maya-Flutter-Architecture.canvas
+- Updated project status to Phase 11

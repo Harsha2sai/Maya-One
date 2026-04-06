@@ -1,0 +1,277 @@
+{
+  "nodes": [
+    {
+      "id": "a1b2c3d4e5f67890",
+      "type": "text",
+      "x": 400,
+      "y": -100,
+      "width": 500,
+      "height": 80,
+      "text": "# Maya Flutter Frontend\n## Cross-Platform UI Architecture",
+      "color": "6"
+    },
+    {
+      "id": "b2c3d4e5f678901a",
+      "type": "group",
+      "x": 50,
+      "y": 50,
+      "width": 550,
+      "height": 400,
+      "label": "UI Layer (Widgets)",
+      "color": "1"
+    },
+    {
+      "id": "c3d4e5f6789012ab",
+      "type": "text",
+      "x": 100,
+      "y": 100,
+      "width": 200,
+      "height": 100,
+      "text": "**SessionLayout**\n- AgentScreen\n- ChatOverlay\n- CosmicOrb\n- ControlBar"
+    },
+    {
+      "id": "d4e5f678901234bc",
+      "type": "text",
+      "x": 330,
+      "y": 100,
+      "width": 200,
+      "height": 100,
+      "text": "**Settings Dialog**\n- APIKeysPanel\n- VoiceAudioPanel\n- PersonalizationPanel\n- GeneralPanel"
+    },
+    {
+      "id": "e5f6789012345cd",
+      "type": "text",
+      "x": 100,
+      "y": 230,
+      "width": 200,
+      "height": 100,
+      "text": "**Chat Widgets**\n- AgentThinkingBubble\n- ResearchResultBubble\n- SourceCardsPanel\n- MessageBar"
+    },
+    {
+      "id": "f678901234567de",
+      "type": "text",
+      "x": 330,
+      "y": 230,
+      "width": 200,
+      "height": 100,
+      "text": "**Glass UI**\n- GlassContainer\n- FloatingGlass\n- ZoyaButton\n- SessionErrorBanner"
+    },
+    {
+      "id": "6789012345678ef",
+      "type": "group",
+      "x": 650,
+      "y": 50,
+      "width": 550,
+      "height": 400,
+      "label": "State Layer (Providers)",
+      "color": "2"
+    },
+    {
+      "id": "7890123456789f0",
+      "type": "text",
+      "x": 700,
+      "y": 100,
+      "width": 200,
+      "height": 80,
+      "text": "**AuthProvider**\n- User session\n- Authentication\n- Supabase integration"
+    },
+    {
+      "id": "890123456789a1b",
+      "type": "text",
+      "x": 930,
+      "y": 100,
+      "width": 200,
+      "height": 80,
+      "text": "**SettingsProvider**\n- API keys\n- Preferences\n- Secure storage"
+    },
+    {
+      "id": "901234567890b2c",
+      "type": "text",
+      "x": 700,
+      "y": 200,
+      "width": 200,
+      "height": 80,
+      "text": "**ChatProvider**\n- Messages\n- Agent comms\n- Message history"
+    },
+    {
+      "id": "012345678901c3d",
+      "type": "text",
+      "x": 930,
+      "y": 200,
+      "width": 200,
+      "height": 80,
+      "text": "**SessionProvider**\n- Active session\n- Connection state\n- Session lifecycle"
+    },
+    {
+      "id": "123456789012d4e",
+      "type": "text",
+      "x": 815,
+      "y": 300,
+      "width": 200,
+      "height": 80,
+      "text": "**UIProvider**\n- Theme mode\n- Layout mode\n- Orb animation"
+    },
+    {
+      "id": "234567890123e5f",
+      "type": "group",
+      "x": 350,
+      "y": 500,
+      "width": 550,
+      "height": 300,
+      "label": "Service Layer",
+      "color": "3"
+    },
+    {
+      "id": "345678901234f6a",
+      "type": "text",
+      "x": 400,
+      "y": 550,
+      "width": 200,
+      "height": 100,
+      "text": "**BackendSyncService**\nWebSocket connection\n- Message streaming\n- Auto-reconnect\n- JSON serialization"
+    },
+    {
+      "id": "456789012345g7b",
+      "type": "text",
+      "x": 630,
+      "y": 550,
+      "width": 200,
+      "height": 100,
+      "text": "**LiveKitService**\nWebRTC audio/video\n- Room management\n- Track handling\n- Voice activity"
+    },
+    {
+      "id": "567890123456h8c",
+      "type": "text",
+      "x": 400,
+      "y": 670,
+      "width": 200,
+      "height": 100,
+      "text": "**SettingsService**\nLocal persistence\n- Shared prefs\n- Secure storage\n- Key management"
+    },
+    {
+      "id": "678901234567i9d",
+      "type": "text",
+      "x": 630,
+      "y": 670,
+      "width": 200,
+      "height": 100,
+      "text": "**SupabaseService**\nBackend as service\n- Auth\n- Database\n- Real-time"
+    },
+    {
+      "id": "789012345678jae",
+      "type": "group",
+      "x": 350,
+      "y": 850,
+      "width": 550,
+      "height": 150,
+      "label": "External Systems",
+      "color": "5"
+    },
+    {
+      "id": "890123456789kbf",
+      "type": "text",
+      "x": 400,
+      "y": 900,
+      "width": 200,
+      "height": 80,
+      "text": "**Python Agent**\nWebSocket/WSS\nMaya AI backend"
+    },
+    {
+      "id": "901234567890lcg",
+      "type": "text",
+      "x": 630,
+      "y": 900,
+      "width": 200,
+      "height": 80,
+      "text": **LiveKit Server**\nWebRTC SFU\nReal-time media"
+    },
+    {
+      "id": "a0b1c2d3e4f5g6h7",
+      "type": "text",
+      "x": 50,
+      "y": 500,
+      "width": 250,
+      "height": 150,
+      "text": "### Data Flow\n\n1. User interacts with UI\n2. Provider updates state\n3. Service sends to backend\n4. Response updates provider\n5. UI rebuilds with new state",
+      "color": "4"
+    },
+    {
+      "id": "b1c2d3e4f5g6h7i8",
+      "type": "text",
+      "x": 950,
+      "y": 500,
+      "width": 250,
+      "height": 150,
+      "text": "### Provider Pattern\n\n- BaseProvider\n- ChangeNotifier\n- Reactive updates\n- Dependency injection\n- Testable mocks",
+      "color": "4"
+    }
+  ],
+  "edges": [
+    {
+      "id": "c1d2e3f4g5h6i7j8",
+      "fromNode": "c3d4e5f6789012ab",
+      "fromSide": "right",
+      "toNode": "7890123456789f0",
+      "toSide": "left",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "d2e3f4g5h6i7j8k9",
+      "fromNode": "e5f6789012345cd",
+      "fromSide": "right",
+      "toNode": "901234567890b2c",
+      "toSide": "left",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "e3f4g5h6i7j8k9l0",
+      "fromNode": "7890123456789f0",
+      "fromSide": "bottom",
+      "toNode": "345678901234f6a",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "f4g5h6i7j8k9l0m1",
+      "fromNode": "901234567890b2c",
+      "fromSide": "bottom",
+      "toNode": "345678901234f6a",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "g5h6i7j8k9l0m1n2",
+      "fromNode": "345678901234f6a",
+      "fromSide": "bottom",
+      "toNode": "890123456789kbf",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "WebSocket"
+    },
+    {
+      "id": "h6i7j8k9l0m1n2o3",
+      "fromNode": "456789012345g7b",
+      "fromSide": "bottom",
+      "toNode": "901234567890lcg",
+      "toSide": "top",
+      "toEnd": "arrow",
+      "label": "WebRTC"
+    },
+    {
+      "id": "i7j8k9l0m1n2o3p4",
+      "fromNode": "890123456789a1b",
+      "fromSide": "bottom",
+      "toNode": "567890123456h8c",
+      "toSide": "top",
+      "toEnd": "arrow"
+    },
+    {
+      "id": "j8k9l0m1n2o3p4q5",
+      "fromNode": "012345678901c3d",
+      "fromSide": "bottom",
+      "toNode": "345678901234f6a",
+      "toSide": "top",
+      "toEnd": "arrow"
+    }
+  ]
+}

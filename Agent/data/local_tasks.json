@@ -79,6 +79,14 @@
       "label": "Speed Up Month",
       "is_active": true,
       "created_at": 1772545215.37516
+    },
+    {
+      "id": 11,
+      "user_id": "console_user",
+      "alarm_time": "7am tomorrow",
+      "label": "Alarm",
+      "is_active": true,
+      "created_at": 1775188843.5364308
     }
   ],
   "reminders": [
@@ -737,6 +745,30 @@
       "remind_at": "1 hour from now",
       "is_completed": false,
       "created_at": 1773223926.2330697
+    },
+    {
+      "id": 83,
+      "user_id": "console_user",
+      "text": "drink water",
+      "remind_at": "in 20 minutes",
+      "is_completed": false,
+      "created_at": 1774838498.0779264
+    },
+    {
+      "id": 84,
+      "user_id": "console_user",
+      "text": "check email",
+      "remind_at": "in 10 minutes",
+      "is_completed": false,
+      "created_at": 1775188195.2779977
+    },
+    {
+      "id": 85,
+      "user_id": "console_user",
+      "text": "check email",
+      "remind_at": "in 10 minutes",
+      "is_completed": false,
+      "created_at": 1775188620.304669
     }
   ]
 }

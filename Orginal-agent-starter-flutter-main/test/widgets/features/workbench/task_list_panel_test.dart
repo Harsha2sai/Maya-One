@@ -1,0 +1,157 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:voice_assistant/core/events/agent_event_models.dart';
+import 'package:voice_assistant/state/controllers/agent_activity_controller.dart';
+import 'package:voice_assistant/state/controllers/workspace_controller.dart';
+import 'package:voice_assistant/widgets/features/workbench/task_list_panel.dart';
+
+void main() {
+  group('TaskListPanel', () {
+    testWidgets('empty state renders non-error placeholder', (tester) async {
+      final activity = AgentActivityController();
+      final workspace = WorkspaceController();
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: activity),
+            ChangeNotifierProvider.value(value: workspace),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: TaskListPanel()),
+          ),
+        ),
+      );
+
+      expect(find.text('No active tasks'), findsOneWidget);
+    });
+
+    testWidgets('running task shows running chip', (tester) async {
+      final activity = AgentActivityController();
+      final workspace = WorkspaceController();
+      activity.ingestForTesting(
+        const AgentUiEvent(
+          eventType: 'tool_execution',
+          schemaVersion: '1',
+          taskId: 'task-running',
+          timestamp: 1,
+          payload: {'tool_name': 'web_search', 'status': 'running'},
+        ),
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: activity),
+            ChangeNotifierProvider.value(value: workspace),
+          ],
+          child: const MaterialApp(home: Scaffold(body: TaskListPanel())),
+        ),
+      );
+
+      expect(find.byKey(const Key('task_state_running')), findsOneWidget);
+    });
+
+    testWidgets('failed task shows failed chip', (tester) async {
+      final activity = AgentActivityController();
+      final workspace = WorkspaceController();
+      activity.ingestForTesting(
+        const AgentUiEvent(
+          eventType: 'tool_execution',
+          schemaVersion: '1',
+          taskId: 'task-failed',
+          timestamp: 1,
+          payload: {'tool_name': 'research', 'status': 'failed', 'result': 'boom'},
+        ),
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: activity),
+            ChangeNotifierProvider.value(value: workspace),
+          ],
+          child: const MaterialApp(home: Scaffold(body: TaskListPanel())),
+        ),
+      );
+
+      expect(find.byKey(const Key('task_state_failed')), findsOneWidget);
+    });
+
+    testWidgets('tapping task calls workspace selection', (tester) async {
+      final activity = AgentActivityController();
+      final workspace = WorkspaceController();
+      activity.ingestForTesting(
+        const AgentUiEvent(
+          eventType: 'tool_execution',
+          schemaVersion: '1',
+          taskId: 'task-select',
+          timestamp: 1,
+          payload: {'tool_name': 'research', 'status': 'running'},
+        ),
+      );
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: activity),
+            ChangeNotifierProvider.value(value: workspace),
+          ],
+          child: const MaterialApp(home: Scaffold(body: TaskListPanel())),
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('task_row_task-select')));
+      await tester.pumpAndSettle();
+
+      expect(workspace.selectedTaskId, 'task-select');
+      expect(workspace.selectedArtifact?.id, 'task-select');
+      expect(workspace.selectedArtifact?.type, 'task');
+    });
+
+    testWidgets('all TaskUiState values render distinct chips', (tester) async {
+      final activity = AgentActivityController();
+      final workspace = WorkspaceController();
+      final statuses = <String>[
+        'pending',
+        'running',
+        'completed',
+        'failed',
+        'plan_failed',
+        'waiting_input',
+        'cancelled',
+      ];
+      var ts = 1;
+      for (final status in statuses) {
+        activity.ingestForTesting(
+          AgentUiEvent(
+            eventType: 'tool_execution',
+            schemaVersion: '1',
+            taskId: 'task-$status',
+            timestamp: ts++,
+            payload: {'tool_name': 'tool-$status', 'status': status},
+          ),
+        );
+      }
+
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider.value(value: activity),
+            ChangeNotifierProvider.value(value: workspace),
+          ],
+          child: const MaterialApp(home: Scaffold(body: TaskListPanel())),
+        ),
+      );
+
+      expect(find.byKey(const Key('task_state_pending')), findsOneWidget);
+      expect(find.byKey(const Key('task_state_running')), findsOneWidget);
+      expect(find.byKey(const Key('task_state_completed')), findsOneWidget);
+      expect(find.byKey(const Key('task_state_failed')), findsOneWidget);
+      expect(find.byKey(const Key('task_state_planFailed')), findsOneWidget);
+      expect(find.byKey(const Key('task_state_waitingInput')), findsOneWidget);
+      expect(find.byKey(const Key('task_state_cancelled')), findsOneWidget);
+    });
+  });
+}

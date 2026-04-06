@@ -3,11 +3,11 @@
     {
       "id": "project-title",
       "type": "text",
-      "text": "# Maya Agent System\n**Phase 8: MEGA Era**\n\nMarch 2026\n\nMultimodal Voice Assistant with Python backend (LiveKit) and Flutter frontend",
+      "text": "# Maya Agent System\n**Phase 11 Active - Memory Stabilization**\n\nMarch 2026\n\nMultimodal Voice Assistant with Python backend (LiveKit) and Flutter frontend",
       "x": 50,
       "y": 50,
       "width": 400,
-      "height": 120,
+      "height": 140,
       "color": "#4a90e2"
     },
     {
@@ -23,62 +23,61 @@
     {
       "id": "key-components",
       "type": "text",
-      "text": "## Key Components\n\n### Core Runtime\n- [[GlobalAgentContainer]] - Singleton with shared resources\n- [[AgentOrchestrator]] - Central decision hub\n- [[PlanningEngine]] - Task decomposition\n\n### Intelligence\n- [[SmartLLM]] - Role-based LLM wrapper\n- [[Intent-First Routing]] - Intent classification\n- [[HybridMemoryManager]] - Hybrid memory search\n\n### Task System\n- [[TaskStore]] - SQLite persistence\n- [[TaskWorker]] - Background execution\n- [[ExecutionRouter]] - Intent routing",
+      "text": "## Key Components\n\n### Core Runtime\n- [[GlobalAgentContainer]] - Singleton with shared resources\n- [[AgentOrchestrator]] - Central decision hub\n- [[PlanningEngine]] - Task decomposition\n\n### Intelligence\n- [[SmartLLM]] - Role-based LLM wrapper\n- [[Intent-First Routing]] - Intent classification\n- [[HybridMemoryManager]] - Hybrid memory search\n\n### Task System\n- [[TaskStore]] - SQLite persistence\n- [[TaskWorker]] - Background execution\n- [[ExecutionRouter]] - Intent routing\n\n### Flutter Frontend\n- [[Flutter-Architecture-Overview]] - State management\n- [[SettingsProvider]] - Secure persistence\n- [[BackendSyncService]] - WebSocket sync",
       "x": 50,
-      "y": 200,
+      "y": 220,
       "width": 400,
-      "height": 280,
+      "height": 320,
       "color": "#f5f5f5"
     },
     {
       "id": "current-status",
       "type": "text",
-      "text": "## Current Status: Phase 8 MEGA Era\n\n### Completed Phases ✓\n1. **Phase 1** - Global Resources & Provider Init\n2. **Phase 2** - Orchestration & Single-Brain\n3. **Phase 3** - Tool Pipeline Integration\n4. **Phase 4** - Intent, Planning & Worker\n5. **Phase 5** - Voice Pipeline (Audio)\n6. **Phase 6** - Memory & Context Integrity\n7. **Phase 7** - Provider Resilience & Chaos\n\n### In Progress 🔄\n8. **Phase 8** - MEGA Era\n   - Advanced query interpretation\n   - Zero-shot inference\n   - Enhanced multimodal understanding\n   - Status: Early development",
+      "text": "## Current Status: Phase 11 Active\n\n### Completed Phases\n✅ **Phase 1** - Global Resources & Provider Init\n✅ **Phase 2** - Orchestration & Single-Brain\n✅ **Phase 3** - Tool Pipeline Integration\n✅ **Phase 4** - Intent, Planning & Worker\n✅ **Phase 5** - Voice Pipeline (Audio)\n✅ **Phase 6** - Memory & Context Integrity\n✅ **Phase 7** - Provider Resilience & Chaos\n✅ **Phase 8** - MEGA Era (Multimodal)\n✅ **Phase 9** - Handoff System (Complete)\n✅ **Phase 10** - v0.10.0 Released\n\n### In Progress 🔄\n11. **Phase 11** - Memory Stabilization\n    - P11-01: ✅ Provider Supervisor (resolved)\n    - P11-02: 🔄 Vector Path Issue (active)\n    - P11-03: ⏳ Memory Observability\n    - P11-04: ⏳ Session-scoped Recall\n\n### Recent Fixes\n- Memory write timing (await before resolve)\n- user_id alignment (write/read consistency)\n- Session-scoped retrieval (in progress)",
       "x": 50,
-      "y": 500,
+      "y": 570,
       "width": 400,
-      "height": 250,
+      "height": 380,
       "color": "#fff3cd"
     },
     {
       "id": "critical-files",
       "type": "text",
-      "text": "## Critical Files (High Risk Changes)\n\n| File | Risk Level | Why Critical |
-|------|------------|--------------\n| `agent.py` | EXTREME | Main entrypoint - breaks everything\n| `core/runtime/lifecycle.py` | EXTREME | Boot sequence\n| `core/runtime/global_agent.py` | HIGH | Singleton container\n| `core/orchestrator/agent_orchestrator.py` | HIGH | All decisions\n| `core/llm/smart_llm.py` | HIGH | All AI calls\n| `config/settings.py` | MEDIUM | All providers\n\n### Change Sizes\n- ⚠️ > 100 lines: Requires approval\n- ✅ < 20 lines: Preferred\n- ⚠️ > 20 lines: Review required",
+      "text": "## Critical Files (High Risk Changes)\n\n| File | Risk Level | Why Critical |\n|------|------------|--------------|\n| `agent.py` | EXTREME | Main entrypoint - breaks everything |\n| `core/runtime/lifecycle.py` | EXTREME | Boot sequence |\n| `core/runtime/global_agent.py` | HIGH | Singleton container |\n| `core/orchestrator/agent_orchestrator.py` | HIGH | All decisions |\n| `core/llm/smart_llm.py` | HIGH | All AI calls |\n| `core/memory/hybrid_memory_manager.py` | HIGH | Memory system |\n| `config/settings.py` | MEDIUM | All providers |\n\n### Change Sizes\n- ⚠️ > 100 lines: Requires approval\n- ✅ < 20 lines: Preferred\n- ⚠️ > 20 lines: Review required",
       "x": 500,
-      "y": 500,
+      "y": 570,
       "width": 500,
-      "height": 250,
+      "height": 380,
       "color": "#ffebee"
     },
     {
       "id": "db-config",
       "type": "text",
-      "text": "## Database & Configuration\n\n### Environment Variables Required\n- `GROQ_API_KEY` / `OPENAI_API_KEY`\n- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`\n- `DEEPGRAM_API_KEY`\n- Optional: `SUPABASE_URL`, `MEM0_API_KEY`\n\n### SQLite Databases\n- `dev_maya_one.db` - Task storage (WAL mode)\n- `sessions.db` - Conversation history\n- `runtime_soak.db` - Runtime metrics\n\n### Testing Requirements\n⚠️ **After ANY change:**\n1. `python -c "import agent"`\n2. `timeout 10 python agent.py console <<< "hello"`\n3. `python config/settings.py`\n4. `python scripts/system_validation.py`\n\n**Console mode must ALWAYS work.**",
+      "text": "## Database & Configuration\n\n### Environment Variables Required\n- `GROQ_API_KEY` / `OPENAI_API_KEY`\n- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`\n- `DEEPGRAM_API_KEY`\n- Optional: `SUPABASE_URL`, `MEM0_API_KEY`\n\n### SQLite Databases\n- `dev_maya_one.db` - Task storage (WAL mode)\n- `sessions.db` - Conversation history\n- `runtime_soak.db` - Runtime metrics\n- `memory_qdrant/` - Vector storage\n- `data/notes.db` - Notes persistence\n\n### Testing Requirements\n⚠️ **After ANY change:**\n1. `python -c \"import agent\"`\n2. `timeout 10 python agent.py console <<< \"hello\"`\n3. `python config/settings.py`\n4. `python scripts/system_validation.py`\n\n**Console mode must ALWAYS work.**",
       "x": 1020,
       "y": 50,
       "width": 400,
-      "height": 300,
+      "height": 320,
       "color": "#e8f5e9"
     },
     {
       "id": "search-links",
       "type": "text",
-      "text": "## 🔗 Navigation Links\n\n### Starting Points\n- [[Vault Index]] - Full vault overview\n- [[7-Layer Runtime Chain]] - Architecture foundation\n- [[GlobalAgentContainer]] - Core singleton\n- [[Development Workflow]] - How to make changes\n\n### Quick Commands\n```bash\n# Test console\ncd Agent && python agent.py console\n\n# Run tests\npytest tests/test_agent_orchestrator.py::test_handle_message -v\n\n# System validation\npython scripts/system_validation.py\n```\n\n### Critical Issues\n🔴 **CRITICAL:** [[LLM Tool-Call Schema Mismatch]]\n🟡 **IMPORTANT:** [[FTS5 Memory Search Running Unnecessarily]]\n🟡 **IMPORTANT:** [[Context Builder Token Bloat]]",
+      "text": "## 🔗 Navigation Links\n\n### Starting Points\n- [[Vault Index]] - Full vault overview\n- [[7-Layer Runtime Chain]] - Architecture foundation\n- [[GlobalAgentContainer]] - Core singleton\n- [[Development Workflow]] - How to make changes\n- [[Flutter-Architecture-Overview]] - Frontend docs\n\n### Quick Commands\n```bash\n# Test console\ncd Agent && python agent.py console\n\n# Run tests\npytest tests/test_agent_orchestrator.py::test_handle_message -v\n\n# System validation\npython scripts/system_validation.py\n\n# Batch validation\npython -m pytest tests/ -k 'batch' --tb=short\n```\n\n### Recent Commits\n- `ff69c08` - fast-path contract + LiveKit metrics\n- `bddb61f` - memory recall stabilization\n- `94361fa` - memory timing fix\n- `f526408` - user_id mismatch fix\n- `74c3012` - memory user_id tagging\n\n### Critical Issues\n🔴 [[LLM Tool-Call Schema Mismatch]]\n🟡 [[Memory Recall - Session Scoped]]\n🟡 [[Context Builder Token Bloat]]",
       "x": 1020,
-      "y": 370,
+      "y": 390,
       "width": 400,
-      "height": 380,
+      "height": 360,
       "color": "#f3e5f5"
     }
   ],
   "edges": [
-    {"from": "project-title", "to": "7layer-arch"},
-    {"from": "project-title", "to": "key-components"},
-    {"from": "project-title", "to": "current-status"},
-    {"from": "7layer-arch", "to": "key-components"},
-    {"from": "key-components", "to": "critical-files"},
-    {"from": "current-status", "to": "critical-files"},
-    {"from": "db-config", "to": "search-links"}
+    {"fromNode": "project-title", "toNode": "7layer-arch", "id": "edge-1"},
+    {"fromNode": "project-title", "toNode": "key-components", "id": "edge-2"},
+    {"fromNode": "project-title", "toNode": "current-status", "id": "edge-3"},
+    {"fromNode": "7layer-arch", "toNode": "key-components", "id": "edge-4"},
+    {"fromNode": "key-components", "toNode": "critical-files", "id": "edge-5"},
+    {"fromNode": "current-status", "toNode": "critical-files", "id": "edge-6"},
+    {"fromNode": "db-config", "toNode": "search-links", "id": "edge-7"}
   ]
 }
