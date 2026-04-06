@@ -31,6 +31,7 @@ from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.orchestrator.research_handler import ResearchHandler
 from core.orchestrator.media_handler import MediaHandler
 from core.orchestrator.scheduling_handler import SchedulingHandler
+from core.orchestrator.turn_context import TurnContext
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
 from core.security.input_guard import InputGuard
@@ -3129,6 +3130,18 @@ class AgentOrchestrator(ChatResponseMixin):
             - Task Request -> PLANNER Role
         """
         normalized_origin = str(origin or "").strip().lower()
+        _turn_ctx = TurnContext.from_handle_message_args(
+            message=message,
+            user_id=user_id,
+            tool_context=tool_context,
+            origin=normalized_origin,
+        )
+        logger.debug(
+            "turn_context_created turn_id=%s origin=%s session_id=%s",
+            _turn_ctx.turn_id,
+            _turn_ctx.origin,
+            _turn_ctx.session_id,
+        )
         if normalized_origin == "voice":
             normalized_message, message_changed = self._normalize_voice_transcription_for_routing(message)
             if message_changed:
