@@ -31,6 +31,15 @@ import 'ui/theme/app_theme.dart';
 import 'widgets/overlays/global_overlay_host.dart';
 import 'app.dart';
 
+bool _isTruthyEnv(String? raw, {bool defaultValue = false}) {
+  if (raw == null) return defaultValue;
+  final normalized = raw.trim().toLowerCase();
+  return normalized == '1' ||
+      normalized == 'true' ||
+      normalized == 'yes' ||
+      normalized == 'on';
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -56,13 +65,22 @@ void main() async {
   final liveKitService = LiveKitService();
   final storageService = StorageService();
 
-  // Auto-start Python agent (desktop only)
-  if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+  // Default to the externally managed backend in desktop dev. Local spawn remains
+  // available as an explicit opt-in for self-contained runs.
+  final autoStartLocalAgent = _isTruthyEnv(
+    dotenv.env['FLUTTER_AUTO_START_AGENT'],
+    defaultValue: false,
+  );
+  if (!kIsWeb &&
+      (Platform.isLinux || Platform.isMacOS || Platform.isWindows) &&
+      autoStartLocalAgent) {
     final agentManager = AgentProcessManager();
     final started = await agentManager.startAgent();
     if (started) {
       await Future.delayed(const Duration(seconds: 2));
     }
+  } else if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
+    debugPrint('Desktop app using external backend on :5050 (FLUTTER_AUTO_START_AGENT=0).');
   }
 
   runApp(
