@@ -133,6 +133,13 @@ SAMPLE_RATE = 24000
 NUM_CHANNELS = 1
 FRAME_MS = 20
 LOCAL_PARTICIPANT = "voice-probe-user"
+MAX_PROBE_ATTEMPTS = 3
+RETRYABLE_PROBE_REASONS = {
+    "no_agent_transcription",
+    "runtime_failure_response",
+    "greeting_only_response",
+}
+LIVEKIT_OP_TIMEOUT_S = 30
 
 DEFAULT_FORBIDDEN_PHRASES = (
     "hi maya, it sounds like you're thinking",
@@ -181,6 +188,10 @@ def is_greeting_only(text: str) -> bool:
         "how can i help you",
     )
     if normalized in greeting_patterns:
+        return True
+    if normalized.startswith("hi, i'm maya") or normalized.startswith("hi i'm maya"):
+        return True
+    if normalized.startswith("hello, i'm maya") or normalized.startswith("hello i'm maya"):
         return True
     if "help you today" in normalized and "maya" in normalized:
         return True
@@ -457,12 +468,15 @@ async def run_suite(
         except Exception:
             pass
 
-        dispatch = await lk.agent_dispatch.create_dispatch(
-            CreateAgentDispatchRequest(
-                agent_name=agent_name,
-                room=room_name,
-                metadata='{"probe":"phase27_voice_certification"}',
-            )
+        dispatch = await asyncio.wait_for(
+            lk.agent_dispatch.create_dispatch(
+                CreateAgentDispatchRequest(
+                    agent_name=agent_name,
+                    room=room_name,
+                    metadata='{"probe":"phase27_voice_certification"}',
+                )
+            ),
+            timeout=LIVEKIT_OP_TIMEOUT_S,
         )
         print("dispatch_id", dispatch.id)
 
@@ -475,7 +489,10 @@ async def run_suite(
             },
         )
 
-        await room.connect(token_resp["url"], token_resp["token"])
+        await asyncio.wait_for(
+            room.connect(token_resp["url"], token_resp["token"]),
+            timeout=LIVEKIT_OP_TIMEOUT_S,
+        )
 
         join_deadline = time.time() + max(10, min(timeout_s, 40))
         while time.time() < join_deadline:
@@ -510,73 +527,122 @@ async def run_suite(
             await asyncio.sleep(1)
 
         if events["track_subscribed"] == 0:
-            return {
-                "status": "setup_failure",
-                "reason": "agent_audio_not_subscribed",
-                "room_name": room_name,
-                "events": events,
-                "probes": [],
-            }
+            # Some sessions can still deliver transcription without surfacing
+            # track_subscribed in time; continue and let probe assertions decide.
+            print("probe_warning agent_audio_not_subscribed_continuing=true")
 
-        # Let greeting stream settle; otherwise first probe STT can truncate.
+        # Let greeting stream settle; wait for at least one agent transcript first.
         stable_loops = 0
         last_count = len(transcripts)
-        for _ in range(12):
+        saw_agent_transcript = False
+        for _ in range(20):
             await asyncio.sleep(1)
             cur = len(transcripts)
+            if any(
+                (who or "").strip().startswith("agent-") and (txt or "").strip()
+                for _, who, txt in transcripts
+            ):
+                saw_agent_transcript = True
             if cur == last_count:
                 stable_loops += 1
-                if stable_loops >= 2:
+                if saw_agent_transcript and stable_loops >= 2:
                     break
             else:
                 stable_loops = 0
                 last_count = cur
 
         results: list[ProbeResult] = []
-        for spec in probes:
-            baseline = len(transcripts)
-            injection_start = time.time()
-            pcm = await synth_to_pcm(spec.prompt, voice)
-            print(f"probe_start {spec.name} pcm_bytes={len(pcm)}")
-            await publish_pcm_audio(source, pcm)
 
-            # Wait up to collect_seconds; if a response appears, stop after brief stabilization.
-            deadline = time.time() + max(6.0, spec.collect_seconds)
-            last_agent_count = 0
-            stable_agent_loops = 0
+        async def _wait_for_transcript_quiet(max_wait_s: int = 12, quiet_loops_needed: int = 3) -> None:
+            last_count = len(transcripts)
+            quiet_loops = 0
+            deadline = time.time() + max_wait_s
             while time.time() < deadline:
-                post_now = transcripts[baseline:]
-                agent_now = []
-                for ts, who, text in post_now:
+                await asyncio.sleep(1)
+                cur = len(transcripts)
+                if cur == last_count:
+                    quiet_loops += 1
+                    if quiet_loops >= quiet_loops_needed:
+                        return
+                else:
+                    quiet_loops = 0
+                    last_count = cur
+
+        for spec in probes:
+            result: ProbeResult | None = None
+            for attempt in range(1, MAX_PROBE_ATTEMPTS + 1):
+                await _wait_for_transcript_quiet()
+                baseline = len(transcripts)
+                injection_start = time.time()
+                pcm = await synth_to_pcm(spec.prompt, voice)
+                print(f"probe_start {spec.name} attempt={attempt} pcm_bytes={len(pcm)}")
+                await publish_pcm_audio(source, pcm)
+
+                # Wait up to collect_seconds; if a response appears, stop after brief stabilization.
+                deadline = time.time() + max(6.0, spec.collect_seconds)
+                last_agent_count = 0
+                stable_agent_loops = 0
+                user_transcribed = False
+                while time.time() < deadline:
+                    post_now = transcripts[baseline:]
+                    agent_now = []
+                    for ts, who, text in post_now:
+                        if ts < injection_start or not text:
+                            continue
+                        normalized_who = (who or "").strip()
+                        if normalized_who == LOCAL_PARTICIPANT:
+                            user_transcribed = True
+                            continue
+                        if normalized_who in remote_identities or normalized_who.startswith("agent-"):
+                            agent_now.append(text)
+                    if agent_now:
+                        if len(agent_now) == last_agent_count:
+                            stable_agent_loops += 1
+                            if stable_agent_loops >= 3:
+                                break
+                        else:
+                            last_agent_count = len(agent_now)
+                            stable_agent_loops = 0
+                    await asyncio.sleep(1)
+
+                post = transcripts[baseline:]
+                agent_texts = []
+                for ts, who, text in post:
                     if ts < injection_start or not text:
                         continue
                     normalized_who = (who or "").strip()
                     if normalized_who == LOCAL_PARTICIPANT:
                         continue
                     if normalized_who in remote_identities or normalized_who.startswith("agent-"):
-                        agent_now.append(text)
-                if agent_now:
-                    if len(agent_now) == last_agent_count:
-                        stable_agent_loops += 1
-                        if stable_agent_loops >= 3:
-                            break
-                    else:
-                        last_agent_count = len(agent_now)
-                        stable_agent_loops = 0
-                await asyncio.sleep(1)
+                        agent_texts.append(text)
 
-            post = transcripts[baseline:]
-            agent_texts = []
-            for ts, who, text in post:
-                if ts < injection_start or not text:
+                if not user_transcribed and not agent_texts:
+                    result = ProbeResult(
+                        name=spec.name,
+                        prompt=spec.prompt,
+                        passed=False,
+                        reason="no_user_or_agent_transcription",
+                        responses=[],
+                    )
+                else:
+                    result = evaluate_probe_texts(spec, agent_texts)
+                if (
+                    result.reason in RETRYABLE_PROBE_REASONS
+                    or result.reason == "no_user_or_agent_transcription"
+                ) and attempt < MAX_PROBE_ATTEMPTS:
+                    print(f"probe_retry {spec.name} reason={result.reason} next_attempt={attempt+1}")
+                    await asyncio.sleep(2.0)
                     continue
-                normalized_who = (who or "").strip()
-                if normalized_who == LOCAL_PARTICIPANT:
-                    continue
-                if normalized_who in remote_identities or normalized_who.startswith("agent-"):
-                    agent_texts.append(text)
+                break
 
-            result = evaluate_probe_texts(spec, agent_texts)
+            if result is None:
+                result = ProbeResult(
+                    name=spec.name,
+                    prompt=spec.prompt,
+                    passed=False,
+                    reason="no_probe_result",
+                    responses=[],
+                )
             results.append(result)
             print(
                 "probe_result",

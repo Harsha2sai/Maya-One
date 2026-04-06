@@ -1,17 +1,20 @@
 import unittest
 import os
 import sqlite3
-import shutil
+import tempfile
+from pathlib import Path
 from persistence.session_manager import SessionManager
 
 class TestSessionManager(unittest.TestCase):
     def setUp(self):
-        self.db_path = "test_sessions.db"
+        self._tmp_dir = tempfile.TemporaryDirectory(prefix="maya_test_sessions_")
+        self.db_path = str(Path(self._tmp_dir.name) / "test_sessions.db")
         self.manager = SessionManager(db_path=self.db_path)
 
     def tearDown(self):
         if os.path.exists(self.db_path):
             os.remove(self.db_path)
+        self._tmp_dir.cleanup()
 
     def test_create_session(self):
         session_id = self.manager.create_session(metadata={"user": "test_user"})
