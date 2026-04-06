@@ -541,6 +541,55 @@ async def _handle_worker_session(ctx: agents.JobContext):
         logger.info("🧹 BOOTSTRAP_END job_id=%s pid=%s bootstrap_seq=%s", job_id, pid, bootstrap_seq)
 
 
+async def _connect_with_retry(
+    ctx: agents.JobContext,
+    *,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 10.0,
+) -> None:
+    """
+    Connect to LiveKit with exponential backoff retry.
+
+    Handles transient signal path timeouts (v0 path timeout) that can
+    occur during initial connection under load or network instability.
+    """
+    from asyncio import TimeoutError as AsyncTimeoutError
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            logger.info(
+                "🔄 LiveKit signal connect attempt %d/%d",
+                attempt,
+                max_retries,
+            )
+            await asyncio.wait_for(
+                ctx.connect(auto_subscribe=agents.AutoSubscribe.AUDIO_ONLY),
+                timeout=15.0,  # Per-attempt timeout
+            )
+            logger.info("✅ LiveKit signal connected on attempt %d", attempt)
+            return
+        except (AsyncTimeoutError, Exception) as exc:
+            error_type = type(exc).__name__
+            if attempt == max_retries:
+                logger.error(
+                    "❌ LiveKit signal connect failed after %d attempts: %s",
+                    max_retries,
+                    error_type,
+                )
+                raise
+
+            # Exponential backoff with jitter
+            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            logger.warning(
+                "⚠️ LiveKit signal connect attempt %d failed (%s), retrying in %.1fs...",
+                attempt,
+                error_type,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+
 async def _handle_worker_session_impl(ctx: agents.JobContext):
     """
     Phase-aware worker session boot.
@@ -550,7 +599,8 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
       text turns through the orchestrator chat path.
     """
     # Connect immediately to avoid join timeouts while heavy imports initialize.
-    await ctx.connect(auto_subscribe=agents.AutoSubscribe.AUDIO_ONLY)
+    # Use retry logic for transient signal path timeouts.
+    await _connect_with_retry(ctx, max_retries=3, base_delay=1.0)
 
     from livekit.agents import AgentSession
     from core.runtime.worker_bootstrap import build_phase1_runtime
