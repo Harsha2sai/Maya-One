@@ -98,39 +98,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Start agent worker
-        env:
-          LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
-          LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
-          LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
+      - name: Prepare local venv for certification wrapper
         run: |
-          echo "🚀 Starting agent worker..."
-          python agent.py &
-          AGENT_PID=$!
-          echo "AGENT_PID=$AGENT_PID" >> $GITHUB_ENV
-
-          # Wait for health endpoint
-          echo "⏳ Waiting for token server health..."
-          for i in {1..30}; do
-            if curl -s http://127.0.0.1:5050/health > /dev/null 2>&1; then
-              echo "✅ Token server ready"
-              break
-            fi
-            sleep 1
-          done
-
-          # Verify health
-          curl -s http://127.0.0.1:5050/health | tee /tmp/health_check.json
+          python -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Run voice certification
         env:
           LIVEKIT_URL: ${{ secrets.LIVEKIT_URL }}
           LIVEKIT_API_KEY: ${{ secrets.LIVEKIT_API_KEY }}
           LIVEKIT_API_SECRET: ${{ secrets.LIVEKIT_API_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LIVEKIT_AGENT_NAME: ${{ env.LIVEKIT_AGENT_NAME }}
+          CERT_JSON_OUTPUT: /tmp/cert_report.json
         run: |
           echo "🎙️ Running voice certification probes..."
           ./scripts/run_phase27_voice_certification.sh 2>&1 | tee /tmp/certification.log
@@ -173,15 +156,6 @@ jobs:
             /tmp/certification.log
             /tmp/health_check.json
           retention-days: 7
-
-      - name: Cleanup agent worker
-        if: always()
-        run: |
-          if [ -n "$AGENT_PID" ]; then
-            echo "🛑 Stopping agent worker (PID: $AGENT_PID)..."
-            kill $AGENT_PID 2>/dev/null || true
-            sleep 2
-          fi
 
       - name: Fail if certification failed
         if: always()
