@@ -25,6 +25,7 @@ print("🔍 DEBUG: ToolManager - Importing get_skill_registry...")
 from core.skills.registry import get_skill_registry
 print("🔍 DEBUG: ToolManager - Importing ExecutionGate...")
 from core.governance.gate import ExecutionGate
+from core.governance.audit import AuditLogger
 from core.tools.execution_context import ExecutionContext, create_execution_context
 print("🔍 DEBUG: ToolManager - Importing UserRole...")
 from core.governance.types import UserRole, RiskLevel

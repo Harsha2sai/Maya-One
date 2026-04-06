@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from aiohttp import web
+from dotenv import load_dotenv
 from .handlers import (
     handle_token,
     handle_health,
@@ -12,6 +13,9 @@ from .handlers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Ensure standalone token-server mode resolves the same .env values as agent boot.
+load_dotenv()
 
 import sys
 import atexit
