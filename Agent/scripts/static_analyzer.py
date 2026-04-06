@@ -393,33 +393,33 @@ class MayaStaticAnalyzer:
     # negatives. Covered by test_fastpath_invariants.py.
     # ========================================================================
     def _check_fastpath_groups(self) -> CheckResult:
-        """Check that _detect_direct_tool_intent has exactly 4 routing groups."""
-        orch_py = self.base_path / "core" / "orchestrator" / "agent_orchestrator.py"
+        """Check that FastPathRouter has exactly 5 routing groups."""
+        fast_path_py = self.base_path / "core" / "orchestrator" / "fast_path_router.py"
 
-        if not orch_py.exists():
+        if not fast_path_py.exists():
             return CheckResult(
                 name="",
                 passed=False,
-                reason="agent_orchestrator.py not found"
+                reason="fast_path_router.py not found"
             )
 
-        content = orch_py.read_text()
+        content = fast_path_py.read_text()
 
         # Parse _detect_direct_tool_intent method with AST and collect groups from:
         # 1) keyword argument: group="..."
         # 2) positional 4th argument: DirectToolIntent(..., ..., ..., "group")
         try:
-            module_ast = ast.parse(content, filename=str(orch_py))
+            module_ast = ast.parse(content, filename=str(fast_path_py))
         except SyntaxError as e:
             return CheckResult(
                 name="",
                 passed=False,
-                reason=f"Failed to parse agent_orchestrator.py: {e}",
+                reason=f"Failed to parse fast_path_router.py: {e}",
             )
 
         target_fn: Optional[ast.FunctionDef] = None
         for node in ast.walk(module_ast):
-            if isinstance(node, ast.FunctionDef) and node.name == "_detect_direct_tool_intent":
+            if isinstance(node, ast.FunctionDef) and node.name == "detect_direct_tool_intent":
                 target_fn = node
                 break
 
@@ -427,7 +427,7 @@ class MayaStaticAnalyzer:
             return CheckResult(
                 name="",
                 passed=False,
-                reason="_detect_direct_tool_intent method not found"
+                reason="detect_direct_tool_intent method not found"
             )
 
         direct_intent_count = 0
@@ -454,11 +454,11 @@ class MayaStaticAnalyzer:
 
         unique_groups = set(groups)
 
-        if len(unique_groups) != 4:
+        if len(unique_groups) != 5:
             return CheckResult(
                 name="",
                 passed=False,
-                reason=f"Expected 4 routing groups, found {len(unique_groups)}: {unique_groups}",
+                reason=f"Expected 5 routing groups, found {len(unique_groups)}: {unique_groups}",
                 details=f"DirectToolIntent count: {direct_intent_count}, groups: {unique_groups}"
             )
 

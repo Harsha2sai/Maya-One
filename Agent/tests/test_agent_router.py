@@ -11,6 +11,7 @@ import pytest
 from core.agents.contracts import AgentHandoffResult
 from core.orchestrator.agent_orchestrator import AgentOrchestrator
 from core.orchestrator.agent_router import AgentRouter
+from core.orchestrator.fast_path_router import FastPathRouter
 from core.response.agent_response import ToolInvocation
 from core.response.response_formatter import ResponseFormatter
 from core.security.input_guard import InputGuard
@@ -564,7 +565,7 @@ def test_identity_patterns_do_not_include_broad_name_or_my_tokens() -> None:
 
 
 def test_fastpath_group_count_contract() -> None:
-    source = textwrap.dedent(inspect.getsource(AgentOrchestrator._detect_direct_tool_intent))
+    source = textwrap.dedent(inspect.getsource(FastPathRouter.detect_direct_tool_intent))
     tree = ast.parse(source)
     groups: set[str] = set()
     for node in ast.walk(tree):
