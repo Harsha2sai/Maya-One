@@ -38,7 +38,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('Agent/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -89,7 +89,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('Agent/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
 
@@ -144,8 +144,13 @@ jobs:
             cat /tmp/cert_report.json | jq '.'
 
             # Extract summary for GitHub Actions
-            STATUS=$(cat /tmp/cert_report.json | jq -r '.status // "unknown"')
-            PASSED=$(cat /tmp/cert_report.json | jq -r '.overall_passed // false')
+            STATUS=$(cat /tmp/cert_report.json | jq -r '.status // .summary.status // "unknown"')
+            PASSED=$(cat /tmp/cert_report.json | jq -r '
+              if has("overall_passed") then .overall_passed
+              elif .summary and (.summary | has("overall_passed")) then .summary.overall_passed
+              else false
+              end
+            ')
 
             echo "CERT_STATUS=$STATUS" >> $GITHUB_ENV
             echo "CERT_PASSED=$PASSED" >> $GITHUB_ENV
