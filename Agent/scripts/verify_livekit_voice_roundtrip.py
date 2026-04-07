@@ -175,6 +175,11 @@ def normalize_text(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
 
 
+def _env_flag(name: str, default: str = "0") -> bool:
+    raw = str(os.getenv(name, default) or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def is_greeting_only(text: str) -> bool:
     normalized = normalize_text(text)
     if not normalized:
@@ -406,6 +411,7 @@ async def run_suite(
     timeout_s: int,
     voice: str,
     probes: list[ProbeSpec],
+    allow_chat_fallback: bool,
 ) -> dict[str, Any]:
     if rtc is None or LiveKitAPI is None:
         raise RuntimeError(f"livekit dependencies not available: {_IMPORT_ERROR}")
@@ -429,6 +435,7 @@ async def run_suite(
         "data_received": 0,
     }
     transcripts: list[tuple[float, str, str]] = []
+    chat_events: list[tuple[float, str, str]] = []
     remote_identities: set[str] = set()
 
     @room.on("participant_connected")
@@ -459,8 +466,80 @@ async def run_suite(
 
     @room.on("data_received")
     def _on_data_received(packet: Any) -> None:
-        del packet
         events["data_received"] += 1
+        topic = str(getattr(packet, "topic", "") or "")
+        data = getattr(packet, "data", b"")
+        if topic != "chat_events" or not data:
+            return
+        try:
+            payload = json.loads(data.decode("utf-8"))
+        except Exception:
+            return
+        event_type = str(payload.get("type") or "")
+        content = str(payload.get("content") or payload.get("voice_text") or "").strip()
+        if event_type == "assistant_final" and content:
+            chat_events.append((time.time(), event_type, content))
+            print("event chat_event assistant_final", content[:120])
+
+    async def _collect_outputs_since(
+        *,
+        transcript_baseline: int,
+        chat_baseline: int,
+        injection_start: float,
+    ) -> tuple[list[str], bool]:
+        user_transcribed = False
+        agent_texts: list[str] = []
+
+        for ts, who, text in transcripts[transcript_baseline:]:
+            if ts < injection_start or not text:
+                continue
+            normalized_who = (who or "").strip()
+            if normalized_who == LOCAL_PARTICIPANT:
+                user_transcribed = True
+                continue
+            if normalized_who in remote_identities or normalized_who.startswith("agent-"):
+                agent_texts.append(text)
+
+        for ts, event_type, content in chat_events[chat_baseline:]:
+            if ts < injection_start or not content:
+                continue
+            if event_type == "assistant_final":
+                agent_texts.append(content)
+
+        return agent_texts, user_transcribed
+
+    async def _wait_for_output(
+        *,
+        transcript_baseline: int,
+        chat_baseline: int,
+        injection_start: float,
+        collect_seconds: float,
+    ) -> tuple[list[str], bool]:
+        deadline = time.time() + max(6.0, collect_seconds)
+        last_agent_count = 0
+        stable_agent_loops = 0
+        latest_texts: list[str] = []
+        latest_user_transcribed = False
+
+        while time.time() < deadline:
+            agent_now, user_now = await _collect_outputs_since(
+                transcript_baseline=transcript_baseline,
+                chat_baseline=chat_baseline,
+                injection_start=injection_start,
+            )
+            latest_texts = agent_now
+            latest_user_transcribed = user_now
+            if agent_now:
+                if len(agent_now) == last_agent_count:
+                    stable_agent_loops += 1
+                    if stable_agent_loops >= 3:
+                        break
+                else:
+                    last_agent_count = len(agent_now)
+                    stable_agent_loops = 0
+            await asyncio.sleep(1)
+
+        return latest_texts, latest_user_transcribed
 
     try:
         try:
@@ -572,49 +651,34 @@ async def run_suite(
             result: ProbeResult | None = None
             for attempt in range(1, MAX_PROBE_ATTEMPTS + 1):
                 await _wait_for_transcript_quiet()
-                baseline = len(transcripts)
+                transcript_baseline = len(transcripts)
+                chat_baseline = len(chat_events)
                 injection_start = time.time()
                 pcm = await synth_to_pcm(spec.prompt, voice)
                 print(f"probe_start {spec.name} attempt={attempt} pcm_bytes={len(pcm)}")
                 await publish_pcm_audio(source, pcm)
+                agent_texts, user_transcribed = await _wait_for_output(
+                    transcript_baseline=transcript_baseline,
+                    chat_baseline=chat_baseline,
+                    injection_start=injection_start,
+                    collect_seconds=spec.collect_seconds,
+                )
 
-                # Wait up to collect_seconds; if a response appears, stop after brief stabilization.
-                deadline = time.time() + max(6.0, spec.collect_seconds)
-                last_agent_count = 0
-                stable_agent_loops = 0
-                user_transcribed = False
-                while time.time() < deadline:
-                    post_now = transcripts[baseline:]
-                    agent_now = []
-                    for ts, who, text in post_now:
-                        if ts < injection_start or not text:
-                            continue
-                        normalized_who = (who or "").strip()
-                        if normalized_who == LOCAL_PARTICIPANT:
-                            user_transcribed = True
-                            continue
-                        if normalized_who in remote_identities or normalized_who.startswith("agent-"):
-                            agent_now.append(text)
-                    if agent_now:
-                        if len(agent_now) == last_agent_count:
-                            stable_agent_loops += 1
-                            if stable_agent_loops >= 3:
-                                break
-                        else:
-                            last_agent_count = len(agent_now)
-                            stable_agent_loops = 0
-                    await asyncio.sleep(1)
-
-                post = transcripts[baseline:]
-                agent_texts = []
-                for ts, who, text in post:
-                    if ts < injection_start or not text:
-                        continue
-                    normalized_who = (who or "").strip()
-                    if normalized_who == LOCAL_PARTICIPANT:
-                        continue
-                    if normalized_who in remote_identities or normalized_who.startswith("agent-"):
-                        agent_texts.append(text)
+                if not user_transcribed and not agent_texts and allow_chat_fallback:
+                    print(f"probe_fallback {spec.name} mode=lk.chat")
+                    transcript_baseline = len(transcripts)
+                    chat_baseline = len(chat_events)
+                    injection_start = time.time()
+                    await room.local_participant.publish_data(
+                        spec.prompt.encode("utf-8"),
+                        topic="lk.chat",
+                    )
+                    agent_texts, user_transcribed = await _wait_for_output(
+                        transcript_baseline=transcript_baseline,
+                        chat_baseline=chat_baseline,
+                        injection_start=injection_start,
+                        collect_seconds=max(10.0, spec.collect_seconds),
+                    )
 
                 if not user_transcribed and not agent_texts:
                     result = ProbeResult(
@@ -689,6 +753,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--health-timeout", type=int, default=30)
     parser.add_argument("--voice", type=str, default=VOICE)
     parser.add_argument("--agent-name", type=str, default=os.getenv("LIVEKIT_AGENT_NAME", "maya-one"))
+    parser.add_argument(
+        "--allow-chat-fallback",
+        action="store_true",
+        default=_env_flag("PHASE27_ALLOW_CHAT_FALLBACK", "1"),
+        help="Fallback to lk.chat prompt injection when voice probe captures no output",
+    )
     return parser.parse_args()
 
 
@@ -724,6 +794,7 @@ def main() -> int:
                 timeout_s=args.timeout,
                 voice=args.voice,
                 probes=default_probe_suite(),
+                allow_chat_fallback=args.allow_chat_fallback,
             )
         )
         # Convert old format to standardized format if needed

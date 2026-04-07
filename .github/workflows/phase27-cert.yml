@@ -113,6 +113,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LIVEKIT_AGENT_NAME: ${{ env.LIVEKIT_AGENT_NAME }}
+          PHASE27_ALLOW_CHAT_FALLBACK: "1"
           CERT_JSON_OUTPUT: /tmp/cert_report.json
         run: |
           echo "🎙️ Running voice certification probes..."
@@ -175,6 +176,9 @@ jobs:
     needs: [regression, voice-certification]
     if: always()
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Check all jobs passed
         run: |
           echo "Regression: ${{ needs.regression.result }}"
