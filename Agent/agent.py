@@ -2075,11 +2075,28 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                 data = args[0]
                 participant = args[1]
                 topic = args[3]
-            elif len(args) == 1:
-                packet = args[0]
-                data = getattr(packet, "data", None)
-                participant = getattr(packet, "participant", None)
-                topic = getattr(packet, "topic", None)
+            else:
+                # Handle packet-object and mixed callback variants (len 1/2/3) observed
+                # across different SDK/runtime versions.
+                for item in args:
+                    if item is None:
+                        continue
+                    if data is None and hasattr(item, "data"):
+                        data = getattr(item, "data", None)
+                    if participant is None and hasattr(item, "participant"):
+                        participant = getattr(item, "participant", None)
+                    if topic is None and hasattr(item, "topic"):
+                        topic = getattr(item, "topic", None)
+
+                # Fallback for positional variants without packet wrappers.
+                if data is None and len(args) >= 1 and isinstance(args[0], (bytes, bytearray, memoryview)):
+                    data = args[0]
+                if participant is None and len(args) >= 2:
+                    participant = args[1]
+                if topic is None and len(args) >= 3 and isinstance(args[2], str):
+                    topic = args[2]
+                if topic is None and len(args) >= 4 and isinstance(args[3], str):
+                    topic = args[3]
 
             sender = getattr(participant, "identity", "unknown")
             # Ignore server/agent-originated data packets.
