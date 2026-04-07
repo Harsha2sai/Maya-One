@@ -748,15 +748,18 @@ async def run_suite(
         }
     finally:
         try:
-            await room.disconnect()
+            await asyncio.wait_for(room.disconnect(), timeout=6)
         except Exception:
             pass
         if source is not None:
             try:
-                await source.aclose()
+                await asyncio.wait_for(source.aclose(), timeout=6)
             except Exception:
                 pass
-        await lk.aclose()
+        try:
+            await asyncio.wait_for(lk.aclose(), timeout=6)
+        except Exception:
+            pass
 
 
 def write_json_report(path: str, payload: dict[str, Any]) -> None:

@@ -35,6 +35,7 @@ CERT_ROOM_PREFIX="${CERT_ROOM_PREFIX:-maya-cert}"
 CERT_JSON_OUTPUT="${CERT_JSON_OUTPUT:-/tmp/maya_phase27_cert.json}"
 BACKEND_STARTUP_WAIT="${BACKEND_STARTUP_WAIT:-12}"
 SKIP_BACKEND_START="${SKIP_BACKEND_START:-0}"
+CERT_PROCESS_TIMEOUT="${CERT_PROCESS_TIMEOUT:-900}"
 BACKEND_LOG="/tmp/maya_phase27_backend.log"
 BACKEND_PID_FILE="/tmp/maya_phase27_backend.pid"
 
@@ -138,11 +139,24 @@ log "Room prefix: $CERT_ROOM_PREFIX"
 log "JSON output: $CERT_JSON_OUTPUT"
 
 CERT_EXIT=0
-"$VENV/python" scripts/verify_livekit_voice_roundtrip.py \
-    --timeout "$CERT_TIMEOUT" \
-    --room-prefix "$CERT_ROOM_PREFIX" \
-    --json-output "$CERT_JSON_OUTPUT" \
-    || CERT_EXIT=$?
+if command -v timeout >/dev/null 2>&1; then
+    timeout "$CERT_PROCESS_TIMEOUT" \
+        "$VENV/python" scripts/verify_livekit_voice_roundtrip.py \
+        --timeout "$CERT_TIMEOUT" \
+        --room-prefix "$CERT_ROOM_PREFIX" \
+        --json-output "$CERT_JSON_OUTPUT" \
+        || CERT_EXIT=$?
+    if [[ $CERT_EXIT -eq 124 ]]; then
+        CERT_EXIT=2
+        warn "Certification process timed out after ${CERT_PROCESS_TIMEOUT}s"
+    fi
+else
+    "$VENV/python" scripts/verify_livekit_voice_roundtrip.py \
+        --timeout "$CERT_TIMEOUT" \
+        --room-prefix "$CERT_ROOM_PREFIX" \
+        --json-output "$CERT_JSON_OUTPUT" \
+        || CERT_EXIT=$?
+fi
 
 # ---------------------------------------------------------------------------
 # Step 3 — Report
