@@ -144,6 +144,7 @@ AUDIO_PUBLISH_TIMEOUT_S = 20
 CI_POST_GREETING_DELAY_S = 5.0
 CI_COLLECT_SECONDS = 30.0
 READINESS_TIMEOUT_S = 12.0
+ACK_TIMEOUT_S = 5.0
 
 DEFAULT_FORBIDDEN_PHRASES = (
     "hi maya, it sounds like you're thinking",
@@ -519,6 +520,54 @@ async def run_suite(
 
         return agent_texts, user_transcribed
 
+    async def _wait_for_ack(
+        *,
+        transcript_baseline: int,
+        chat_baseline: int,
+        injection_start: float,
+        timeout_s: float = ACK_TIMEOUT_S,
+        label: str,
+    ) -> tuple[bool, str, list[str], bool]:
+        deadline = time.time() + max(1.0, timeout_s)
+        last_agent: list[str] = []
+        last_user = False
+        while time.time() < deadline:
+            agent_texts, user_transcribed = await _collect_outputs_since(
+                transcript_baseline=transcript_baseline,
+                chat_baseline=chat_baseline,
+                injection_start=injection_start,
+            )
+            last_agent = agent_texts
+            last_user = user_transcribed
+            if user_transcribed:
+                print(f"probe_ack {label} source=user_transcription")
+                return True, "user_transcription", agent_texts, user_transcribed
+            if agent_texts:
+                print(f"probe_ack {label} source=agent_output count={len(agent_texts)}")
+                return True, "agent_output", agent_texts, user_transcribed
+            await asyncio.sleep(0.5)
+        print(f"probe_ack {label} source=none timeout_s={timeout_s:.1f}")
+        return False, "none", last_agent, last_user
+
+    async def _publish_direct_probe_message(prompt: str, spec_name: str, attempt: int) -> None:
+        payload = f"[probe_direct:{spec_name}:{attempt}] {prompt}".encode("utf-8")
+        # Prefer lk.chat (primary path) and then chat (legacy compatibility) as a last fallback.
+        try:
+            await room.local_participant.publish_data(
+                payload,
+                topic="lk.chat",
+                reliable=True,
+            )
+        except TypeError:
+            await room.local_participant.publish_data(payload, topic="lk.chat")
+        except Exception:
+            await room.local_participant.publish_data(payload, topic="lk.chat")
+
+        try:
+            await room.local_participant.publish_data(payload, topic="chat")
+        except Exception:
+            pass
+
     def _room_state_snapshot(label: str) -> None:
         print(
             "room_snapshot",
@@ -766,6 +815,16 @@ async def run_suite(
                     )
                 except asyncio.TimeoutError:
                     print(f"probe_warning {spec.name} audio_publish_timeout=true")
+                ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
+                    transcript_baseline=transcript_baseline,
+                    chat_baseline=chat_baseline,
+                    injection_start=injection_start,
+                    label=f"{spec.name}:voice:{attempt}",
+                )
+                if not ack_ok:
+                    print(
+                        f"probe_warning {spec.name} voice_no_ack=true source={ack_source} attempt={attempt}"
+                    )
                 agent_texts, user_transcribed = await _wait_for_output(
                     transcript_baseline=transcript_baseline,
                     chat_baseline=chat_baseline,
@@ -790,17 +849,24 @@ async def run_suite(
                         )
                     except Exception as send_err:
                         print(f"probe_fallback_send_message_failed {spec.name} error={send_err}")
-                        await room.local_participant.publish_data(
-                            spec.prompt.encode("utf-8"),
-                            topic="lk.chat",
-                        )
-                    agent_texts, user_transcribed = await _wait_for_output(
+                    ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
                         transcript_baseline=transcript_baseline,
                         chat_baseline=chat_baseline,
                         injection_start=injection_start,
-                        collect_seconds=max(10.0, spec.collect_seconds),
-                        attempt_label=f"{spec.name}:fallback_http:{attempt}",
+                        label=f"{spec.name}:fallback_http:{attempt}",
                     )
+                    if ack_ok:
+                        agent_texts, user_transcribed = await _wait_for_output(
+                            transcript_baseline=transcript_baseline,
+                            chat_baseline=chat_baseline,
+                            injection_start=injection_start,
+                            collect_seconds=max(10.0, spec.collect_seconds),
+                            attempt_label=f"{spec.name}:fallback_http:{attempt}",
+                        )
+                    else:
+                        print(
+                            f"probe_fallback {spec.name} mode=send_message no_ack=true source={ack_source}"
+                        )
                     if not user_transcribed and not agent_texts:
                         print(f"probe_fallback {spec.name} mode=lk.chat_prefixed")
                         transcript_baseline = len(transcripts)
@@ -810,13 +876,48 @@ async def run_suite(
                             f"PROBE: {spec.prompt}".encode("utf-8"),
                             topic="lk.chat",
                         )
-                        agent_texts, user_transcribed = await _wait_for_output(
+                        ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
                             transcript_baseline=transcript_baseline,
                             chat_baseline=chat_baseline,
                             injection_start=injection_start,
-                            collect_seconds=max(10.0, spec.collect_seconds),
-                            attempt_label=f"{spec.name}:fallback_data:{attempt}",
+                            label=f"{spec.name}:fallback_data:{attempt}",
                         )
+                        if ack_ok:
+                            agent_texts, user_transcribed = await _wait_for_output(
+                                transcript_baseline=transcript_baseline,
+                                chat_baseline=chat_baseline,
+                                injection_start=injection_start,
+                                collect_seconds=max(10.0, spec.collect_seconds),
+                                attempt_label=f"{spec.name}:fallback_data:{attempt}",
+                            )
+                        else:
+                            print(
+                                f"probe_fallback {spec.name} mode=lk.chat_prefixed no_ack=true source={ack_source}"
+                            )
+                    if not user_transcribed and not agent_texts:
+                        print(f"probe_fallback {spec.name} mode=direct_publish")
+                        transcript_baseline = len(transcripts)
+                        chat_baseline = len(chat_events)
+                        injection_start = time.time()
+                        await _publish_direct_probe_message(spec.prompt, spec.name, attempt)
+                        ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
+                            transcript_baseline=transcript_baseline,
+                            chat_baseline=chat_baseline,
+                            injection_start=injection_start,
+                            label=f"{spec.name}:fallback_direct:{attempt}",
+                        )
+                        if ack_ok:
+                            agent_texts, user_transcribed = await _wait_for_output(
+                                transcript_baseline=transcript_baseline,
+                                chat_baseline=chat_baseline,
+                                injection_start=injection_start,
+                                collect_seconds=max(10.0, spec.collect_seconds),
+                                attempt_label=f"{spec.name}:fallback_direct:{attempt}",
+                            )
+                        else:
+                            print(
+                                f"probe_fallback {spec.name} mode=direct_publish no_ack=true source={ack_source}"
+                            )
 
                 if not user_transcribed and not agent_texts:
                     result = ProbeResult(
