@@ -1716,6 +1716,30 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
 
                     if cert_orchestrator is None:
                         try:
+                            from core.runtime.global_agent import GlobalAgentContainer
+
+                            await GlobalAgentContainer.initialize()
+                            shared_orchestrator = GlobalAgentContainer.get_orchestrator()
+                            if shared_orchestrator is not None:
+                                shared_orchestrator.ctx = ctx
+                                shared_orchestrator.room = ctx.room
+                                shared_orchestrator.set_session(session)
+                                shared_orchestrator.enable_chat_tools = True
+                                shared_orchestrator.enable_task_pipeline = arch_phase >= 4
+                                cert_orchestrator = shared_orchestrator
+                                logger.info(
+                                    "✅ [Phase %s] CI certification using shared global orchestrator.",
+                                    arch_phase,
+                                )
+                        except Exception as cert_global_err:
+                            logger.warning(
+                                "⚠️ [Phase %s] CI certification global orchestrator init failed: %s",
+                                arch_phase,
+                                cert_global_err,
+                            )
+
+                    if cert_orchestrator is None:
+                        try:
                             from core.orchestrator.agent_orchestrator import AgentOrchestrator
 
                             class _NoopMemory:
