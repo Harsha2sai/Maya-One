@@ -490,7 +490,7 @@ async def run_suite(
         if not data:
             return
 
-        # Parse JSON payload for chat_events topic
+        # Parse JSON payload for chat_events topic (agent responses)
         if topic == "chat_events":
             try:
                 payload = json.loads(data.decode("utf-8"))
@@ -506,6 +506,14 @@ async def run_suite(
                 if event_type.startswith("assistant_") or event_type.startswith("agent_"):
                     chat_events.append((time.time(), event_type, content))
                     print(f"event chat_event {event_type}", content[:120])
+
+        # Track lk.chat echoes (messages sent by probe or server)
+        if topic == "lk.chat":
+            text = data.decode("utf-8", errors="ignore").strip()
+            if text:
+                # This is an echo of the message we sent - log it but don't add to chat_events
+                # (chat_events is only for agent responses)
+                print(f"event lk.chat_echo sender={sender} text={text[:60]}")
 
     async def _collect_outputs_since(
         *,
@@ -897,26 +905,20 @@ async def run_suite(
                             f"probe_fallback {spec.name} mode=send_message no_ack=true source={ack_source}"
                         )
 
-                    # lk.chat fallback - more reliable direct path to agent
+                    # lk.chat fallback - send PLAIN TEXT that agent expects
                     if not user_transcribed and not agent_texts:
                         print(f"probe_fallback {spec.name} mode=lk.chat_prefixed")
                         transcript_baseline = len(transcripts)
                         chat_baseline = len(chat_events)
                         injection_start = time.time()
                         try:
-                            # Use JSON payload format that agent can parse if needed
-                            payload = json.dumps({
-                                "type": "probe_message",
-                                "content": spec.prompt,
-                                "participant": LOCAL_PARTICIPANT,
-                                "probe_name": spec.name,
-                                "attempt": attempt,
-                            })
+                            # Send PLAIN TEXT, not JSON - agent expects raw text input
+                            plain_text = spec.prompt.strip()
                             await room.local_participant.publish_data(
-                                payload.encode("utf-8"),
+                                plain_text.encode("utf-8"),
                                 topic="lk.chat",
                             )
-                            print(f"probe_fallback {spec.name} lk.chat_sent")
+                            print(f"probe_fallback {spec.name} lk.chat_sent text={plain_text[:40]}")
                         except Exception as data_err:
                             print(f"probe_fallback {spec.name} lk.chat_failed error={data_err}")
 
