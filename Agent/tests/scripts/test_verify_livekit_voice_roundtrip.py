@@ -79,3 +79,14 @@ def test_time_probe_requires_time_regex_not_identity_text():
     result = mod.evaluate_probe_texts(spec, ["I'm Maya, your AI assistant, made by Harsha."])
     assert result.passed is False
     assert result.reason == "missing_expected_regex"
+
+
+def test_evaluate_probe_detects_text_chat_gate_response():
+    mod = _load_module()
+    spec = mod.ProbeSpec(name="factual", prompt="q", expected_any=("4",))
+    result = mod.evaluate_probe_texts(
+        spec,
+        ["Text chat is available from architecture Phase 2+. Please use voice in the current mode."],
+    )
+    assert result.passed is False
+    assert result.reason == "text_chat_gate_active"

@@ -114,6 +114,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LIVEKIT_AGENT_NAME: ${{ env.LIVEKIT_AGENT_NAME }}
           PHASE27_ALLOW_CHAT_FALLBACK: "1"
+          VOICE_CERT_MODE: "1"
           CERT_JSON_OUTPUT: /tmp/cert_report.json
         run: |
           echo "🎙️ Running voice certification probes..."

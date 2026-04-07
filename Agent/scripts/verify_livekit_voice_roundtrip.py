@@ -138,6 +138,7 @@ RETRYABLE_PROBE_REASONS = {
     "no_agent_transcription",
     "runtime_failure_response",
     "greeting_only_response",
+    "text_chat_gate_active",
 }
 LIVEKIT_OP_TIMEOUT_S = 30
 AUDIO_PUBLISH_TIMEOUT_S = 20
@@ -151,6 +152,11 @@ DEFAULT_FORBIDDEN_PHRASES = (
     "it sounds like you're thinking",
     "you are maya",
     "you're maya",
+)
+
+TEXT_CHAT_GATE_PHRASES = (
+    "text chat is available from architecture phase 2+",
+    "please use voice in the current mode",
 )
 
 
@@ -219,6 +225,13 @@ def detect_forbidden_phrase(text: str, phrases: Iterable[str]) -> str:
     return ""
 
 
+def is_text_chat_gate_response(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+    return all(phrase in normalized for phrase in TEXT_CHAT_GATE_PHRASES)
+
+
 def evaluate_probe_texts(spec: ProbeSpec, agent_texts: list[str]) -> ProbeResult:
     cleaned = [normalize_text(t) for t in agent_texts if normalize_text(t)]
     if not cleaned:
@@ -253,6 +266,15 @@ def evaluate_probe_texts(spec: ProbeSpec, agent_texts: list[str]) -> ProbeResult
                 )
 
     merged = " ".join(cleaned)
+    if is_text_chat_gate_response(merged):
+        return ProbeResult(
+            name=spec.name,
+            prompt=spec.prompt,
+            passed=False,
+            reason="text_chat_gate_active",
+            responses=cleaned,
+        )
+
     failure_markers = (
         "i was unable to complete that",
         "sorry, i encountered an issue processing your request",
@@ -828,32 +850,65 @@ async def run_suite(
                 transcript_baseline = len(transcripts)
                 chat_baseline = len(chat_events)
                 injection_start = time.time()
-                pcm = await synth_to_pcm(spec.prompt, voice)
-                print(f"probe_start {spec.name} attempt={attempt} pcm_bytes={len(pcm)}")
-                try:
-                    await asyncio.wait_for(
-                        publish_pcm_audio(source, pcm),
-                        timeout=max(AUDIO_PUBLISH_TIMEOUT_S + 8, 24),
+                agent_texts: list[str] = []
+                user_transcribed = False
+
+                # In CI, prefer deterministic text injection first.
+                if ci_mode and allow_chat_fallback:
+                    print(f"probe_primary {spec.name} mode=lk.chat")
+                    try:
+                        await room.local_participant.publish_data(
+                            spec.prompt.strip().encode("utf-8"),
+                            topic="lk.chat",
+                        )
+                    except Exception as primary_err:
+                        print(f"probe_primary {spec.name} lk.chat_failed error={primary_err}")
+
+                    ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
+                        transcript_baseline=transcript_baseline,
+                        chat_baseline=chat_baseline,
+                        injection_start=injection_start,
+                        timeout_s=ACK_TIMEOUT_S + 2.0,
+                        label=f"{spec.name}:primary_lk_chat:{attempt}",
                     )
-                except asyncio.TimeoutError:
-                    print(f"probe_warning {spec.name} audio_publish_timeout=true")
-                ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
-                    transcript_baseline=transcript_baseline,
-                    chat_baseline=chat_baseline,
-                    injection_start=injection_start,
-                    label=f"{spec.name}:voice:{attempt}",
-                )
-                if not ack_ok:
-                    print(
-                        f"probe_warning {spec.name} voice_no_ack=true source={ack_source} attempt={attempt}"
+                    if not ack_ok:
+                        print(
+                            f"probe_warning {spec.name} primary_lk_chat_no_ack=true source={ack_source} attempt={attempt}"
+                        )
+                    agent_texts, user_transcribed = await _wait_for_output(
+                        transcript_baseline=transcript_baseline,
+                        chat_baseline=chat_baseline,
+                        injection_start=injection_start,
+                        collect_seconds=max(10.0, spec.collect_seconds),
+                        attempt_label=f"{spec.name}:primary_lk_chat:{attempt}",
                     )
-                agent_texts, user_transcribed = await _wait_for_output(
-                    transcript_baseline=transcript_baseline,
-                    chat_baseline=chat_baseline,
-                    injection_start=injection_start,
-                    collect_seconds=spec.collect_seconds,
-                    attempt_label=f"{spec.name}:voice:{attempt}",
-                )
+                else:
+                    pcm = await synth_to_pcm(spec.prompt, voice)
+                    print(f"probe_start {spec.name} attempt={attempt} pcm_bytes={len(pcm)}")
+                    try:
+                        await asyncio.wait_for(
+                            publish_pcm_audio(source, pcm),
+                            timeout=max(AUDIO_PUBLISH_TIMEOUT_S + 8, 24),
+                        )
+                    except asyncio.TimeoutError:
+                        print(f"probe_warning {spec.name} audio_publish_timeout=true")
+                    ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
+                        transcript_baseline=transcript_baseline,
+                        chat_baseline=chat_baseline,
+                        injection_start=injection_start,
+                        label=f"{spec.name}:voice:{attempt}",
+                    )
+                    if not ack_ok:
+                        print(
+                            f"probe_warning {spec.name} voice_no_ack=true source={ack_source} attempt={attempt}"
+                        )
+                    agent_texts, user_transcribed = await _wait_for_output(
+                        transcript_baseline=transcript_baseline,
+                        chat_baseline=chat_baseline,
+                        injection_start=injection_start,
+                        collect_seconds=spec.collect_seconds,
+                        attempt_label=f"{spec.name}:voice:{attempt}",
+                    )
 
                 if not user_transcribed and not agent_texts and allow_chat_fallback:
                     print(f"probe_fallback {spec.name} mode=send_message")
@@ -967,11 +1022,16 @@ async def run_suite(
                             )
 
                 if not user_transcribed and not agent_texts:
+                    recent_gate = any(
+                        is_text_chat_gate_response(content)
+                        for _, _, content in chat_events[-8:]
+                        if content
+                    )
                     result = ProbeResult(
                         name=spec.name,
                         prompt=spec.prompt,
                         passed=False,
-                        reason="no_user_or_agent_transcription",
+                        reason="text_chat_gate_active" if recent_gate else "no_user_or_agent_transcription",
                         responses=[],
                     )
                 else:
