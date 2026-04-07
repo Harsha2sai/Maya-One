@@ -140,6 +140,7 @@ RETRYABLE_PROBE_REASONS = {
     "greeting_only_response",
 }
 LIVEKIT_OP_TIMEOUT_S = 30
+AUDIO_PUBLISH_TIMEOUT_S = 20
 
 DEFAULT_FORBIDDEN_PHRASES = (
     "hi maya, it sounds like you're thinking",
@@ -400,7 +401,10 @@ async def publish_pcm_audio(source: Any, pcm: bytes) -> None:
         await source.capture_frame(frame)
         await asyncio.sleep(samples / SAMPLE_RATE)
 
-    await source.wait_for_playout()
+    try:
+        await asyncio.wait_for(source.wait_for_playout(), timeout=AUDIO_PUBLISH_TIMEOUT_S)
+    except asyncio.TimeoutError:
+        print("probe_warning audio_playout_timeout=true")
 
 
 async def run_suite(
@@ -657,7 +661,13 @@ async def run_suite(
                 injection_start = time.time()
                 pcm = await synth_to_pcm(spec.prompt, voice)
                 print(f"probe_start {spec.name} attempt={attempt} pcm_bytes={len(pcm)}")
-                await publish_pcm_audio(source, pcm)
+                try:
+                    await asyncio.wait_for(
+                        publish_pcm_audio(source, pcm),
+                        timeout=max(AUDIO_PUBLISH_TIMEOUT_S + 8, 24),
+                    )
+                except asyncio.TimeoutError:
+                    print(f"probe_warning {spec.name} audio_publish_timeout=true")
                 agent_texts, user_transcribed = await _wait_for_output(
                     transcript_baseline=transcript_baseline,
                     chat_baseline=chat_baseline,
