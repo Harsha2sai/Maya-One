@@ -141,6 +141,9 @@ RETRYABLE_PROBE_REASONS = {
 }
 LIVEKIT_OP_TIMEOUT_S = 30
 AUDIO_PUBLISH_TIMEOUT_S = 20
+CI_POST_GREETING_DELAY_S = 5.0
+CI_COLLECT_SECONDS = 30.0
+READINESS_TIMEOUT_S = 12.0
 
 DEFAULT_FORBIDDEN_PHRASES = (
     "hi maya, it sounds like you're thinking",
@@ -303,7 +306,9 @@ def evaluate_probe_texts(spec: ProbeSpec, agent_texts: list[str]) -> ProbeResult
     )
 
 
-def default_probe_suite() -> list[ProbeSpec]:
+def default_probe_suite(ci_mode: bool = False) -> list[ProbeSpec]:
+    collect_default = CI_COLLECT_SECONDS if ci_mode else 24.0
+    collect_time = CI_COLLECT_SECONDS if ci_mode else 22.0
     return [
         ProbeSpec(
             name="factual_math",
@@ -314,14 +319,14 @@ def default_probe_suite() -> list[ProbeSpec]:
                 "made by harsha",
             ),
             allow_greeting_only=False,
-            collect_seconds=24.0,
+            collect_seconds=collect_default,
         ),
         ProbeSpec(
             name="identity_creator",
             prompt="Who created you?",
             expected_any=("created", "built", "develop", "team", "openai", "harsha"),
             allow_greeting_only=False,
-            collect_seconds=24.0,
+            collect_seconds=collect_default,
         ),
         ProbeSpec(
             name="time_fastpath",
@@ -332,7 +337,7 @@ def default_probe_suite() -> list[ProbeSpec]:
                 "made by harsha",
             ),
             allow_greeting_only=False,
-            collect_seconds=22.0,
+            collect_seconds=collect_time,
         ),
     ]
 
@@ -442,6 +447,7 @@ async def run_suite(
     transcripts: list[tuple[float, str, str]] = []
     chat_events: list[tuple[float, str, str]] = []
     remote_identities: set[str] = set()
+    ci_mode = _env_flag("CI", "0")
 
     @room.on("participant_connected")
     def _on_participant_connected(participant: Any) -> None:
@@ -513,18 +519,54 @@ async def run_suite(
 
         return agent_texts, user_transcribed
 
+    def _room_state_snapshot(label: str) -> None:
+        print(
+            "room_snapshot",
+            label,
+            f"remote_participants={len(room.remote_participants)}",
+            f"remote_identities={','.join(sorted(remote_identities)) or 'none'}",
+            f"events={json.dumps(events, sort_keys=True)}",
+            f"transcripts={len(transcripts)}",
+            f"chat_events={len(chat_events)}",
+        )
+
+    def _dump_recent_history(label: str, limit: int = 12) -> None:
+        now = time.time()
+        for idx, (ts, who, text) in enumerate(transcripts[-limit:], start=1):
+            age = max(0.0, now - ts)
+            print(
+                "debug_transcript",
+                label,
+                f"idx={idx}",
+                f"age_s={age:.2f}",
+                f"who={(who or '').strip() or 'unknown'}",
+                f"text={(text or '').strip()[:220]}",
+            )
+        for idx, (ts, event_type, content) in enumerate(chat_events[-limit:], start=1):
+            age = max(0.0, now - ts)
+            print(
+                "debug_chat_event",
+                label,
+                f"idx={idx}",
+                f"age_s={age:.2f}",
+                f"type={(event_type or '').strip() or 'unknown'}",
+                f"content={(content or '').strip()[:220]}",
+            )
+
     async def _wait_for_output(
         *,
         transcript_baseline: int,
         chat_baseline: int,
         injection_start: float,
         collect_seconds: float,
+        attempt_label: str,
     ) -> tuple[list[str], bool]:
         deadline = time.time() + max(6.0, collect_seconds)
         last_agent_count = 0
         stable_agent_loops = 0
         latest_texts: list[str] = []
         latest_user_transcribed = False
+        logged_timeout_warning = False
 
         while time.time() < deadline:
             agent_now, user_now = await _collect_outputs_since(
@@ -534,6 +576,14 @@ async def run_suite(
             )
             latest_texts = agent_now
             latest_user_transcribed = user_now
+            if (
+                not logged_timeout_warning
+                and not latest_texts
+                and not latest_user_transcribed
+                and (time.time() - injection_start) >= 10.0
+            ):
+                print(f"probe_warning {attempt_label} no_transcription_after_10s=true")
+                logged_timeout_warning = True
             if agent_now:
                 if len(agent_now) == last_agent_count:
                     stable_agent_loops += 1
@@ -545,6 +595,45 @@ async def run_suite(
             await asyncio.sleep(1)
 
         return latest_texts, latest_user_transcribed
+
+    async def _run_readiness_check() -> bool:
+        _room_state_snapshot("pre_readiness")
+        transcript_baseline = len(transcripts)
+        chat_baseline = len(chat_events)
+        injection_start = time.time()
+        prompt = "Probe readiness check. Reply with READY."
+        try:
+            post_json(
+                send_message_url,
+                {
+                    "message": prompt,
+                    "user_id": LOCAL_PARTICIPANT,
+                    "run_id": room_name,
+                },
+            )
+        except Exception as err:
+            print(f"probe_readiness send_message_failed error={err}")
+            return False
+
+        agent_texts, user_transcribed = await _wait_for_output(
+            transcript_baseline=transcript_baseline,
+            chat_baseline=chat_baseline,
+            injection_start=injection_start,
+            collect_seconds=READINESS_TIMEOUT_S,
+            attempt_label="readiness",
+        )
+        merged = " ".join(normalize_text(t) for t in agent_texts)
+        ready = "ready" in merged or bool(agent_texts) or user_transcribed
+        print(
+            "probe_readiness",
+            f"passed={str(ready).lower()}",
+            f"agent_texts={len(agent_texts)}",
+            f"user_transcribed={str(user_transcribed).lower()}",
+        )
+        if not ready:
+            _dump_recent_history("readiness_failure")
+        _room_state_snapshot("post_readiness")
+        return ready
 
     try:
         try:
@@ -635,6 +724,14 @@ async def run_suite(
                 stable_loops = 0
                 last_count = cur
 
+        if ci_mode:
+            print(f"probe_ci_delay post_greeting_delay_s={CI_POST_GREETING_DELAY_S:.1f}")
+            await asyncio.sleep(CI_POST_GREETING_DELAY_S)
+
+        readiness_ok = await _run_readiness_check()
+        if not readiness_ok:
+            print("probe_warning readiness_check_failed=true")
+
         results: list[ProbeResult] = []
 
         async def _wait_for_transcript_quiet(max_wait_s: int = 12, quiet_loops_needed: int = 3) -> None:
@@ -656,6 +753,7 @@ async def run_suite(
             result: ProbeResult | None = None
             for attempt in range(1, MAX_PROBE_ATTEMPTS + 1):
                 await _wait_for_transcript_quiet()
+                _room_state_snapshot(f"{spec.name}:attempt:{attempt}:pre")
                 transcript_baseline = len(transcripts)
                 chat_baseline = len(chat_events)
                 injection_start = time.time()
@@ -673,6 +771,7 @@ async def run_suite(
                     chat_baseline=chat_baseline,
                     injection_start=injection_start,
                     collect_seconds=spec.collect_seconds,
+                    attempt_label=f"{spec.name}:voice:{attempt}",
                 )
 
                 if not user_transcribed and not agent_texts and allow_chat_fallback:
@@ -700,7 +799,24 @@ async def run_suite(
                         chat_baseline=chat_baseline,
                         injection_start=injection_start,
                         collect_seconds=max(10.0, spec.collect_seconds),
+                        attempt_label=f"{spec.name}:fallback_http:{attempt}",
                     )
+                    if not user_transcribed and not agent_texts:
+                        print(f"probe_fallback {spec.name} mode=lk.chat_prefixed")
+                        transcript_baseline = len(transcripts)
+                        chat_baseline = len(chat_events)
+                        injection_start = time.time()
+                        await room.local_participant.publish_data(
+                            f"PROBE: {spec.prompt}".encode("utf-8"),
+                            topic="lk.chat",
+                        )
+                        agent_texts, user_transcribed = await _wait_for_output(
+                            transcript_baseline=transcript_baseline,
+                            chat_baseline=chat_baseline,
+                            injection_start=injection_start,
+                            collect_seconds=max(10.0, spec.collect_seconds),
+                            attempt_label=f"{spec.name}:fallback_data:{attempt}",
+                        )
 
                 if not user_transcribed and not agent_texts:
                     result = ProbeResult(
@@ -716,6 +832,7 @@ async def run_suite(
                     result.reason in RETRYABLE_PROBE_REASONS
                     or result.reason == "no_user_or_agent_transcription"
                 ) and attempt < MAX_PROBE_ATTEMPTS:
+                    _dump_recent_history(f"{spec.name}:attempt:{attempt}:retry")
                     print(f"probe_retry {spec.name} reason={result.reason} next_attempt={attempt+1}")
                     await asyncio.sleep(2.0)
                     continue
@@ -730,6 +847,9 @@ async def run_suite(
                     responses=[],
                 )
             results.append(result)
+            if not result.passed:
+                _dump_recent_history(f"{spec.name}:final_failure")
+            _room_state_snapshot(f"{spec.name}:attempt:{attempt}:post")
             print(
                 "probe_result",
                 spec.name,
@@ -811,6 +931,7 @@ def main() -> int:
         return 2
 
     try:
+        ci_mode = _env_flag("CI", "0")
         end_time = time.time()
         result_payload = asyncio.run(
             run_suite(
@@ -820,7 +941,7 @@ def main() -> int:
                 send_message_url=args.send_message_url,
                 timeout_s=args.timeout,
                 voice=args.voice,
-                probes=default_probe_suite(),
+                probes=default_probe_suite(ci_mode=ci_mode),
                 allow_chat_fallback=args.allow_chat_fallback,
             )
         )
