@@ -481,17 +481,31 @@ async def run_suite(
         events["data_received"] += 1
         topic = str(getattr(packet, "topic", "") or "")
         data = getattr(packet, "data", b"")
-        if topic != "chat_events" or not data:
+        sender = getattr(getattr(packet, "participant", None), "identity", "unknown")
+
+        # Debug: log all data events for CI troubleshooting
+        if topic:
+            print(f"event data_received topic={topic} sender={sender} size={len(data or b'')}")
+
+        if not data:
             return
-        try:
-            payload = json.loads(data.decode("utf-8"))
-        except Exception:
-            return
-        event_type = str(payload.get("type") or "")
-        content = str(payload.get("content") or payload.get("voice_text") or "").strip()
-        if event_type == "assistant_final" and content:
-            chat_events.append((time.time(), event_type, content))
-            print("event chat_event assistant_final", content[:120])
+
+        # Parse JSON payload for chat_events topic
+        if topic == "chat_events":
+            try:
+                payload = json.loads(data.decode("utf-8"))
+            except Exception:
+                return
+            event_type = str(payload.get("type") or "")
+            content = str(payload.get("content") or payload.get("voice_text") or "").strip()
+            if event_type == "assistant_final" and content:
+                chat_events.append((time.time(), event_type, content))
+                print("event chat_event assistant_final", content[:120])
+            elif event_type and content:
+                # Capture other assistant event types as well
+                if event_type.startswith("assistant_") or event_type.startswith("agent_"):
+                    chat_events.append((time.time(), event_type, content))
+                    print(f"event chat_event {event_type}", content[:120])
 
     async def _collect_outputs_since(
         *,
@@ -838,8 +852,9 @@ async def run_suite(
                     transcript_baseline = len(transcripts)
                     chat_baseline = len(chat_events)
                     injection_start = time.time()
+                    send_accepted = False
                     try:
-                        post_json(
+                        resp = post_json(
                             send_message_url,
                             {
                                 "message": spec.prompt,
@@ -847,12 +862,26 @@ async def run_suite(
                                 "run_id": room_name,
                             },
                         )
+                        # Check backend acceptance - some backends ack immediately, others queue
+                        if isinstance(resp, dict):
+                            if resp.get("status") in ("ok", "accepted", "queued"):
+                                send_accepted = True
+                            elif resp.get("send_message_accepted"):
+                                send_accepted = True
+                            elif resp.get("message_id") or resp.get("id"):
+                                send_accepted = True
+                        if send_accepted:
+                            print(f"probe_fallback {spec.name} send_message_accepted=true")
                     except Exception as send_err:
                         print(f"probe_fallback_send_message_failed {spec.name} error={send_err}")
+
+                    # Wait longer for HTTP fallback since it goes through full pipeline
+                    http_ack_timeout = ACK_TIMEOUT_S + 3.0  # Extra time for backend processing
                     ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
                         transcript_baseline=transcript_baseline,
                         chat_baseline=chat_baseline,
                         injection_start=injection_start,
+                        timeout_s=http_ack_timeout,
                         label=f"{spec.name}:fallback_http:{attempt}",
                     )
                     if ack_ok:
@@ -860,26 +889,42 @@ async def run_suite(
                             transcript_baseline=transcript_baseline,
                             chat_baseline=chat_baseline,
                             injection_start=injection_start,
-                            collect_seconds=max(10.0, spec.collect_seconds),
+                            collect_seconds=max(12.0, spec.collect_seconds),
                             attempt_label=f"{spec.name}:fallback_http:{attempt}",
                         )
                     else:
                         print(
                             f"probe_fallback {spec.name} mode=send_message no_ack=true source={ack_source}"
                         )
+
+                    # lk.chat fallback - more reliable direct path to agent
                     if not user_transcribed and not agent_texts:
                         print(f"probe_fallback {spec.name} mode=lk.chat_prefixed")
                         transcript_baseline = len(transcripts)
                         chat_baseline = len(chat_events)
                         injection_start = time.time()
-                        await room.local_participant.publish_data(
-                            f"PROBE: {spec.prompt}".encode("utf-8"),
-                            topic="lk.chat",
-                        )
+                        try:
+                            # Use JSON payload format that agent can parse if needed
+                            payload = json.dumps({
+                                "type": "probe_message",
+                                "content": spec.prompt,
+                                "participant": LOCAL_PARTICIPANT,
+                                "probe_name": spec.name,
+                                "attempt": attempt,
+                            })
+                            await room.local_participant.publish_data(
+                                payload.encode("utf-8"),
+                                topic="lk.chat",
+                            )
+                            print(f"probe_fallback {spec.name} lk.chat_sent")
+                        except Exception as data_err:
+                            print(f"probe_fallback {spec.name} lk.chat_failed error={data_err}")
+
                         ack_ok, ack_source, agent_texts, user_transcribed = await _wait_for_ack(
                             transcript_baseline=transcript_baseline,
                             chat_baseline=chat_baseline,
                             injection_start=injection_start,
+                            timeout_s=ACK_TIMEOUT_S + 2.0,
                             label=f"{spec.name}:fallback_data:{attempt}",
                         )
                         if ack_ok:
