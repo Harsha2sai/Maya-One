@@ -63,7 +63,7 @@ void main() {
       expect(controller.voiceUiState, VoiceUiState.idle);
     });
 
-    test('updates OrbController lifecycle when VoiceUiState changes', () async {
+    test('updates voice state and leaves orb lifecycle to bridge', () async {
       final orbController = OrbController();
       controller.bindOrb(orbController);
 
@@ -75,7 +75,8 @@ void main() {
           payload: <String, dynamic>{},
         ),
       );
-      expect(orbController.lifecycle, OrbLifecycle.listening);
+      expect(controller.voiceUiState, VoiceUiState.listening);
+      expect(orbController.lifecycle, OrbLifecycle.hidden);
 
       agentEvents.add(
         const AgentUiEvent(
@@ -85,8 +86,9 @@ void main() {
           payload: <String, dynamic>{'status': 'speaking'},
         ),
       );
-      expect(orbController.lifecycle, OrbLifecycle.speaking);
-      
+      expect(controller.voiceUiState, VoiceUiState.speaking);
+      expect(orbController.lifecycle, OrbLifecycle.hidden);
+
       agentEvents.add(
         const AgentUiEvent(
           eventType: 'agent_thinking',
@@ -95,8 +97,9 @@ void main() {
           payload: <String, dynamic>{},
         ),
       );
-      expect(orbController.lifecycle, OrbLifecycle.initializing);
-      
+      expect(controller.voiceUiState, VoiceUiState.thinking);
+      expect(orbController.lifecycle, OrbLifecycle.hidden);
+
       agentEvents.add(
         const AgentUiEvent(
           eventType: 'agent_idle',
@@ -105,7 +108,8 @@ void main() {
           payload: <String, dynamic>{},
         ),
       );
-      expect(orbController.lifecycle, OrbLifecycle.idle);
+      expect(controller.voiceUiState, VoiceUiState.idle);
+      expect(orbController.lifecycle, OrbLifecycle.hidden);
     });
 
     test('maps greeting and bootstrap lifecycle events to voice ui states', () async {

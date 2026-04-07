@@ -298,13 +298,35 @@ class SettingsProvider extends BaseProvider {
       return localSaveOk;
     }
 
+    final remotePreferences = _buildSafeRemotePreferences(_userPreferences);
     final remoteSaveOk = await safeExecute(() async {
-          await _settingsService.updateUserSettings(_authProvider.user!.id, _userPreferences);
+          await _settingsService.updateUserSettings(_authProvider.user!.id, remotePreferences);
           return true;
         }) ??
         false;
     return localSaveOk && remoteSaveOk;
   }
+
+  Map<String, dynamic> _buildSafeRemotePreferences(Map<String, dynamic> source) {
+    final sanitized = Map<String, dynamic>.from(source);
+    sanitized.remove('apiKeys');
+    for (final key in _legacySensitivePreferenceKeys) {
+      sanitized.remove(key);
+    }
+    return sanitized;
+  }
+
+  static const Set<String> _legacySensitivePreferenceKeys = {
+    'awsAccessKey',
+    'awsSecretKey',
+    'livekit_api_key',
+    'livekit_api_secret',
+    'openai_api_key',
+    'groq_api_key',
+    'deepgram_api_key',
+    'cartesia_api_key',
+    'mem0_api_key',
+  };
 
   void _applyDerivedPreferences() {
     _isAdvancedMode = _userPreferences['isAdvancedMode'] == true;

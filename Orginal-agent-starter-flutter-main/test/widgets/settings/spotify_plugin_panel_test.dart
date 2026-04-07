@@ -68,7 +68,8 @@ void main() {
     await tester.tap(find.byKey(const Key('connector_icon_spotify')));
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const Key('connector_card_spotify')), findsOneWidget);
-    expect(find.byKey(const Key('connector_action_spotify')), findsOneWidget);
+    expect(find.text('Spotify'), findsWidgets);
+    expect(find.text('APPLICATION CONNECTOR'), findsOneWidget);
+    expect(find.text('Connect Account'), findsOneWidget);
   });
 }

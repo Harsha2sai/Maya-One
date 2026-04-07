@@ -28,7 +28,7 @@ void main() {
       });
     }
 
-    testWidgets('desktop settings sidebar shows Archived Chats entry', (tester) async {
+    testWidgets('desktop settings sidebar shows current sections', (tester) async {
       await setDesktopViewport(tester);
 
       await tester.pumpWidget(
@@ -43,7 +43,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Archived Chats'), findsOneWidget);
+      expect(find.text('Profile'), findsOneWidget);
+      expect(find.text('Preferences'), findsOneWidget);
+      expect(find.text('Memory & Privacy'), findsOneWidget);
+      expect(find.text('Connectors'), findsOneWidget);
+      expect(find.text('Tools & MCP'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   });

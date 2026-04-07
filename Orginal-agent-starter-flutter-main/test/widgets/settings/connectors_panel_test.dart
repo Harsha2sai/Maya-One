@@ -73,17 +73,23 @@ void main() {
     expect(find.byKey(const Key('connector_icon_notion')), findsOneWidget);
   });
 
-  testWidgets('mcp panel renders empty state with disabled add button', (tester) async {
+  testWidgets('mcp panel renders current tools and server configuration', (tester) async {
     await tester.pumpWidget(
-      const MaterialApp(
-        home: Scaffold(body: McpPanel()),
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: McpPanel(
+              n8nUrl: '',
+              isConfigured: false,
+              connectorStatus: const <String, Map<String, dynamic>>{},
+              onN8nUrlChanged: (_) {},
+            ),
+          ),
+        ),
       ),
     );
 
-    expect(find.byKey(const Key('mcp_panel')), findsOneWidget);
-    expect(find.text('No MCP servers added yet'), findsOneWidget);
-
-    final addButton = tester.widget<OutlinedButton>(find.byKey(const Key('mcp_add_server_button')));
-    expect(addButton.onPressed, isNull);
+    expect(find.textContaining('Tools & MCP'), findsOneWidget);
+    expect(find.text('N8N MCP SERVER'), findsOneWidget);
   });
 }

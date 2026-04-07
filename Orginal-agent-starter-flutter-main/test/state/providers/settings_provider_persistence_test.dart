@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../helpers/fake_settings_deps.dart';
 
@@ -7,11 +8,14 @@ void main() {
     late InMemorySecureKeyStorageService secureStorage;
     late FakeBackendSyncService backendSync;
     late FakeSettingsService settingsService;
+    late InMemoryStorageService storageService;
 
     setUp(() {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
       secureStorage = InMemorySecureKeyStorageService();
       backendSync = FakeBackendSyncService();
       settingsService = FakeSettingsService(FakeSupabaseService());
+      storageService = InMemoryStorageService();
     });
 
     test('secure save path executes and reload restores keys', () async {
@@ -20,6 +24,7 @@ void main() {
         backendSync: backendSync,
         settingsService: settingsService,
         authenticated: false,
+        storageService: storageService,
       );
 
       await provider1.updatePreferences({
@@ -39,6 +44,7 @@ void main() {
         backendSync: backendSync,
         settingsService: settingsService,
         authenticated: false,
+        storageService: storageService,
       );
 
       expect(provider2.localApiKeys['livekit_url'], 'wss://livekit.example');
@@ -55,6 +61,7 @@ void main() {
         backendSync: backendSync,
         settingsService: settingsService,
         authenticated: false,
+        storageService: storageService,
       );
 
       await provider.updatePreferences({
@@ -76,6 +83,7 @@ void main() {
         backendSync: backendSync,
         settingsService: authedSettingsService,
         authenticated: true,
+        storageService: storageService,
       );
 
       final success = await provider.updatePreferences({
@@ -91,6 +99,8 @@ void main() {
       expect(authedSettingsService.lastUpdatedPayload, isNotNull);
       expect(authedSettingsService.lastUpdatedPayload!.containsKey('apiKeys'), isFalse);
       expect(authedSettingsService.lastUpdatedPayload!['userName'], 'Harsha');
+      expect(provider.localApiKeys['livekit_api_key'], 'super-secret');
+      expect(provider.localApiKeys['livekit_url'], 'wss://example.livekit.cloud');
     });
   });
 }

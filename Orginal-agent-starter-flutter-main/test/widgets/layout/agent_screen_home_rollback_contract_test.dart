@@ -6,10 +6,10 @@ void main() {
   test('AgentScreen rollback contract removes unplanned shell slots', () {
     final source = File('lib/ui/screens/agent_screen.dart').readAsStringSync();
 
-    expect(source, contains('leftNavigationRail: const LeftNavigationRail()'));
     expect(source, contains('voiceStatusBar: null'));
     expect(source, contains('statusPanel: null'));
     expect(source, contains('voiceActionDock: null'));
+    expect(source, contains("floatingRightPanel: interfaceTheme == 'zoya'"));
     expect(source, isNot(contains('agentWorkbenchPane: null')));
   });
 

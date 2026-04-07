@@ -103,12 +103,17 @@ class MayaMessageSender {
       // Backend token contract is POST /token with room + participant.
       final tokenResult = await Process.run('curl', [
         '-s',
-        '-o', '/tmp/maya_itest_token.json',
-        '-w', '%{http_code}',
-        '-X', 'POST',
+        '-o',
+        '/tmp/maya_itest_token.json',
+        '-w',
+        '%{http_code}',
+        '-X',
+        'POST',
         'http://localhost:5050/token',
-        '-H', 'Content-Type: application/json',
-        '-d', json.encode({
+        '-H',
+        'Content-Type: application/json',
+        '-d',
+        json.encode({
           'roomName': _roomName,
           'participantName': _userId,
           'metadata': {'source': 'integration_test', 'run_id': runId},
@@ -124,12 +129,17 @@ class MayaMessageSender {
       // Send chat payload via backend bridge endpoint.
       final result = await Process.run('curl', [
         '-s',
-        '-o', '/tmp/maya_itest_send.json',
-        '-w', '%{http_code}',
-        '-X', 'POST',
+        '-o',
+        '/tmp/maya_itest_send.json',
+        '-w',
+        '%{http_code}',
+        '-X',
+        'POST',
         'http://localhost:5050/send_message',
-        '-H', 'Content-Type: application/json',
-        '-d', json.encode({
+        '-H',
+        'Content-Type: application/json',
+        '-d',
+        json.encode({
           'message': message,
           'user_id': _userId,
           'run_id': runId,
@@ -155,8 +165,8 @@ class MayaMessageSender {
 class TestCase {
   final String name;
   final String utterance;
-  final List<String> expectedLogPatterns;   // ALL must appear
-  final List<String> forbiddenLogPatterns;  // NONE must appear
+  final List<String> expectedLogPatterns; // ALL must appear
+  final List<String> forbiddenLogPatterns; // NONE must appear
   final int timeoutSecs;
 
   const TestCase({
@@ -171,6 +181,12 @@ class TestCase {
 // ─── TEST CASES ────────────────────────────────────────────────────────────
 
 final bool runFullSuite = Platform.environment['MAYA_ITEST_FULL'] == '1';
+final bool integrationEnabled = Platform.environment['MAYA_ITEST_ENABLE'] == '1';
+final bool harnessPresent = File('/tmp/maya_test_session.env').existsSync();
+final bool runIntegrationSuite = integrationEnabled && harnessPresent;
+final String integrationSkipReason = !integrationEnabled
+    ? 'Set MAYA_ITEST_ENABLE=1 to run backend-coupled integration tests.'
+    : 'Backend harness missing. Run ./Agent/scripts/start_test_backend.sh first.';
 
 final List<TestCase> smokeTestCases = [
   TestCase(
@@ -194,7 +210,6 @@ final List<TestCase> smokeTestCases = [
 ];
 
 final List<TestCase> allTestCases = [
-
   // ══════════════════════════════════════════
   // PHASE 1: FAST-PATH (router must NOT fire)
   // ══════════════════════════════════════════
@@ -536,7 +551,6 @@ final List<TestCase> allTestCases = [
     forbiddenLogPatterns: ['InputGuard error', 'sanitize_exception'],
     timeoutSecs: 10,
   ),
-
 ];
 
 // ─── MAIN TEST RUNNER ──────────────────────────────────────────────────────
@@ -550,39 +564,36 @@ void main() {
   late MayaMessageSender sender;
   final testCases = runFullSuite ? allTestCases : smokeTestCases;
 
-  setUpAll(() async {
-    final envFile = File('/tmp/maya_test_session.env');
-    if (!await envFile.exists()) {
-      throw Exception(
-        'Backend not started. Run: ./Agent/scripts/start_test_backend.sh first'
-      );
-    }
-    final envLines = await envFile.readAsLines();
-    final logDir = envLines
-        .firstWhere((l) => l.startsWith('LOG_DIR='))
-        .split('=')[1];
-    logPath = '$logDir/agent_full.log';
-    verifier = BackendLogVerifier(logPath);
-    sender = MayaMessageSender();
+  group('Maya Full Integration Tests', skip: runIntegrationSuite ? false : integrationSkipReason, () {
+    setUpAll(() async {
+      final envFile = File('/tmp/maya_test_session.env');
+      if (!await envFile.exists()) {
+        throw Exception(
+          'Backend not started. Run: ./Agent/scripts/start_test_backend.sh first',
+        );
+      }
+      final envLines = await envFile.readAsLines();
+      final logDir = envLines.firstWhere((l) => l.startsWith('LOG_DIR=')).split('=')[1];
+      logPath = '$logDir/agent_full.log';
+      verifier = BackendLogVerifier(logPath);
+      sender = MayaMessageSender();
 
-    print('=== Maya Integration Tests ===');
-    print('Log file: $logPath');
-    print('Mode: ${runFullSuite ? "full" : "smoke"}');
-    print('Total test cases: ${testCases.length}');
-    print('');
+      print('=== Maya Integration Tests ===');
+      print('Log file: $logPath');
+      print('Mode: ${runFullSuite ? "full" : "smoke"}');
+      print('Total test cases: ${testCases.length}');
+      print('');
 
-    // Wait for backend to be fully ready
-    final ready =
-        await verifier.waitFor(['MAYA RUNTIME READY'], timeoutSecs: 30) ||
-        await verifier.waitFor(['worker connected'], timeoutSecs: 30) ||
-        await verifier.waitFor(['Global agent ready'], timeoutSecs: 30);
-    if (!ready) {
-      throw Exception('Backend did not reach ready state within 30s');
-    }
-    print('Backend ready. Starting tests...\n');
-  });
+      // Wait for backend to be fully ready.
+      final ready = await verifier.waitFor(['MAYA RUNTIME READY'], timeoutSecs: 30) ||
+          await verifier.waitFor(['worker connected'], timeoutSecs: 30) ||
+          await verifier.waitFor(['Global agent ready'], timeoutSecs: 30);
+      if (!ready) {
+        throw Exception('Backend did not reach ready state within 30s');
+      }
+      print('Backend ready. Starting tests...\n');
+    });
 
-  group('Maya Full Integration Tests', () {
     for (final tc in testCases) {
       testWidgets(tc.name, (tester) async {
         // Record log position before sending
