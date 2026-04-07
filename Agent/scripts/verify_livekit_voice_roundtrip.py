@@ -408,6 +408,7 @@ async def run_suite(
     agent_name: str,
     room_prefix: str,
     token_url: str,
+    send_message_url: str,
     timeout_s: int,
     voice: str,
     probes: list[ProbeSpec],
@@ -665,14 +666,25 @@ async def run_suite(
                 )
 
                 if not user_transcribed and not agent_texts and allow_chat_fallback:
-                    print(f"probe_fallback {spec.name} mode=lk.chat")
+                    print(f"probe_fallback {spec.name} mode=send_message")
                     transcript_baseline = len(transcripts)
                     chat_baseline = len(chat_events)
                     injection_start = time.time()
-                    await room.local_participant.publish_data(
-                        spec.prompt.encode("utf-8"),
-                        topic="lk.chat",
-                    )
+                    try:
+                        post_json(
+                            send_message_url,
+                            {
+                                "message": spec.prompt,
+                                "user_id": LOCAL_PARTICIPANT,
+                                "run_id": room_name,
+                            },
+                        )
+                    except Exception as send_err:
+                        print(f"probe_fallback_send_message_failed {spec.name} error={send_err}")
+                        await room.local_participant.publish_data(
+                            spec.prompt.encode("utf-8"),
+                            topic="lk.chat",
+                        )
                     agent_texts, user_transcribed = await _wait_for_output(
                         transcript_baseline=transcript_baseline,
                         chat_baseline=chat_baseline,
@@ -750,6 +762,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json-output", type=str, default="", help="write certification JSON report")
     parser.add_argument("--health-url", type=str, default="http://127.0.0.1:5050/health")
     parser.add_argument("--token-url", type=str, default="http://127.0.0.1:5050/token")
+    parser.add_argument("--send-message-url", type=str, default="http://127.0.0.1:5050/send_message")
     parser.add_argument("--health-timeout", type=int, default=30)
     parser.add_argument("--voice", type=str, default=VOICE)
     parser.add_argument("--agent-name", type=str, default=os.getenv("LIVEKIT_AGENT_NAME", "maya-one"))
@@ -791,6 +804,7 @@ def main() -> int:
                 agent_name=args.agent_name,
                 room_prefix=args.room_prefix,
                 token_url=args.token_url,
+                send_message_url=args.send_message_url,
                 timeout_s=args.timeout,
                 voice=args.voice,
                 probes=default_probe_suite(),
