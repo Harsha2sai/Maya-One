@@ -1,6 +1,7 @@
 # Agents Module Init
 from .base import SpecializedAgent, AgentContext, AgentResponse
 from .registry import AgentRegistry, get_agent_registry
+from .subagent_persistence_bridge import RecoveryPolicy, RecoverySnapshot, SubagentPersistenceBridge
 from .subagent_architect import (
     ArchitectResult,
     ArchitectTask,
@@ -38,6 +39,9 @@ __all__ = [
     'get_agent_registry',
     'SubAgentManager',
     'SubAgentLifecycleError',
+    'SubagentPersistenceBridge',
+    'RecoveryPolicy',
+    'RecoverySnapshot',
     'SubAgentArchitect',
     'SubAgentArchitectError',
     'ArchitectTask',
