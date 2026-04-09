@@ -49,6 +49,10 @@ class ContextBuilder:
         """Link agent to access tools (resolves circular dependency)"""
         self.agent = agent
 
+    @staticmethod
+    def _recent_history_limit() -> int:
+        return max(4, int(os.getenv("CONTEXT_RECENT_HISTORY_LIMIT", "8")))
+
     async def __call__(
         self,
         message: str,
@@ -476,7 +480,7 @@ CRITICAL TOOL USAGE:
             history=conversation_history,
             user_message=user_message,
             origin="voice",
-            history_limit=5,
+            history_limit=self._recent_history_limit(),
         )
 
     async def build_for_chat(
@@ -549,5 +553,5 @@ CRITICAL TOOL USAGE:
             history=conversation_history,
             user_message=user_message,
             origin=origin,
-            history_limit=5,
+            history_limit=self._recent_history_limit(),
         )

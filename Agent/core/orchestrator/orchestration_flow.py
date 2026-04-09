@@ -89,7 +89,12 @@ class OrchestrationFlow:
         effective_message = self._augment_message_with_session_bootstrap(message, active_session_id)
         self._update_turn_identity(user_id=user_id, session_id=active_session_id)
         incoming_turn_id = getattr(tool_context, "turn_id", None) if tool_context is not None else None
-        self._start_new_turn(message, turn_id=incoming_turn_id)
+        turn_id = self._start_new_turn(message, turn_id=incoming_turn_id)
+        if getattr(self, "_action_state_carryover_enabled", False) and getattr(self, "_action_state_store", None):
+            try:
+                await self._action_state_store.mark_turn_start(active_session_id, turn_id, message)
+            except Exception as state_err:
+                logger.warning("action_state_turn_start_failed session_id=%s error=%s", active_session_id, state_err)
         trace_ctx = start_trace(session_id=session_id, user_id=user_id)
         logger.info(
             f"🔥 ORCHESTRATOR RECEIVED MESSAGE from {user_id} "
@@ -240,3 +245,13 @@ class OrchestrationFlow:
         except Exception as e:
             logger.error(f"❌ Error handling message: {e}")
             return ResponseFormatter.build_response("Something went wrong processing your request.")
+        finally:
+            if getattr(self, "_action_state_carryover_enabled", False) and getattr(self, "_action_state_store", None):
+                try:
+                    await self._action_state_store.mark_turn_end(
+                        active_session_id,
+                        turn_id,
+                        str(self.turn_state.get("last_route") or ""),
+                    )
+                except Exception as state_err:
+                    logger.warning("action_state_turn_end_failed session_id=%s error=%s", active_session_id, state_err)

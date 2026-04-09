@@ -18,6 +18,117 @@ logger = logging.getLogger(__name__)
 
 
 class ChatResponseMixin:
+    async def _apply_action_state_carryover(
+        self,
+        message: str,
+        *,
+        tool_context: Any = None,
+    ) -> str:
+        if not getattr(self, "_action_state_carryover_enabled", False):
+            return message
+        state_store = getattr(self, "_action_state_store", None)
+        if state_store is None:
+            return message
+
+        text = str(message or "").strip()
+        if not text:
+            return text
+        session_key = self._resolve_session_queue_key(tool_context)
+        lowered = text.lower()
+
+        # Continuation carryover: map pronoun-only topical follow-ups to last subject.
+        if re.search(r"\b(about it|search more|more about it|videos about it)\b", lowered):
+            subject = await state_store.resolve_continuation(session_key, text)
+            if subject:
+                rewritten = re.sub(
+                    r"\bit\b",
+                    subject,
+                    text,
+                    count=1,
+                    flags=re.IGNORECASE,
+                )
+                logger.info(
+                    "action_state_carryover_rewrite kind=continuation original=%s rewritten=%s",
+                    text[:120],
+                    rewritten[:120],
+                )
+                return rewritten
+
+        # Additive carryover: "also instagram" -> "open instagram"
+        if re.match(r"^\s*also\b", lowered):
+            additive_target = await state_store.resolve_additive(session_key, text)
+            if additive_target:
+                rewritten = f"open {additive_target}".strip()
+                logger.info(
+                    "action_state_carryover_rewrite kind=additive original=%s rewritten=%s",
+                    text[:120],
+                    rewritten[:120],
+                )
+                return rewritten
+
+        if re.match(r"^\s*(close|quit|exit)\s+(them|those|it)\s*$", lowered):
+            latest_app = state_store.latest_opened_app_sync(session_key)
+            if latest_app:
+                rewritten = f"close {latest_app}"
+                logger.info(
+                    "action_state_carryover_rewrite kind=close_pronoun original=%s rewritten=%s",
+                    text[:120],
+                    rewritten[:120],
+                )
+                return rewritten
+
+        return text
+
+    async def _collect_voice_fragment_batch(
+        self,
+        *,
+        queue: deque,
+        first_item: tuple[str, str, Any, str, asyncio.Future[AgentResponse]],
+    ) -> tuple[str, str, Any, str, list[asyncio.Future[AgentResponse]]]:
+        queued_message, queued_user_id, queued_tool_ctx, queued_origin, queued_future = first_item
+        merged_futures: list[asyncio.Future[AgentResponse]] = [queued_future]
+        origin_key = str(queued_origin or "").strip().lower()
+        merged_message = str(queued_message or "").strip()
+
+        if origin_key != "voice":
+            return queued_message, queued_user_id, queued_tool_ctx, queued_origin, merged_futures
+        if self._is_voice_immediate_command(merged_message):
+            return queued_message, queued_user_id, queued_tool_ctx, queued_origin, merged_futures
+        if self._is_semantically_complete_utterance(merged_message) and not self._looks_like_voice_fragment(merged_message):
+            return queued_message, queued_user_id, queued_tool_ctx, queued_origin, merged_futures
+
+        poll_interval_s = 0.2
+        deadline = time.monotonic() + self._voice_fragment_window_seconds(merged_message)
+        merged_count = 1
+
+        while time.monotonic() < deadline:
+            if queue:
+                next_message, next_user_id, next_tool_ctx, next_origin, next_future = queue[0]
+                same_origin = str(next_origin or "").strip().lower() == "voice"
+                same_user = str(next_user_id or "") == str(queued_user_id or "")
+                same_session = self._resolve_session_queue_key(next_tool_ctx) == self._resolve_session_queue_key(queued_tool_ctx)
+                next_text = str(next_message or "").strip()
+                continuation_like = self._looks_like_voice_fragment(next_text) or self._looks_like_voice_fragment(merged_message)
+                if same_origin and same_user and same_session and continuation_like:
+                    queue.popleft()
+                    merged_count += 1
+                    merged_futures.append(next_future)
+                    if next_text:
+                        merged_message = f"{merged_message} {next_text}".strip()
+                    deadline = time.monotonic() + min(2.0, self._voice_fragment_window_seconds(merged_message) / 2.0)
+                    if self._is_semantically_complete_utterance(merged_message):
+                        break
+                    continue
+            await asyncio.sleep(poll_interval_s)
+
+        if merged_count > 1:
+            logger.info(
+                "voice_fragment_buffer_merged fragments=%s merged_text=%s",
+                merged_count,
+                merged_message[:160],
+            )
+        return merged_message, queued_user_id, queued_tool_ctx, queued_origin, merged_futures
+
     async def _handle_chat_response(
         self,
         message: str,
@@ -51,6 +162,16 @@ class ChatResponseMixin:
                     queued_message, queued_user_id, queued_tool_ctx, queued_origin, queued_future = queue.popleft()
                     if queued_future.done():
                         continue
+                    (
+                        queued_message,
+                        queued_user_id,
+                        queued_tool_ctx,
+                        queued_origin,
+                        merged_futures,
+                    ) = await self._collect_voice_fragment_batch(
+                        queue=queue,
+                        first_item=(queued_message, queued_user_id, queued_tool_ctx, queued_origin, queued_future),
+                    )
                     try:
                         response = await self._handle_chat_response_core(
                             queued_message,
@@ -77,8 +198,9 @@ class ChatResponseMixin:
                         session_id=queued_session_id,
                         origin=queued_origin,
                     )
-                    if not queued_future.done():
-                        queued_future.set_result(response)
+                    for merged_future in merged_futures:
+                        if not merged_future.done():
+                            merged_future.set_result(response)
 
         return await result_future
 
@@ -99,6 +221,10 @@ class ChatResponseMixin:
                 ResponseFormatter.build_response("I didn't catch that."),
                 "informational",
             )
+        message = await self._apply_action_state_carryover(
+            message,
+            tool_context=tool_context,
+        )
 
         fast_path_input = self._extract_user_message_segment(message) or message
         direct_tool = self._detect_direct_tool_intent(fast_path_input, origin=origin)
@@ -118,6 +244,7 @@ class ChatResponseMixin:
                     structured_data={"_direct_group": direct_tool.group},
                 )
                 self.turn_state["pending_tool_result_text"] = direct_tool.template
+                self.turn_state["last_route"] = "fast_path"
                 return self._tag_response_with_routing_type(response, "fast_path")
             if (
                 tool_name == "run_shell_command"
@@ -153,6 +280,7 @@ class ChatResponseMixin:
                     },
                 )
                 self.turn_state["pending_tool_result_text"] = direct_tool.template
+                self.turn_state["last_route"] = "fast_path"
                 return self._tag_response_with_routing_type(response, "fast_path")
             tool_output, tool_invocation = await self._execute_tool_call(
                 tool_name=tool_name,
@@ -180,6 +308,7 @@ class ChatResponseMixin:
                     structured_data=structured_data,
                 )
                 self.turn_state["pending_tool_result_text"] = safe_failure
+                self.turn_state["last_route"] = "fast_path"
                 return self._tag_response_with_routing_type(response, "fast_path")
             if tool_name == "get_weather":
                 if output_text and "couldn't fetch weather" in output_text_l:
@@ -235,6 +364,7 @@ class ChatResponseMixin:
                 structured_data=structured_data,
             )
             self.turn_state["pending_tool_result_text"] = str(voice_text or "")
+            self.turn_state["last_route"] = "fast_path"
             return self._tag_response_with_routing_type(response, "fast_path")
 
         small_talk_response = self._match_small_talk_fast_path(message)
@@ -244,6 +374,7 @@ class ChatResponseMixin:
                 display_text=small_talk_response,
                 voice_text=small_talk_response,
             )
+            self.turn_state["last_route"] = "chat"
             return self._tag_response_with_routing_type(response, "informational")
 
         routing_text = self._extract_user_message_segment(message) or message
@@ -296,6 +427,7 @@ class ChatResponseMixin:
                 "research_pronoun_override forced=true ambiguous=false rewritten=%s",
                 rewritten_followup[:120],
             )
+            self.turn_state["last_route"] = "research"
             return await self._handle_research_route(
                 message=rewritten_followup,
                 user_id=user_id,
@@ -303,6 +435,8 @@ class ChatResponseMixin:
                 query_rewritten=True,
                 query_ambiguous=False,
             )
+
+        routing_text = rewritten_followup or routing_text
 
         route_started = time.monotonic()
         agent_key = await self._router.route(routing_text, user_id, chat_ctx=chat_ctx_messages)
@@ -313,6 +447,24 @@ class ChatResponseMixin:
             route_elapsed_ms,
             origin,
         )
+        self.turn_state["last_route"] = agent_key
+        pending_clarification = ""
+        consume_clarification = getattr(self._router, "consume_pending_clarification", None)
+        if callable(consume_clarification):
+            try:
+                pending_raw = consume_clarification(user_id)
+                if isinstance(pending_raw, str):
+                    pending_clarification = pending_raw.strip()
+            except Exception:
+                pending_clarification = ""
+        if pending_clarification:
+            return self._tag_response_with_routing_type(
+                ResponseFormatter.build_response(
+                    display_text=pending_clarification,
+                    voice_text=pending_clarification,
+                ),
+                "informational",
+            )
 
         if agent_key == "identity":
             return await self._handle_identity_fast_path(
@@ -354,6 +506,7 @@ class ChatResponseMixin:
                         research_query[:80],
                     )
                 agent_key = "chat"
+                self.turn_state["last_route"] = agent_key
             elif str(origin or "").strip().lower() == "voice" and not re.search(
                 r"[.?!]|\b(search|find|lookup|look up|news|latest|current|today)\b",
                 research_query,
@@ -365,6 +518,7 @@ class ChatResponseMixin:
                     research_query[:80],
                 )
                 agent_key = "chat"
+                self.turn_state["last_route"] = agent_key
             else:
                 rewritten_query, query_rewritten, query_ambiguous = self.rewrite_research_query_for_context(
                     research_query,
@@ -426,6 +580,11 @@ class ChatResponseMixin:
                 if handoff_result.status == "completed":
                     tool_name = str((handoff_result.structured_payload or {}).get("tool_name") or "").strip()
                     tool_args = (handoff_result.structured_payload or {}).get("parameters") or {}
+                    if not tool_name:
+                        fallback_intent = self._detect_direct_tool_intent(message, origin=origin)
+                        if fallback_intent and fallback_intent.tool in {"open_app", "close_app"}:
+                            tool_name = fallback_intent.tool
+                            tool_args = dict(fallback_intent.args or {})
                     if tool_name in {"run_shell_command", "cancel_task", "send_email"}:
                         tool_output, tool_invocation = await self._execute_tool_call(
                             tool_name=tool_name,
@@ -455,6 +614,29 @@ class ChatResponseMixin:
                             },
                         )
                         self.turn_state["pending_system_action_result"] = str(output_text or "")
+                        return self._tag_response_with_routing_type(response, "direct_action")
+                    if tool_name in {"open_app", "close_app"}:
+                        tool_output, tool_invocation = await self._execute_tool_call(
+                            tool_name=tool_name,
+                            args=tool_args,
+                            user_id=user_id,
+                            tool_context=tool_context,
+                        )
+                        structured_data = (
+                            tool_output if isinstance(tool_output, dict) else {"result": str(tool_output or "")}
+                        )
+                        display = (
+                            ResponseFormatter.extract_display_candidate(structured_data, tool_name)
+                            or self._get_tool_response_template(tool_name, structured_data, mode="direct")
+                            or "Request processed."
+                        )
+                        response = ResponseFormatter.build_response(
+                            display_text=display,
+                            voice_text=display,
+                            tool_invocations=[tool_invocation],
+                            mode="direct",
+                            structured_data=structured_data,
+                        )
                         return self._tag_response_with_routing_type(response, "direct_action")
                 if handoff_result.status in {"failed", "rejected"}:
                     logger.warning(
@@ -885,6 +1067,7 @@ class ChatResponseMixin:
                 full_response = self._sanitize_response(full_response)
 
         full_response = (full_response or "").strip()
+        full_response = self._strip_identity_preamble_if_needed(message, full_response)
         if self._is_name_query(message) and "maya" not in full_response.lower():
             logger.info("identity_guardrail_applied reason=missing_maya_name")
             full_response = "I'm Maya, your voice assistant."

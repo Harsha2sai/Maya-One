@@ -31,6 +31,10 @@ class GlobalAgentContainer:
     _host_capability_profile: Any = None
     _memory_warmup_task: Optional[asyncio.Task[Any]] = None
     _app_cache_preload_task: Optional[asyncio.Task[Any]] = None
+    _message_bus: Any = None
+    _progress_stream: Any = None
+    _task_persistence: Any = None
+    _subagent_circuit_breaker: Any = None
 
     @classmethod
     async def initialize(cls):
@@ -54,12 +58,16 @@ class GlobalAgentContainer:
         from core.tools.tool_manager import ToolManager
         from providers.factory import ProviderFactory
         from core.tasks.task_store import SQLiteTaskStore
+        from core.tasks.task_persistence import TaskPersistence
         from core.memory.hybrid_memory_manager import HybridMemoryManager
         from core.memory.memory_ingestor import MemoryIngestor
         from core.memory.preference_manager import PreferenceManager
         from core.tasks.task_tools import get_task_tools
         from core.registry.tool_registry import get_registry
         from core.system.host_capability_profile import collect_host_capability_profile
+        from core.messaging.message_bus import MessageBus
+        from core.messaging.progress_stream import ProgressStream
+        from core.agents.subagent_circuit_breaker import SubagentCircuitBreaker
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -88,6 +96,59 @@ class GlobalAgentContainer:
         
         # 2. Initialize Task Store (Singleton)
         cls._task_store = SQLiteTaskStore("./dev_maya_one.db")
+        cls._task_persistence = TaskPersistence(store=cls._task_store)
+        cls._message_bus = MessageBus(
+            max_queue_depth=getattr(settings, "max_message_bus_queue_depth_global", 1000),
+        )
+        cls._subagent_circuit_breaker = SubagentCircuitBreaker(
+            failure_threshold=3,
+            half_open_cooldown_s=60.0,
+        )
+
+        async def _emit_progress_to_log(payload: dict[str, Any]) -> None:
+            logger.info(
+                "progress_stream_event phase=%s agent=%s status=%s percent=%s trace_id=%s task_id=%s",
+                payload.get("phase"),
+                payload.get("agent"),
+                payload.get("status"),
+                payload.get("percent"),
+                payload.get("trace_id"),
+                payload.get("task_id"),
+            )
+            orchestrator = cls._orchestrator
+            room = getattr(orchestrator, "room", None) if orchestrator is not None else None
+            if room is not None:
+                try:
+                    from core.communication import publish_chat_event
+
+                    await publish_chat_event(
+                        room,
+                        {
+                            "type": "task_progress",
+                            "status": payload.get("status"),
+                            "percent": payload.get("percent"),
+                            "summary": payload.get("summary"),
+                            "task_id": payload.get("task_id"),
+                            "trace_id": payload.get("trace_id"),
+                            "timestamp": payload.get("timestamp"),
+                        },
+                    )
+                except Exception as progress_publish_err:
+                    logger.debug("progress_event_room_publish_failed error=%s", progress_publish_err)
+
+        cls._progress_stream = ProgressStream(
+            bus=cls._message_bus,
+            emitter=_emit_progress_to_log,
+            max_events_per_sec_per_session=getattr(
+                settings, "max_progress_events_per_sec_per_session", 10
+            ),
+        )
+        await cls._progress_stream.start()
+        try:
+            recoverable = await cls._task_persistence.load_recoverable_tasks()
+            logger.info("task_recovery_scan recoverable_count=%s", len(recoverable))
+        except Exception as recovery_err:
+            logger.warning("task_recovery_scan_failed error=%s", recovery_err)
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -264,6 +325,10 @@ class GlobalAgentContainer:
             enable_chat_tools=max(1, int(getattr(settings, "architecture_phase", 1))) >= 3,
             enable_task_pipeline=max(1, int(getattr(settings, "architecture_phase", 1))) >= 4,
         )
+        setattr(cls._orchestrator, "_message_bus", cls._message_bus)
+        setattr(cls._orchestrator, "_task_persistence", cls._task_persistence)
+        setattr(cls._orchestrator, "_subagent_circuit_breaker", cls._subagent_circuit_breaker)
+        setattr(cls._orchestrator, "_progress_stream", cls._progress_stream)
 
         cls._initialized = True
         logger.info(f"✅ Global agent ready with {len(cls._tools)} tools")
@@ -378,6 +443,14 @@ class GlobalAgentContainer:
     @classmethod
     async def shutdown_background_tasks(cls) -> None:
         """Stop long-lived background tasks owned by the global container."""
+        if cls._progress_stream is not None:
+            try:
+                await cls._progress_stream.stop()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop progress stream: {e}")
+            finally:
+                cls._progress_stream = None
+
         if cls._sentinel is not None:
             try:
                 await cls._sentinel.stop()

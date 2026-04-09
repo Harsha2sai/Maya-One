@@ -87,6 +87,12 @@ class IntentClassifier:
         re.compile(r'do you (know|remember)', re.IGNORECASE),
         re.compile(r'you know (my|me|who)', re.IGNORECASE),
     ]
+    _FOLLOWUP_FRAGMENT_PATTERNS = [
+        re.compile(r'^(why|how so|then what|what next)$', re.IGNORECASE),
+        re.compile(r"^what('?s| is)? the reason$", re.IGNORECASE),
+        re.compile(r'^(and then|and now|what about that|what about it)$', re.IGNORECASE),
+        re.compile(r'^(explain|elaborate|continue|go on)$', re.IGNORECASE),
+    ]
     
     def __init__(self, registry: Optional[ToolRegistry] = None):
         """
@@ -144,6 +150,51 @@ class IntentClassifier:
             confidence=0.6,
             reason="No specific intent detected, defaulting to conversation"
         )
+
+    def classify_with_context(
+        self,
+        user_text: str,
+        conversation_summary: str = "",
+        memory_context: str = "",
+    ) -> IntentResult:
+        """
+        Classify intent with optional conversation summary for ambiguous follow-ups.
+
+        For concise fragment follow-ups, prepend compact context so the classifier
+        can infer intent without changing the global classify() behavior.
+        """
+        normalized_text = str(user_text or "").strip()
+        if not normalized_text:
+            return self.classify(normalized_text, memory_context)
+
+        summary = self._compact_summary(conversation_summary)
+        if summary and self._looks_like_ambiguous_followup(normalized_text):
+            contextualized = (
+                f"Context: {summary}\n"
+                f"Follow-up request: {normalized_text}"
+            )
+            return self.classify(contextualized, memory_context)
+
+        return self.classify(normalized_text, memory_context)
+
+    def _looks_like_ambiguous_followup(self, text: str) -> bool:
+        normalized = str(text or "").strip().lower()
+        if not normalized:
+            return False
+        word_count = len(re.findall(r"\b[\w'-]+\b", normalized))
+        if 0 < word_count <= 4:
+            return True
+        return any(pattern.search(normalized) for pattern in self._FOLLOWUP_FRAGMENT_PATTERNS)
+
+    @staticmethod
+    def _compact_summary(summary: str, max_words: int = 40) -> str:
+        normalized = " ".join(str(summary or "").split()).strip()
+        if not normalized:
+            return ""
+        words = normalized.split()
+        if len(words) <= max_words:
+            return normalized
+        return " ".join(words[:max_words]).strip()
     
     def _check_memory_query(self, text: str, memory_context: str) -> Optional[IntentResult]:
         """Check if this is a memory/identity query"""

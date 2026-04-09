@@ -39,7 +39,7 @@ def _request(**overrides) -> AgentHandoffRequest:
         "context_slice": "User asked a research question.",
         "execution_mode": "inline",
         "delegation_depth": 0,
-        "max_depth": 1,
+        "max_depth": 2,
         "handoff_reason": "test",
         "metadata": {"user_id": "u1"},
     }
@@ -92,7 +92,7 @@ async def test_handoff_manager_blocks_invalid_parent():
 @pytest.mark.asyncio
 async def test_handoff_manager_blocks_depth_exceeded():
     manager = HandoffManager(AgentRegistry())
-    request = _request(delegation_depth=1)
+    request = _request(delegation_depth=2)
     result = await manager.delegate(request)
     assert result.status == "failed"
     assert result.error_code == "HandoffValidationError"

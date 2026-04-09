@@ -10,6 +10,8 @@ import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
+from core.action.state_store import ActionStateStore
+from core.action.models import ActionIntent, ToolReceipt
 from core.tasks.planning_engine import PlanningEngine
 from core.tasks.task_store import TaskStore
 from core.context.context_guard import ContextGuard
@@ -192,6 +194,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             "pending_system_action_result": "",
             "pending_tool_result_text": "",
             "pending_task_completion_summary": "",
+            "last_route": "",
         }
         self._conversation_history: List[Dict[str, Any]] = []
         self._session_continuity_injected: bool = False
@@ -265,12 +268,20 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._task_worker_lock = asyncio.Lock()
         self._session_locks: Dict[str, asyncio.Lock] = {}
         self._session_queues: Dict[str, deque] = {}
-        self._session_queue_limit = 3
+        self._session_queue_limit = max(1, int(os.getenv("MAYA_CHAT_SESSION_QUEUE_LIMIT", "3")))
         self._session_bootstrap_contexts: Dict[str, Dict[str, Any]] = {}
         self._last_research_contexts: Dict[str, Dict[str, Any]] = {}
         self._research_context_ttl_s = max(
             10.0,
-            float(os.getenv("RESEARCH_CONTEXT_TTL_S", "90")),
+            float(os.getenv("RESEARCH_CONTEXT_TTL_S", "900")),
+        )
+        self._voice_fragment_buffer_window_s = max(
+            1.0,
+            float(os.getenv("VOICE_FRAGMENT_BUFFER_WINDOW_S", "5")),
+        )
+        self._voice_fragment_buffer_window_research_s = max(
+            self._voice_fragment_buffer_window_s,
+            float(os.getenv("VOICE_FRAGMENT_BUFFER_WINDOW_RESEARCH_S", "8")),
         )
         self._research_handler = ResearchHandler(
             context_ttl_s=self._research_context_ttl_s,
@@ -283,10 +294,20 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._enable_research_llm_planner = self._is_truthy_env(
             os.getenv("ENABLE_RESEARCH_LLM_PLANNER", "false")
         )
+        self._action_receipts_enabled = bool(getattr(settings, "action_receipts_enabled", False))
+        self._action_state_carryover_enabled = bool(
+            getattr(settings, "action_state_carryover_enabled", False)
+        )
+        self._action_verification_enabled = bool(getattr(settings, "action_verification_enabled", False))
+        self._action_truthfulness_strict = bool(getattr(settings, "action_truthfulness_strict", False))
+        self._action_state_store: Optional[ActionStateStore] = (
+            ActionStateStore() if self._action_state_carryover_enabled else None
+        )
         self._fast_path_router = FastPathRouter(
             turn_state=self.turn_state,
             parse_multi_app_fn=self._parse_multi_app,
             is_recall_exclusion_intent_fn=self._is_recall_exclusion_intent,
+            resolve_active_subject_fn=self._resolve_active_subject_for_fast_path,
         )
         self._tool_response_builder = ToolResponseBuilder(owner=self)
         self._tool_executor = ToolExecutor(owner=self, coerce_user_role_fn=_coerce_user_role)
@@ -349,6 +370,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             self._synthesis_fallback_window_size,
             self._synthesis_fallback_warn_rate,
             self._voice_planner_timeout_s,
+        )
+        logger.info(
+            "action_reform_flags receipts=%s carryover=%s verification=%s strict=%s",
+            self._action_receipts_enabled,
+            self._action_state_carryover_enabled,
+            self._action_verification_enabled,
+            self._action_truthfulness_strict,
         )
         logger.info(
             "🧩 phase6_context_builder_enabled=%s compare_inline=%s",
@@ -544,6 +572,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         "thank you",
     }
     _VOICE_CONTINUATION_MARKERS = {
+        "yeah",
+        "yep",
+        "yes",
+        "no",
+        "well",
+        "actually",
+        "anyway",
+        "i",
         "just",
         "and",
         "but",
@@ -553,6 +589,8 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         "that",
         "this",
         "it",
+        "about",
+        "mean",
     }
     _VOICE_ACTION_SECOND_TOKEN_ALLOWLIST = {
         "open",
@@ -566,6 +604,30 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         "show",
         "list",
     }
+    _VOICE_CONTINUATION_PATTERN = re.compile(
+        r"^(yeah|yep|yes|no|well|actually|anyway|i mean|so|and then|about it|about that)\b",
+        re.IGNORECASE,
+    )
+    _VOICE_INCOMPLETE_ENDING_PATTERN = re.compile(
+        r"\b(and|or|but|so|because|for|to|in|on|with|about|then|where|when|who|what|how)\s*[.!?,'\"]*\s*$",
+        re.IGNORECASE,
+    )
+    _IDENTITY_KEYWORDS = {
+        "maya",
+        "name",
+        "who",
+        "you",
+        "your",
+        "creator",
+        "created",
+        "built",
+        "harsha",
+    }
+    _IDENTITY_LEADING_PATTERN = re.compile(
+        r"^\s*(?:hi[, ]+)?(?:i(?:\s*am|'m)\s+maya(?:\s*,\s*your\s+(?:voice\s+)?assistant)?"
+        r"(?:\s*(?:,|and)\s*(?:i(?:\s+was)?\s+(?:created|built)\s+by\s+harsha))?\.?\s*)+",
+        re.IGNORECASE,
+    )
 
     def _classify_tool_intent_type(self, tool_name: str) -> str:
         return self._tool_response_builder.classify_tool_intent_type(tool_name)
@@ -778,6 +840,20 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         active = self._research_handler.get_active_research_context(session_key)
         if active:
             self._last_research_contexts[session_key] = dict(active)
+            if self._action_state_carryover_enabled and self._action_state_store is not None:
+                subject = str(active.get("subject") or "").strip()
+                search_query = str(active.get("query") or query or "").strip()
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(
+                        self._action_state_store.set_active_subject(
+                            session_key,
+                            subject=subject,
+                            query=search_query,
+                        )
+                    )
+                except RuntimeError:
+                    pass
 
     def _get_active_research_context(self, tool_context: Any = None) -> Optional[Dict[str, Any]]:
         session_key = self._session_key_for_context(tool_context)
@@ -1107,8 +1183,15 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         )
         conversation_id = getattr(tool_context, "conversation_id", None)
         task_id = force_task_id if force_task_id is not None else getattr(tool_context, "task_id", None)
+        handoff_id = str(uuid.uuid4())
+        parent_handoff_id = getattr(tool_context, "handoff_id", None)
+        incoming_chain_id = getattr(tool_context, "delegation_chain_id", None)
+        delegation_chain_id = incoming_chain_id or f"chain_{trace_id}_{conversation_id or self._current_session_id or 'session'}"
+        max_depth = int(getattr(self._handoff_manager, "max_depth", 2))
+        depth_used = max(0, int(getattr(tool_context, "delegation_depth", 0) or 0))
+        depth_budget = max(1, max_depth - depth_used)
         return AgentHandoffRequest(
-            handoff_id=str(uuid.uuid4()),
+            handoff_id=handoff_id,
             trace_id=trace_id,
             conversation_id=conversation_id,
             task_id=task_id,
@@ -1125,9 +1208,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
                 host_profile=host_profile,
             ),
             execution_mode=execution_mode,
-            delegation_depth=0,
-            max_depth=1,
+            delegation_depth=depth_used,
+            max_depth=max_depth,
             handoff_reason=handoff_reason,
+            parent_handoff_id=parent_handoff_id,
+            delegation_chain_id=delegation_chain_id,
+            depth_used=depth_used,
+            depth_budget=depth_budget,
             metadata={
                 "user_id": user_id,
                 "user_role": getattr(getattr(tool_context, "user_role", None), "name", None)
@@ -1136,6 +1223,8 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
                 "memory_context": "",
                 "task_scope": "inline_untracked" if not task_id else "tracked",
                 "host_profile": host_profile,
+                "session_id": self._resolve_session_queue_key(tool_context),
+                "visited_targets": [],
             },
         )
 
@@ -1147,6 +1236,16 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
     ) -> None:
         self._current_user_id = user_id
         self._current_session_id = session_id
+
+    async def _record_action_intent(self, *, session_id: str, intent: ActionIntent) -> None:
+        if not self._action_state_carryover_enabled or self._action_state_store is None:
+            return
+        await self._action_state_store.record_intent(session_id, intent)
+
+    async def _record_action_receipt(self, *, session_id: str, receipt: ToolReceipt) -> None:
+        if not self._action_state_carryover_enabled or self._action_state_store is None:
+            return
+        await self._action_state_store.record_receipt(session_id, receipt)
 
     def _start_new_turn(self, user_message: str, turn_id: Optional[str] = None) -> str:
         """
@@ -1169,6 +1268,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         if hasattr(self.agent, "current_turn_id"):
             self.agent.current_turn_id = resolved_turn_id
         return resolved_turn_id
+
+    def _resolve_active_subject_for_fast_path(self, tool_context: Any = None) -> str:
+        if self._action_state_carryover_enabled and self._action_state_store is not None:
+            session_key = self._session_key_for_context(tool_context)
+            candidate = self._action_state_store.resolve_pronoun_sync(session_key, "it")
+            if candidate:
+                return candidate
+        return self._resolve_research_subject_from_context(tool_context)
 
     def _append_conversation_history(
         self,
@@ -1422,6 +1529,96 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             if self._message_content_to_text(message):
                 return True
         return False
+
+    def _is_voice_immediate_command(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+        if not normalized:
+            return False
+        if normalized in self._VOICE_SHORT_COMMAND_ALLOWLIST:
+            return True
+        return bool(
+            re.match(
+                r"^(next|previous|pause|resume|stop|cancel|mute|volume (?:up|down)|yes|no)\b",
+                normalized,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    def _looks_like_voice_fragment(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+        if not normalized:
+            return False
+        if self._is_voice_immediate_command(normalized):
+            return False
+        if self._VOICE_CONTINUATION_PATTERN.search(normalized):
+            return True
+        tokens = re.findall(r"\b[\w'-]+\b", normalized)
+        if 0 < len(tokens) <= 4:
+            return True
+        if self._VOICE_INCOMPLETE_ENDING_PATTERN.search(normalized):
+            return True
+        return False
+
+    def _is_semantically_complete_utterance(self, text: str) -> bool:
+        normalized = re.sub(r"\s+", " ", str(text or "").strip())
+        if not normalized:
+            return False
+        if self._is_voice_immediate_command(normalized):
+            return True
+        has_terminal_punctuation = bool(re.search(r"[.!?]['\"]?\s*$", normalized))
+        if has_terminal_punctuation and not self._VOICE_INCOMPLETE_ENDING_PATTERN.search(normalized):
+            return True
+        token_count = len(re.findall(r"\b[\w'-]+\b", normalized))
+        return token_count >= 8 and not self._VOICE_INCOMPLETE_ENDING_PATTERN.search(normalized.lower())
+
+    def _voice_fragment_window_seconds(self, text: str) -> float:
+        normalized = re.sub(r"\s+", " ", str(text or "").strip().lower())
+        if not normalized:
+            return self._voice_fragment_buffer_window_s
+        last_route = str(self.turn_state.get("last_route") or "").strip().lower()
+        continuation_heavy = bool(
+            re.search(r"\b(it|that|this|they|them|him|her|about it|about that|reason)\b", normalized)
+        )
+        if last_route == "research" or continuation_heavy:
+            return self._voice_fragment_buffer_window_research_s
+        return self._voice_fragment_buffer_window_s
+
+    def _identity_keyword_ratio(self, message: str) -> float:
+        tokens = [token.lower() for token in re.findall(r"[a-zA-Z']+", str(message or ""))]
+        if not tokens:
+            return 0.0
+        matches = sum(1 for token in tokens if token in self._IDENTITY_KEYWORDS)
+        return float(matches) / float(len(tokens))
+
+    def _is_identity_dominant_query(self, message: str) -> bool:
+        if self._is_name_query(message) or self._is_creator_query(message):
+            return True
+        return self._identity_keyword_ratio(message) >= 0.5
+
+    def _strip_identity_preamble_if_needed(self, user_message: str, response_text: str) -> str:
+        if self._is_identity_dominant_query(user_message):
+            return str(response_text or "").strip()
+        cleaned = str(response_text or "").strip()
+        if not cleaned:
+            return ""
+        stripped = re.sub(self._IDENTITY_LEADING_PATTERN, "", cleaned).strip()
+        stripped = re.sub(
+            r"^\s*(?:hi[, ]+)?i(?:\s*am|'m)\s+maya(?:\s*,\s*your\s+(?:voice\s+)?assistant)?[,.]?\s*",
+            "",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        stripped = re.sub(
+            r"^\s*[,;:-]?\s*(?:and\s+)?i(?:\s+was)?\s+(?:created|built)\s+by\s+harsha[,.]?\s*",
+            "",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        stripped = stripped.lstrip(" ,;:-").strip()
+        if stripped and stripped != cleaned:
+            logger.info("identity_preamble_stripped_for_non_identity_turn")
+            return stripped
+        return cleaned
 
     def _tool_name(self, tool: Any) -> str:
         """Best-effort tool name extraction across wrapped tool types."""
@@ -1808,12 +2005,45 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
     async def _handle_task_worker_event(self, event: Dict[str, Any]) -> None:
         event_type = str((event or {}).get("event_type") or "").strip() or "unknown"
         message = str((event or {}).get("voice_text") or (event or {}).get("message") or "").strip()
+        task_id = str((event or {}).get("task_id") or "").strip()
+        trace_id = str((event or {}).get("trace_id") or current_trace_id()).strip()
         logger.info(
             "task_event_received event_type=%s task_id=%s trace_id=%s",
             event_type,
-            (event or {}).get("task_id"),
-            (event or {}).get("trace_id"),
+            task_id,
+            trace_id,
         )
+        message_bus = getattr(self, "_message_bus", None)
+        if message_bus is not None:
+            status = "in_progress"
+            if event_type in {"task_completed"}:
+                status = "completed"
+            elif event_type in {"task_failed", "task_poisoned", "task_stale", "plan_failed"}:
+                status = "failed"
+            try:
+                await message_bus.publish(
+                    "agent.progress",
+                    {
+                        "phase": "execution",
+                        "agent": "task_worker",
+                        "status": status,
+                        "percent": 100 if status != "in_progress" else 50,
+                        "summary": message or event_type,
+                        "session_id": self._current_session_id,
+                        "event_type": event_type,
+                    },
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    handoff_id=str((event or {}).get("handoff_id") or ""),
+                    checkpoint_id=str((event or {}).get("checkpoint_id") or ""),
+                )
+            except Exception as bus_err:
+                logger.warning(
+                    "task_event_progress_publish_failed task_id=%s trace_id=%s error=%s",
+                    task_id,
+                    trace_id,
+                    bus_err,
+                )
         if not message:
             return
         if self.session:

@@ -34,6 +34,10 @@ class AgentHandoffRequest:
     delegation_depth: int
     max_depth: int
     handoff_reason: str
+    parent_handoff_id: str | None = None
+    delegation_chain_id: str | None = None
+    depth_used: int = 0
+    depth_budget: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -5,8 +5,10 @@ from datetime import datetime, timezone, timedelta
 import uuid
 import time
 
+from config.settings import settings
 from core.tasks.task_models import Task, TaskStatus
 from core.tasks.task_manager import TaskManager
+from core.tasks.task_persistence import TaskPersistence
 from core.tasks.workers.registry import WorkerRegistry
 from core.tasks.task_steps import TaskStepStatus, WorkerType
 from core.tasks.task_limits import MAX_STEPS_PER_TASK, MAX_TASK_RUNTIME_SECONDS
@@ -21,11 +23,19 @@ from core.tasks.step_controller import StepController
 logger = logging.getLogger(__name__)
 
 STEP_TIMEOUT_SECONDS = 120
-STEP_MAX_RETRIES = 3
+STEP_MAX_RETRIES = max(1, int(getattr(settings, "max_retries_per_step", 3)))
 STUCK_TASK_THRESHOLD_SECONDS = 600
 RECENT_RUNNING_STALE_WINDOW_SECONDS = 60
 WATCHDOG_INTERVAL_SECONDS = 120
 WATCHDOG_RECLAIM_THRESHOLD_SECONDS = STUCK_TASK_THRESHOLD_SECONDS
+MAX_CONSECUTIVE_FAILURES = max(1, int(getattr(settings, "max_consecutive_failures", 3)))
+NO_PROGRESS_TIMEOUT_SECONDS = max(30, int(getattr(settings, "no_progress_timeout_s", 300)))
+TERMINAL_POISON_CODES = {
+    "handoff_validation_failed",
+    "capability_not_found",
+    "infinite_loop_detected",
+    "security_violation",
+}
 
 
 class _NoopMemoryManager:
@@ -72,6 +82,8 @@ class TaskWorker:
         self._shutdown_event = asyncio.Event()
         self._event_notifier = event_notifier
         self._evaluator = ExecutionEvaluator()
+        self._task_persistence = TaskPersistence(store=self.manager.store)
+        self._message_bus = None
         self._step_controller = StepController(
             tool_executor=self._execute_tool,
             evaluator=self._evaluator,
@@ -84,6 +96,9 @@ class TaskWorker:
     def set_room(self, room: Any) -> None:
         self.room = room
         self.registry.update_room(room)
+
+    def set_message_bus(self, bus: Any) -> None:
+        self._message_bus = bus
 
     async def _execute_tool(self, tool: str, parameters: Dict[str, Any]) -> str:
         """Execute a single tool with parameters. Used by StepController."""
@@ -287,6 +302,7 @@ class TaskWorker:
             return
 
         task = leased_task
+        await self._task_persistence.mark_resumed(task.id, self.worker_id)
         set_trace_context(
             user_id=self.user_id,
             task_id=task.id,
@@ -309,12 +325,25 @@ class TaskWorker:
             start_time = start_time.replace(tzinfo=pytz.UTC)
         
         elapsed = (now - start_time).total_seconds()
-        
+
         if elapsed > MAX_TASK_RUNTIME_SECONDS:
             logger.warning(f"⛔ Task {task.id} timed out (runtime: {elapsed}s). Terminating.")
             await self.manager.fail_task(task.id, f"Terminated: Exceeded maximum runtime ({MAX_TASK_RUNTIME_SECONDS}s).")
+            await self._task_persistence.mark_terminal(
+                task.id,
+                TaskStatus.FAILED.value,
+                "runtime_timeout",
+            )
             RuntimeMetrics.increment("tasks_failed_total")
             return
+
+        updated = self._coerce_datetime(getattr(task, "updated_at", None))
+        if updated is not None:
+            no_progress_age = (now - updated).total_seconds()
+            if no_progress_age > NO_PROGRESS_TIMEOUT_SECONDS:
+                reason = f"no progress timeout exceeded ({int(no_progress_age)}s)"
+                await self._poison_task(task=task, reason=reason, error_code="no_progress_timeout")
+                return
 
         if await self._is_task_stuck(task):
             logger.warning(f"⛔ Task {task.id} appears stuck. Attempting recovery.")
@@ -331,11 +360,24 @@ class TaskWorker:
             if task.status != TaskStatus.COMPLETED:
                 logger.info(f"Task {task.id} all steps processed. Completing.")
                 await self.manager.complete_task(task.id, "All steps executed.")
+                await self._task_persistence.mark_terminal(
+                    task.id,
+                    TaskStatus.COMPLETED.value,
+                    "all_steps_executed",
+                )
                 RuntimeMetrics.increment("tasks_completed_total")
                 RuntimeMetrics.observe("task_runtime_seconds", elapsed)
 
     async def _emit_event(self, *, event_type: str, task: Task, message: str) -> None:
         if not callable(self._event_notifier):
+            await self._publish_progress_event(
+                task=task,
+                phase="execution",
+                status="in_progress" if event_type not in {"task_completed", "task_failed", "task_poisoned"} else "completed",
+                percent=min(99, max(0, int((task.current_step_index / max(1, len(task.steps))) * 100))),
+                summary=message,
+                event_type=event_type,
+            )
             return
         payload = {
             "event_type": event_type,
@@ -351,6 +393,17 @@ class TaskWorker:
                 await maybe
         except Exception as e:
             logger.warning("task_event_emit_failed task_id=%s event_type=%s error=%s", task.id, event_type, e)
+        finally:
+            terminal = event_type in {"task_completed", "task_failed", "task_poisoned", "task_stale"}
+            status = "completed" if event_type == "task_completed" else ("failed" if terminal else "in_progress")
+            await self._publish_progress_event(
+                task=task,
+                phase="execution",
+                status=status,
+                percent=100 if terminal else min(99, max(0, int((task.current_step_index / max(1, len(task.steps))) * 100))),
+                summary=message,
+                event_type=event_type,
+            )
 
     @staticmethod
     def _coerce_datetime(value: Any) -> Optional[datetime]:
@@ -387,6 +440,7 @@ class TaskWorker:
         task.metadata.pop("lease_expires_at", None)
         task.metadata.pop("last_heartbeat", None)
         await self.manager.store.update_task(task)
+        await self._task_persistence.mark_terminal(task.id, TaskStatus.STALE.value, reason)
         await self.manager.store.add_log(task.id, f"Task marked STALE: {reason}")
         await self._emit_event(
             event_type="task_stale",
@@ -428,8 +482,11 @@ class TaskWorker:
         
         if step.retry_count >= STEP_MAX_RETRIES:
             logger.error(f"⛔ Task {task.id} step {task.current_step_index} stuck and max retries exceeded")
-            await self.manager.fail_task(task.id, f"Terminated: Step stuck and exceeded retries")
-            RuntimeMetrics.increment("tasks_failed_total")
+            await self._poison_task(
+                task=task,
+                reason="step_stuck_max_retries_exceeded",
+                error_code="step_retries_exhausted",
+            )
         else:
             logger.info(f"Retrying stuck task {task.id} step {task.current_step_index}")
             step.status = TaskStepStatus.PENDING
@@ -441,6 +498,21 @@ class TaskWorker:
         step_start_ts = time.perf_counter()
         step = task.steps[task.current_step_index]
         idempotency_key = f"{task.id}:{task.current_step_index}:{step.retry_count}"
+        task.metadata = task.metadata or {}
+        seen_step_keys = set(task.metadata.get("step_idempotency_keys") or [])
+        if idempotency_key in seen_step_keys:
+            logger.warning(
+                "duplicate_step_execution_suppressed task_id=%s step=%s idempotency_key=%s",
+                task.id,
+                task.current_step_index,
+                idempotency_key,
+            )
+            await self._emit_event(
+                event_type="duplicate_suppressed",
+                task=task,
+                message="Duplicate step execution suppressed to avoid repeated side effects.",
+            )
+            return
 
         transitioned, refreshed_task = await self.atomic_store.update_step_status(
             task.id,
@@ -506,7 +578,21 @@ class TaskWorker:
                     idempotency_key=idempotency_key,
                 )
                 task.current_step_index += 1
+                seen_step_keys.add(idempotency_key)
+                task.metadata["step_idempotency_keys"] = list(seen_step_keys)[-200:]
+                task.metadata["consecutive_failures"] = 0
                 await self.manager.store.update_task(task)
+                await self._task_persistence.save_checkpoint(
+                    task_id=task.id,
+                    step_id=str(step.id),
+                    payload={
+                        "event": "step_completed",
+                        "step_index": task.current_step_index,
+                        "tool": step.tool,
+                        "result": step.result,
+                        "idempotency_key": idempotency_key,
+                    },
+                )
                 self._log_execution_event(
                     task=task,
                     tool_name=step.tool or "reasoning",
@@ -521,9 +607,18 @@ class TaskWorker:
                     latency_ms=(time.perf_counter() - step_start_ts) * 1000.0,
                     outcome="failed",
                 )
+                await self._register_step_failure(
+                    task=task,
+                    step=step,
+                    error_code="step_execution_failed",
+                    reason=step.error or "worker returned unsuccessful step execution",
+                )
                 if step.status == TaskStepStatus.FAILED and step.retry_count >= STEP_MAX_RETRIES:
-                    await self.manager.fail_task(task.id, f"Terminated: Step failed after {STEP_MAX_RETRIES} retries")
-                    RuntimeMetrics.increment("tasks_failed_total")
+                    await self._poison_task(
+                        task=task,
+                        reason=f"step_failed_after_{STEP_MAX_RETRIES}_retries",
+                        error_code="step_retries_exhausted",
+                    )
         
         except asyncio.TimeoutError:
             logger.error(f"⏱️ Step execution timed out for task {task.id} step {task.current_step_index}")
@@ -537,6 +632,12 @@ class TaskWorker:
                 idempotency_key=idempotency_key,
             )
             await self.manager.store.update_task(task)
+            await self._register_step_failure(
+                task=task,
+                step=step,
+                error_code="step_timeout",
+                reason=step.error,
+            )
             self._log_execution_event(
                 task=task,
                 tool_name=step.tool or "reasoning",
@@ -557,6 +658,12 @@ class TaskWorker:
                 idempotency_key=idempotency_key,
             )
             await self.manager.store.update_task(task)
+            await self._register_step_failure(
+                task=task,
+                step=step,
+                error_code=self._extract_error_code(str(e)),
+                reason=str(e),
+            )
             self._log_execution_event(
                 task=task,
                 tool_name=step.tool or "reasoning",
@@ -564,6 +671,107 @@ class TaskWorker:
                 outcome="error",
             )
             RuntimeMetrics.increment("step_failures_total")
+
+    @staticmethod
+    def _extract_error_code(raw_error: str) -> str:
+        text = str(raw_error or "").strip().lower()
+        for code in TERMINAL_POISON_CODES:
+            if code in text:
+                return code
+        if "permission denied" in text:
+            return "security_violation"
+        if "capability" in text and "not found" in text:
+            return "capability_not_found"
+        return "step_execution_error"
+
+    async def _register_step_failure(
+        self,
+        *,
+        task: Task,
+        step: Any,
+        error_code: str,
+        reason: str,
+    ) -> None:
+        task.metadata = task.metadata or {}
+        failures = int(task.metadata.get("consecutive_failures") or 0) + 1
+        task.metadata["consecutive_failures"] = failures
+        task.metadata["last_failure_code"] = str(error_code or "")
+        task.metadata["last_failure_reason"] = str(reason or "")
+        task.metadata["last_failure_at"] = datetime.now(timezone.utc).isoformat()
+        await self.manager.store.update_task(task)
+        await self._task_persistence.save_checkpoint(
+            task_id=task.id,
+            step_id=str(getattr(step, "id", "")),
+            payload={
+                "event": "step_failed",
+                "step_index": task.current_step_index,
+                "error_code": str(error_code or ""),
+                "reason": str(reason or ""),
+                "retry_count": int(getattr(step, "retry_count", 0) or 0),
+            },
+        )
+        if error_code in TERMINAL_POISON_CODES:
+            await self._poison_task(task=task, reason=reason, error_code=error_code)
+            return
+        if failures >= MAX_CONSECUTIVE_FAILURES:
+            await self._poison_task(
+                task=task,
+                reason=f"consecutive_failures_exceeded:{failures}",
+                error_code="consecutive_failures_exceeded",
+            )
+
+    async def _poison_task(self, *, task: Task, reason: str, error_code: str) -> None:
+        await self.manager.fail_task(task.id, f"Task poisoned: {reason}")
+        await self._task_persistence.mark_terminal(task.id, TaskStatus.FAILED.value, reason)
+        await self._emit_event(
+            event_type="task_poisoned",
+            task=task,
+            message=(
+                "I stopped this task to prevent repeated side effects. "
+                "Please review and retry with a clearer instruction."
+            ),
+        )
+        await self._publish_progress_event(
+            task=task,
+            phase="execution",
+            status="failed",
+            percent=100,
+            summary=f"task_poisoned ({error_code})",
+            event_type="task_poisoned",
+        )
+        RuntimeMetrics.increment("tasks_failed_total")
+
+    async def _publish_progress_event(
+        self,
+        *,
+        task: Task,
+        phase: str,
+        status: str,
+        percent: int,
+        summary: str,
+        event_type: str = "progress",
+    ) -> None:
+        if self._message_bus is None:
+            return
+        try:
+            await self._message_bus.publish(
+                "agent.progress",
+                {
+                    "event_type": event_type,
+                    "phase": str(phase or ""),
+                    "agent": "task_worker",
+                    "status": str(status or ""),
+                    "percent": int(percent),
+                    "summary": str(summary or ""),
+                    "session_id": (task.metadata or {}).get("session_id"),
+                },
+                trace_id=str((task.metadata or {}).get("trace_id") or ""),
+                task_id=str(task.id),
+                handoff_id=str((task.metadata or {}).get("last_handoff_id") or ""),
+                checkpoint_id=str((task.metadata or {}).get("last_checkpoint_id") or ""),
+            )
+        except Exception as err:
+            logger.warning("task_progress_publish_failed task_id=%s error=%s", task.id, err)
 
     def _check_tool_permission(self, step, worker) -> dict:
         """Check if the tool is allowed for the worker type."""

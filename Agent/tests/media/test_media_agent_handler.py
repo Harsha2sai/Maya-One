@@ -24,7 +24,7 @@ def _request(**overrides):
         "context_slice": "User asked for media playback.",
         "execution_mode": "inline",
         "delegation_depth": 0,
-        "max_depth": 1,
+        "max_depth": 2,
         "handoff_reason": "router_media_play",
         "metadata": {"user_id": "u1", "platform": "desktop"},
     }
