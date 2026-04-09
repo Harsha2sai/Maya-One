@@ -137,11 +137,15 @@ class SubAgentManager:
 
         try:
             if not state.worktree_path:
-                state.worktree_path = await self._create_worktree(
+                worktree_info = await self._create_worktree(
                     agent_id=agent_id,
                     agent_type=normalized_type,
                     task_context=context,
                 )
+                state.worktree_path = str(worktree_info.get("path") or "").strip() or None
+                worktree_id = str(worktree_info.get("worktree_id") or "").strip()
+                if worktree_id:
+                    state.metadata["worktree_id"] = worktree_id
 
             handle = await self._create_runtime_handle(
                 agent_type=normalized_type,
@@ -245,17 +249,24 @@ class SubAgentManager:
         agent_id: str,
         agent_type: str,
         task_context: Dict[str, Any],
-    ) -> Optional[str]:
+    ) -> Dict[str, Optional[str]]:
         manager = self._worktree_manager
         if manager is None:
-            return None
+            return {"path": None, "worktree_id": None}
 
         if hasattr(manager, "create_worktree"):
-            maybe = manager.create_worktree(
-                agent_id=agent_id,
-                agent_type=agent_type,
-                task_context=task_context,
-            )
+            try:
+                maybe = manager.create_worktree(
+                    agent_id=agent_id,
+                    agent_type=agent_type,
+                    task_context=task_context,
+                )
+            except TypeError:
+                maybe = manager.create_worktree(
+                    base_branch=str(task_context.get("base_branch") or "HEAD"),
+                    task_id=str(task_context.get("task_id") or agent_id),
+                    worktree_base=task_context.get("worktree_base"),
+                )
         elif hasattr(manager, "create"):
             maybe = manager.create(
                 agent_id=agent_id,
@@ -269,14 +280,42 @@ class SubAgentManager:
             )
 
         if asyncio.iscoroutine(maybe):
-            return await maybe
-        return maybe
+            result = await maybe
+        else:
+            result = maybe
+
+        if isinstance(result, str):
+            return {"path": result, "worktree_id": None}
+        if isinstance(result, dict):
+            return {
+                "path": str(result.get("path") or "").strip() or None,
+                "worktree_id": str(result.get("worktree_id") or "").strip() or None,
+            }
+
+        worktree_path = str(getattr(result, "path", "") or "").strip() or None
+        worktree_id = str(getattr(result, "worktree_id", "") or "").strip() or None
+        return {"path": worktree_path, "worktree_id": worktree_id}
 
     async def _cleanup_worktree(self, state: SubAgentRuntimeState) -> None:
-        if not state.worktree_path or self._worktree_manager is None:
+        if self._worktree_manager is None:
             return
 
         manager = self._worktree_manager
+        worktree_id = str((state.metadata or {}).get("worktree_id") or "").strip()
+        if worktree_id and hasattr(manager, "cleanup"):
+            policy = "ON_FAILURE" if state.status == "failed" else "ON_SUCCESS"
+            cleanup_policy = getattr(getattr(manager, "CleanupPolicy", None), policy, None)
+            maybe = manager.cleanup(
+                worktree_id=worktree_id,
+                policy=cleanup_policy if cleanup_policy is not None else policy.lower(),
+            )
+            if asyncio.iscoroutine(maybe):
+                await maybe
+            return
+
+        if not state.worktree_path:
+            return
+
         if hasattr(manager, "cleanup_worktree"):
             maybe = manager.cleanup_worktree(
                 worktree_path=state.worktree_path,
@@ -413,4 +452,3 @@ class SubAgentManager:
             percent=100,
         )
         await self._notify_failure(state)
-
