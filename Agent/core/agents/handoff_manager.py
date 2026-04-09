@@ -8,6 +8,7 @@ import time
 
 from core.agents.contracts import AgentHandoffRequest, AgentHandoffResult, HandoffSignal
 from core.agents.subagent_coder import CodingTask, SubAgentCoder
+from core.agents.subagent_reviewer import ReviewTask, SubAgentReviewer
 from core.agents.subagent_manager import SubAgentLifecycleError, SubAgentManager
 from core.agents.worktree_manager import WorktreeContext, WorktreeManager
 
@@ -61,6 +62,10 @@ class HandoffManager:
         self._message_bus = self._build_message_bus()
         self._persistence = self._build_task_persistence()
         self._subagent_coder = SubAgentCoder(
+            message_bus=self._message_bus,
+            persistence=self._persistence,
+        )
+        self._subagent_reviewer = SubAgentReviewer(
             message_bus=self._message_bus,
             persistence=self._persistence,
         )
@@ -149,7 +154,11 @@ class HandoffManager:
             "worktree_base": metadata.get("worktree_base"),
             "instruction": request.user_text,
             "file_writes": list(metadata.get("file_writes") or []),
+            "file_paths": list(metadata.get("file_paths") or []),
             "test_pattern": metadata.get("test_pattern"),
+            "review_type": metadata.get("review_type"),
+            "base_ref": metadata.get("base_ref"),
+            "head_ref": metadata.get("head_ref"),
         }
 
     def _is_subagent_circuit_open(self, target: str) -> bool:
@@ -170,16 +179,13 @@ class HandoffManager:
         task_context: dict,
         worktree_path: str | None,
     ):
-        if str(agent_type or "").strip().lower() != "subagent_coder":
+        normalized_type = str(agent_type or "").strip().lower()
+        if normalized_type not in {"subagent_coder", "subagent_reviewer"}:
             return None
-
-        coding_task = CodingTask.from_task_context(task_context or {})
-        if not coding_task.task_id:
-            coding_task.task_id = str((task_context or {}).get("task_id") or "")
 
         worktree = WorktreeContext(
             worktree_id=str((task_context or {}).get("worktree_id") or ""),
-            task_id=coding_task.task_id,
+            task_id=str((task_context or {}).get("task_id") or ""),
             path=str(worktree_path or ""),
             branch=str((task_context or {}).get("worktree_branch") or ""),
             base_branch=str((task_context or {}).get("base_branch") or "HEAD"),
@@ -187,7 +193,16 @@ class HandoffManager:
             created_at=float(time.time()),
             updated_at=float(time.time()),
         )
-        return asyncio.create_task(self._subagent_coder.execute(coding_task, worktree))
+        if normalized_type == "subagent_coder":
+            coding_task = CodingTask.from_task_context(task_context or {})
+            if not coding_task.task_id:
+                coding_task.task_id = str((task_context or {}).get("task_id") or "")
+            return asyncio.create_task(self._subagent_coder.execute(coding_task, worktree))
+
+        review_task = ReviewTask.from_task_context(task_context or {})
+        if not review_task.task_id:
+            review_task.task_id = str((task_context or {}).get("task_id") or "")
+        return asyncio.create_task(self._subagent_reviewer.execute(review_task, worktree))
 
     async def _delegate_subagent(self, request: AgentHandoffRequest) -> AgentHandoffResult:
         target = str(request.target_agent or "").strip().lower()

@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -189,3 +190,33 @@ async def test_subagent_circuit_opens_after_repeated_failures():
     blocked = await manager.delegate(_request(target_agent="subagent_architect"))
     assert blocked.status == "failed"
     assert blocked.error_code == "subagent_circuit_open"
+
+
+@pytest.mark.asyncio
+async def test_subagent_reviewer_runtime_completes_via_handoff_manager(tmp_path):
+    review_file = tmp_path / "src" / "module.py"
+    review_file.parent.mkdir(parents=True, exist_ok=True)
+    review_file.write_text("print('debug')\n", encoding="utf-8")
+
+    manager = HandoffManager(AgentRegistry())
+    result = await manager.delegate(
+        _request(
+            target_agent="subagent_reviewer",
+            execution_mode="planning",
+            task_id="task-review-runtime",
+            metadata={
+                "user_id": "u1",
+                "worktree_path": str(tmp_path),
+                "file_paths": ["src/module.py"],
+            },
+        )
+    )
+
+    assert result.status == "completed"
+    agent_id = result.structured_payload["subagent"]["agent_id"]
+    await asyncio.sleep(0.05)
+    status = manager.subagent_manager.get_status(agent_id)
+
+    assert status["status"] == "completed"
+    comments = status["metadata"]["result"]["comments"]
+    assert any(comment["category"] == "debug_artifact" for comment in comments)

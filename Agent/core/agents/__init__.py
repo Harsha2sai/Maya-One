@@ -2,6 +2,15 @@
 from .base import SpecializedAgent, AgentContext, AgentResponse
 from .registry import AgentRegistry, get_agent_registry
 from .subagent_coder import CodingResult, CodingTask, SubAgentCoder, SubAgentCoderError, TestResult
+from .subagent_reviewer import (
+    DiffAnalysis,
+    ReviewComment,
+    ReviewResult,
+    ReviewTask,
+    ReviewType,
+    SubAgentReviewer,
+    SubAgentReviewerError,
+)
 from .subagent_manager import SubAgentManager, SubAgentLifecycleError
 from .worktree_manager import (
     CleanupPolicy,
@@ -24,6 +33,13 @@ __all__ = [
     'CodingTask',
     'CodingResult',
     'TestResult',
+    'SubAgentReviewer',
+    'SubAgentReviewerError',
+    'ReviewTask',
+    'ReviewType',
+    'ReviewResult',
+    'ReviewComment',
+    'DiffAnalysis',
     'WorktreeManager',
     'WorktreeManagerError',
     'WorktreeContext',
