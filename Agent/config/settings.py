@@ -23,6 +23,20 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+def _env_bool(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_bool_with_aliases(name: str, aliases: tuple[str, ...], default: str = "0") -> bool:
+    """Resolve a primary boolean env var with optional legacy aliases."""
+    if os.getenv(name) is not None:
+        return _env_bool(name, default)
+    for alias in aliases:
+        if os.getenv(alias) is not None:
+            return _env_bool(alias, default)
+    return _env_bool(name, default)
+
+
 @dataclass
 class ProviderSettings:
     """Settings for a specific provider type (LLM, STT, or TTS)"""
@@ -85,6 +99,58 @@ class Settings:
     architecture_phase: int = field(default_factory=lambda: int(os.getenv("MAYA_ARCH_PHASE", "1")))
     # Default governance role applied when client metadata does not specify one.
     default_client_role: str = field(default_factory=lambda: os.getenv("MAYA_DEFAULT_CLIENT_ROLE", "USER"))
+
+    # ==================== ACTION-STATE REFORM FLAGS ====================
+    action_receipts_enabled: bool = field(
+        default_factory=lambda: _env_bool("ACTION_RECEIPTS_ENABLED", "0")
+    )
+    action_state_carryover_enabled: bool = field(
+        default_factory=lambda: _env_bool("ACTION_STATE_CARRYOVER_ENABLED", "0")
+    )
+    action_verification_enabled: bool = field(
+        default_factory=lambda: _env_bool("ACTION_VERIFICATION_ENABLED", "0")
+    )
+    action_truthfulness_strict: bool = field(
+        default_factory=lambda: _env_bool("ACTION_TRUTHFULNESS_STRICT", "0")
+    )
+
+    # ==================== PHASE 28.6 PREREQUISITE HARDENING ====================
+    # Multi-agent prerequisites stay feature-gated until readiness checks pass.
+    multi_agent_features_enabled: bool = field(
+        default_factory=lambda: _env_bool_with_aliases(
+            "MULTI_AGENT_FEATURES_ENABLED",
+            ("MAYA_SUBAGENTS",),
+            "0",
+        )
+    )
+    multi_agent_depth3_enabled: bool = field(
+        default_factory=lambda: _env_bool_with_aliases(
+            "MULTI_AGENT_DEPTH3_ENABLED",
+            ("MAYA_BACKGROUND",),
+            "0",
+        )
+    )
+    max_pending_handoffs_per_session: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PENDING_HANDOFFS_PER_SESSION", "10"))
+    )
+    max_concurrent_subagents_per_maya: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CONCURRENT_SUBAGENTS_PER_MAYA", "5"))
+    )
+    max_progress_events_per_sec_per_session: int = field(
+        default_factory=lambda: int(os.getenv("MAX_PROGRESS_EVENTS_PER_SEC_PER_SESSION", "10"))
+    )
+    max_message_bus_queue_depth_global: int = field(
+        default_factory=lambda: int(os.getenv("MAX_MESSAGE_BUS_QUEUE_DEPTH_GLOBAL", "1000"))
+    )
+    max_retries_per_step: int = field(
+        default_factory=lambda: int(os.getenv("MAX_RETRIES_PER_STEP", "3"))
+    )
+    max_consecutive_failures: int = field(
+        default_factory=lambda: int(os.getenv("MAX_CONSECUTIVE_FAILURES", "3"))
+    )
+    no_progress_timeout_s: int = field(
+        default_factory=lambda: int(os.getenv("NO_PROGRESS_TIMEOUT_S", "300"))
+    )
     
     # ==================== TOOL SETTINGS ====================
     weather_timeout: int = field(default_factory=lambda: int(os.getenv("WEATHER_TIMEOUT", "5")))
