@@ -1,6 +1,16 @@
 # Agents Module Init
 from .base import SpecializedAgent, AgentContext, AgentResponse
 from .registry import AgentRegistry, get_agent_registry
+from .subagent_architect import (
+    ArchitectResult,
+    ArchitectTask,
+    DesignContext,
+    DesignDocument,
+    ImplementationPlan,
+    ImplementationStep,
+    SubAgentArchitect,
+    SubAgentArchitectError,
+)
 from .subagent_coder import CodingResult, CodingTask, SubAgentCoder, SubAgentCoderError, TestResult
 from .subagent_reviewer import (
     DiffAnalysis,
@@ -28,6 +38,14 @@ __all__ = [
     'get_agent_registry',
     'SubAgentManager',
     'SubAgentLifecycleError',
+    'SubAgentArchitect',
+    'SubAgentArchitectError',
+    'ArchitectTask',
+    'ArchitectResult',
+    'DesignContext',
+    'DesignDocument',
+    'ImplementationPlan',
+    'ImplementationStep',
     'SubAgentCoder',
     'SubAgentCoderError',
     'CodingTask',

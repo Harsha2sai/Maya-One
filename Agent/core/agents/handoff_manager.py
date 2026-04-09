@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 
+from core.agents.subagent_architect import ArchitectTask, SubAgentArchitect
 from core.agents.contracts import AgentHandoffRequest, AgentHandoffResult, HandoffSignal
 from core.agents.subagent_coder import CodingTask, SubAgentCoder
 from core.agents.subagent_reviewer import ReviewTask, SubAgentReviewer
@@ -75,6 +76,11 @@ class HandoffManager:
             persistence=self._persistence,
             message_bus=self._message_bus,
             failure_hook=self._on_runtime_subagent_failure,
+        )
+        self._subagent_architect = SubAgentArchitect(
+            subagent_manager=self.subagent_manager,
+            message_bus=self._message_bus,
+            persistence=self._persistence,
         )
 
     @staticmethod
@@ -159,6 +165,10 @@ class HandoffManager:
             "review_type": metadata.get("review_type"),
             "base_ref": metadata.get("base_ref"),
             "head_ref": metadata.get("head_ref"),
+            "design_context": metadata.get("design_context"),
+            "implementation_steps": list(metadata.get("implementation_steps") or []),
+            "design_doc_path": metadata.get("design_doc_path"),
+            "auto_delegate": metadata.get("auto_delegate", True),
         }
 
     def _is_subagent_circuit_open(self, target: str) -> bool:
@@ -180,7 +190,7 @@ class HandoffManager:
         worktree_path: str | None,
     ):
         normalized_type = str(agent_type or "").strip().lower()
-        if normalized_type not in {"subagent_coder", "subagent_reviewer"}:
+        if normalized_type not in {"subagent_coder", "subagent_reviewer", "subagent_architect"}:
             return None
 
         worktree = WorktreeContext(
@@ -199,10 +209,16 @@ class HandoffManager:
                 coding_task.task_id = str((task_context or {}).get("task_id") or "")
             return asyncio.create_task(self._subagent_coder.execute(coding_task, worktree))
 
-        review_task = ReviewTask.from_task_context(task_context or {})
-        if not review_task.task_id:
-            review_task.task_id = str((task_context or {}).get("task_id") or "")
-        return asyncio.create_task(self._subagent_reviewer.execute(review_task, worktree))
+        if normalized_type == "subagent_reviewer":
+            review_task = ReviewTask.from_task_context(task_context or {})
+            if not review_task.task_id:
+                review_task.task_id = str((task_context or {}).get("task_id") or "")
+            return asyncio.create_task(self._subagent_reviewer.execute(review_task, worktree))
+
+        architect_task = ArchitectTask.from_task_context(task_context or {})
+        if not architect_task.task_id:
+            architect_task.task_id = str((task_context or {}).get("task_id") or "")
+        return asyncio.create_task(self._subagent_architect.execute(architect_task, worktree))
 
     async def _delegate_subagent(self, request: AgentHandoffRequest) -> AgentHandoffResult:
         target = str(request.target_agent or "").strip().lower()
