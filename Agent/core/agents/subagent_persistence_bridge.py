@@ -6,9 +6,10 @@ import asyncio
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
-from core.agents.subagent_manager import SubAgentManager
+if TYPE_CHECKING:
+    from core.agents.subagent_manager import SubAgentManager
 
 
 class RecoveryPolicy(str, Enum):
@@ -40,7 +41,7 @@ class SubagentPersistenceBridge:
         self,
         *,
         persistence: Any = None,
-        subagent_manager: Optional[SubAgentManager] = None,
+        subagent_manager: Optional["SubAgentManager"] = None,
     ) -> None:
         self._persistence = persistence
         self._subagent_manager = subagent_manager
@@ -110,17 +111,21 @@ class SubagentPersistenceBridge:
         task_context = dict(state.get("task_context") or {})
         if not task_context:
             task_context = {
+                "agent_id": snapshot.agent_id,
                 "parent_handoff_id": state.get("parent_handoff_id"),
                 "delegation_chain_id": state.get("delegation_chain_id"),
                 "task_id": state.get("task_id"),
                 "trace_id": state.get("trace_id"),
                 "conversation_id": state.get("conversation_id"),
             }
+        else:
+            task_context["agent_id"] = snapshot.agent_id
 
         resumed = await self._subagent_manager.spawn(
             str(state.get("agent_type") or "").strip(),
             task_context,
             worktree_path=state.get("worktree_path"),
+            recoverable=snapshot.recovery_policy != RecoveryPolicy.NEVER,
         )
         resumed.setdefault("metadata", {})
         resumed["metadata"]["recovered_from_agent_id"] = snapshot.agent_id
@@ -193,6 +198,12 @@ class SubagentPersistenceBridge:
                 return snapshot
 
         return None
+
+    async def get_snapshot(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        snapshot = await self._load_snapshot(agent_id)
+        if snapshot is None:
+            return None
+        return snapshot.to_dict()
 
     def _get_recovery_policy(self, agent_id: str) -> RecoveryPolicy:
         snapshot = self._snapshots.get(agent_id)

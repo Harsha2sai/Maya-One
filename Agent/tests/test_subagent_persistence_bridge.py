@@ -29,10 +29,10 @@ class _FakeSubAgentManager:
     def __init__(self):
         self.calls = []
 
-    async def spawn(self, agent_type, task_context, worktree_path=None):
-        self.calls.append((agent_type, task_context, worktree_path))
+    async def spawn(self, agent_type, task_context, worktree_path=None, recoverable=False, wait=True):
+        self.calls.append((agent_type, task_context, worktree_path, recoverable, wait))
         return {
-            "agent_id": "subag_resumed_1",
+            "agent_id": str(task_context.get("agent_id") or "subag_resumed_1"),
             "agent_type": agent_type,
             "status": "running",
             "task_context": task_context,
@@ -105,11 +105,13 @@ async def test_resume_from_checkpoint_respawns_through_manager():
     resumed = await bridge.resume_from_checkpoint("subag_123")
 
     assert resumed is not None
-    assert resumed["agent_id"] == "subag_resumed_1"
+    assert resumed["agent_id"] == "subag_123"
     assert resumed["metadata"]["recovered_from_agent_id"] == "subag_123"
     assert resumed["metadata"]["recovery_policy"] == "always"
     assert manager.calls[0][0] == "subagent_coder"
+    assert manager.calls[0][1]["agent_id"] == "subag_123"
     assert manager.calls[0][2] == "/tmp/subag_123"
+    assert manager.calls[0][3] is True
 
 
 @pytest.mark.asyncio

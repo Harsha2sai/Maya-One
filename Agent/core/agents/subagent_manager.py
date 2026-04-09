@@ -9,6 +9,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from core.agents.subagent_persistence_bridge import RecoveryPolicy, SubagentPersistenceBridge
+
 logger = logging.getLogger(__name__)
 
 SubAgentFailureHook = Callable[[str, str], Awaitable[None] | None]
@@ -70,6 +72,34 @@ class SubAgentRuntimeState:
         }
 
 
+@dataclass
+class BackgroundTaskState:
+    task_ref: str
+    agent_id: str
+    agent_type: str
+    status: str
+    task_id: str = ""
+    trace_id: str = ""
+    worktree_path: Optional[str] = None
+    recoverable: bool = False
+    created_at: float = field(default_factory=lambda: float(time.time()))
+    updated_at: float = field(default_factory=lambda: float(time.time()))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "task_ref": self.task_ref,
+            "agent_id": self.agent_id,
+            "agent_type": self.agent_type,
+            "status": self.status,
+            "task_id": self.task_id,
+            "trace_id": self.trace_id,
+            "worktree_path": self.worktree_path,
+            "recoverable": self.recoverable,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+
 class SubAgentManager:
     """Deterministic lifecycle manager for spawned subagents."""
 
@@ -81,6 +111,7 @@ class SubAgentManager:
         persistence: Any = None,
         message_bus: Any = None,
         failure_hook: Optional[SubAgentFailureHook] = None,
+        persistence_bridge: Optional[SubagentPersistenceBridge] = None,
         allowed_agent_types: Optional[set[str]] = None,
     ) -> None:
         self._lifecycle_factory = lifecycle_factory
@@ -90,14 +121,21 @@ class SubAgentManager:
         self._failure_hook = failure_hook
         self._allowed_agent_types = set(allowed_agent_types or DEFAULT_SUBAGENT_TYPES)
         self._states: Dict[str, SubAgentRuntimeState] = {}
+        self._background_tasks: Dict[str, BackgroundTaskState] = {}
         self._handles: Dict[str, Any] = {}
         self._lock = asyncio.Lock()
+        self._persistence_bridge = persistence_bridge or SubagentPersistenceBridge(
+            persistence=self._persistence,
+            subagent_manager=self,
+        )
 
     async def spawn(
         self,
         agent_type: str,
         task_context: Dict[str, Any],
         worktree_path: Optional[str] = None,
+        wait: bool = True,
+        recoverable: bool = False,
     ) -> Dict[str, Any]:
         normalized_type = str(agent_type or "").strip().lower()
         if normalized_type not in self._allowed_agent_types:
@@ -115,7 +153,14 @@ class SubAgentManager:
                 "parent_handoff_id and delegation_chain_id are required",
             )
 
-        agent_id = f"subag_{uuid.uuid4().hex[:12]}"
+        requested_agent_id = str(context.get("agent_id") or "").strip()
+        agent_id = requested_agent_id or f"subag_{uuid.uuid4().hex[:12]}"
+        existing_state = self._states.get(agent_id)
+        if existing_state is not None and existing_state.status not in TERMINAL_STATES:
+            raise SubAgentLifecycleError(
+                "subagent_id_conflict",
+                f"subagent id already active: {agent_id}",
+            )
         state = SubAgentRuntimeState(
             agent_id=agent_id,
             agent_type=normalized_type,
@@ -129,6 +174,8 @@ class SubAgentManager:
             worktree_path=worktree_path,
             metadata={
                 "requested_worktree_path": worktree_path,
+                "recoverable": bool(recoverable),
+                "background": not wait,
             },
         )
 
@@ -175,7 +222,15 @@ class SubAgentManager:
                 summary=f"{normalized_type} spawned",
                 percent=5,
             )
-            return state.to_dict()
+            if recoverable and self._persistence_bridge is not None:
+                await self._persistence_bridge.mark_recoverable(agent_id, RecoveryPolicy.ALWAYS)
+            await self._persist_recovery_state(state)
+
+            if wait:
+                return state.to_dict()
+
+            background = self._register_background_task(state)
+            return background.to_dict()
         except Exception as exc:
             await self._mark_failed(
                 state,
@@ -183,6 +238,95 @@ class SubAgentManager:
                 error_detail=str(exc),
             )
             raise
+
+    async def spawn_background(
+        self,
+        agent_type: str,
+        task_context: Dict[str, Any],
+        recoverable: bool = True,
+    ) -> Dict[str, Any]:
+        return await self.spawn(
+            agent_type,
+            task_context,
+            wait=False,
+            recoverable=recoverable,
+        )
+
+    async def get_background_status(self, task_ref: str) -> Dict[str, Any]:
+        normalized_ref = str(task_ref or "").strip()
+        if not normalized_ref:
+            raise LookupError("background_task_not_found:")
+
+        background = self._background_tasks.get(normalized_ref)
+        state = self._states.get(normalized_ref)
+        if state is not None:
+            if background is None:
+                background = self._register_background_task(state)
+            background.status = state.status
+            background.updated_at = float(time.time())
+            background.worktree_path = state.worktree_path
+            return {
+                **background.to_dict(),
+                "error_code": state.error_code,
+                "error_detail": state.error_detail,
+                "result": dict(state.metadata or {}).get("result"),
+            }
+
+        if background is not None:
+            return background.to_dict()
+
+        if self._persistence_bridge is not None:
+            snapshot = await self._persistence_bridge.get_snapshot(normalized_ref)
+            if snapshot is not None:
+                state_payload = dict(snapshot.get("state") or {})
+                return {
+                    "task_ref": normalized_ref,
+                    "agent_id": normalized_ref,
+                    "agent_type": state_payload.get("agent_type"),
+                    "status": state_payload.get("status"),
+                    "task_id": state_payload.get("task_id"),
+                    "trace_id": state_payload.get("trace_id"),
+                    "worktree_path": state_payload.get("worktree_path"),
+                    "recoverable": snapshot.get("recovery_policy") != RecoveryPolicy.NEVER.value,
+                    "created_at": state_payload.get("created_at"),
+                    "updated_at": snapshot.get("updated_at"),
+                    "error_code": state_payload.get("error_code"),
+                    "error_detail": state_payload.get("error_detail"),
+                    "result": dict(state_payload.get("metadata") or {}).get("result"),
+                    "recovered_snapshot": True,
+                }
+
+        raise LookupError(f"background_task_not_found:{normalized_ref}")
+
+    async def resume_background(self, task_ref: str) -> Dict[str, Any]:
+        normalized_ref = str(task_ref or "").strip()
+        if not normalized_ref:
+            raise LookupError("background_task_not_found:")
+        if self._persistence_bridge is None:
+            raise SubAgentLifecycleError(
+                "subagent_recovery_unavailable",
+                "persistence bridge is not configured",
+            )
+
+        resumed = await self._persistence_bridge.resume_from_checkpoint(normalized_ref)
+        if resumed is None:
+            raise LookupError(f"background_checkpoint_not_found:{normalized_ref}")
+
+        state = self._states.get(str(resumed.get("agent_id") or "").strip())
+        if state is not None:
+            self._register_background_task(state)
+        return resumed
+
+    async def await_completion(self, task_ref: str, timeout: Optional[float] = None) -> Dict[str, Any]:
+        normalized_ref = str(task_ref or "").strip()
+        deadline = None if timeout is None else float(time.time()) + float(timeout)
+        while True:
+            status = await self.get_background_status(normalized_ref)
+            if str(status.get("status") or "").strip().lower() in TERMINAL_STATES:
+                return status
+            if deadline is not None and float(time.time()) >= deadline:
+                raise TimeoutError(f"background_task_timeout:{normalized_ref}")
+            await asyncio.sleep(0.02)
 
     async def terminate(self, agent_id: str) -> Dict[str, Any]:
         normalized_id = str(agent_id or "").strip()
@@ -214,6 +358,8 @@ class SubAgentManager:
             summary=f"{state.agent_type} terminated",
             percent=100,
         )
+        await self._persist_recovery_state(state)
+        self._sync_background_state(state)
         return state.to_dict()
 
     def get_status(self, agent_id: str) -> Dict[str, Any]:
@@ -485,6 +631,8 @@ class SubAgentManager:
             summary=f"{state.agent_type} failed",
             percent=100,
         )
+        await self._persist_recovery_state(state)
+        self._sync_background_state(state)
         await self._notify_failure(state)
 
     async def _mark_completed(self, state: SubAgentRuntimeState, *, result: Any) -> None:
@@ -520,7 +668,50 @@ class SubAgentManager:
             summary=f"{state.agent_type} completed",
             percent=100,
         )
+        await self._persist_recovery_state(state)
+        self._sync_background_state(state)
         await self._cleanup_worktree(state)
+
+    def _register_background_task(self, state: SubAgentRuntimeState) -> BackgroundTaskState:
+        background = self._background_tasks.get(state.agent_id)
+        if background is None:
+            background = BackgroundTaskState(
+                task_ref=state.agent_id,
+                agent_id=state.agent_id,
+                agent_type=state.agent_type,
+                status=state.status,
+                task_id=state.task_id,
+                trace_id=state.trace_id,
+                worktree_path=state.worktree_path,
+                recoverable=bool((state.metadata or {}).get("recoverable")),
+                created_at=state.created_at,
+                updated_at=state.updated_at,
+            )
+            self._background_tasks[state.agent_id] = background
+            return background
+
+        background.status = state.status
+        background.updated_at = state.updated_at
+        background.worktree_path = state.worktree_path
+        background.recoverable = bool((state.metadata or {}).get("recoverable"))
+        return background
+
+    def _sync_background_state(self, state: SubAgentRuntimeState) -> None:
+        background = self._background_tasks.get(state.agent_id)
+        if background is None:
+            return
+        background.status = state.status
+        background.updated_at = state.updated_at
+        background.worktree_path = state.worktree_path
+        background.recoverable = bool((state.metadata or {}).get("recoverable"))
+
+    async def _persist_recovery_state(self, state: SubAgentRuntimeState) -> None:
+        bridge = self._persistence_bridge
+        if bridge is None:
+            return
+        if not bool((state.metadata or {}).get("recoverable")):
+            return
+        await bridge.save_checkpoint(state.agent_id, state.to_dict())
 
     @staticmethod
     def _to_jsonable(value: Any) -> Any:

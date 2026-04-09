@@ -18,6 +18,7 @@ class _FakePersistence:
     def __init__(self):
         self.checkpoints = []
         self.terminals = []
+        self.loaded = {}
 
     async def save_checkpoint(self, task_id, step_id, payload, checkpoint_id=None, ts=None):
         self.checkpoints.append(
@@ -29,6 +30,7 @@ class _FakePersistence:
                 "ts": ts,
             }
         )
+        self.loaded[step_id] = payload
         return checkpoint_id or "chk_test"
 
     async def mark_terminal(self, task_id, status, reason):
@@ -40,6 +42,9 @@ class _FakePersistence:
             }
         )
         return True
+
+    async def load_checkpoint(self, agent_id):
+        return self.loaded.get(agent_id)
 
 
 class _FakeWorktreeManager:
@@ -205,6 +210,64 @@ async def test_async_runtime_task_completion_marks_completed_and_persists_result
     assert worktrees.cleaned[0]["status"] == "completed"
     assert persistence.terminals[0]["status"] == "COMPLETED"
     assert bus.events[-1][1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_spawn_background_returns_trackable_ref_and_completion_status():
+    persistence = _FakePersistence()
+
+    async def _runner():
+        await asyncio.sleep(0.01)
+        return {"summary": "background done"}
+
+    manager = SubAgentManager(
+        persistence=persistence,
+        lifecycle_factory=lambda _t, _ctx, _path: asyncio.create_task(_runner()),
+    )
+
+    background = await manager.spawn_background(
+        "subagent_coder",
+        _lineage_context(),
+    )
+    status = await manager.get_background_status(background["task_ref"])
+    completed = await manager.await_completion(background["task_ref"], timeout=1.0)
+
+    assert background["task_ref"] == background["agent_id"]
+    assert status["status"] in {"running", "completed"}
+    assert completed["status"] == "completed"
+    assert completed["result"]["summary"] == "background done"
+
+
+@pytest.mark.asyncio
+async def test_resume_background_uses_persistence_bridge_snapshot():
+    persistence = _FakePersistence()
+
+    manager_one = SubAgentManager(
+        persistence=persistence,
+        lifecycle_factory=lambda _t, _ctx, _path: object(),
+    )
+    background = await manager_one.spawn_background(
+        "subagent_coder",
+        _lineage_context(),
+        recoverable=True,
+    )
+
+    async def _runner():
+        await asyncio.sleep(0.01)
+        return {"summary": "resumed done"}
+
+    manager_two = SubAgentManager(
+        persistence=persistence,
+        lifecycle_factory=lambda _t, _ctx, _path: asyncio.create_task(_runner()),
+    )
+
+    resumed = await manager_two.resume_background(background["task_ref"])
+    completed = await manager_two.await_completion(background["task_ref"], timeout=1.0)
+
+    assert resumed["agent_id"] == background["task_ref"]
+    assert resumed["metadata"]["recovered_from_agent_id"] == background["task_ref"]
+    assert completed["status"] == "completed"
+    assert completed["result"]["summary"] == "resumed done"
 
 
 @pytest.mark.asyncio
