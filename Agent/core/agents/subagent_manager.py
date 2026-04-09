@@ -19,7 +19,7 @@ DEFAULT_SUBAGENT_TYPES = {
     "subagent_reviewer",
     "subagent_architect",
 }
-TERMINAL_STATES = {"terminated", "failed"}
+TERMINAL_STATES = {"terminated", "failed", "completed"}
 
 
 class SubAgentLifecycleError(RuntimeError):
@@ -154,6 +154,8 @@ class SubAgentManager:
             )
             if handle is not None:
                 self._handles[agent_id] = handle
+                if isinstance(handle, asyncio.Task):
+                    self._attach_task_monitor(agent_id, handle)
 
             state.status = "running"
             state.updated_at = float(time.time())
@@ -349,6 +351,38 @@ class SubAgentManager:
             except asyncio.CancelledError:
                 return
 
+    def _attach_task_monitor(self, agent_id: str, task: asyncio.Task) -> None:
+        def _done(done_task: asyncio.Task) -> None:
+            asyncio.create_task(self._handle_task_done(agent_id, done_task))
+
+        task.add_done_callback(_done)
+
+    async def _handle_task_done(self, agent_id: str, task: asyncio.Task) -> None:
+        state = self._states.get(agent_id)
+        if state is None or state.status in TERMINAL_STATES:
+            return
+        self._handles.pop(agent_id, None)
+
+        if task.cancelled():
+            await self._mark_failed(
+                state,
+                error_code="subagent_task_cancelled",
+                error_detail="runtime task cancelled",
+            )
+            return
+
+        try:
+            result = task.result()
+        except Exception as exc:
+            await self._mark_failed(
+                state,
+                error_code="subagent_runtime_failed",
+                error_detail=str(exc),
+            )
+            return
+
+        await self._mark_completed(state, result=result)
+
     async def _save_checkpoint(
         self,
         *,
@@ -452,3 +486,60 @@ class SubAgentManager:
             percent=100,
         )
         await self._notify_failure(state)
+
+    async def _mark_completed(self, state: SubAgentRuntimeState, *, result: Any) -> None:
+        if state.status in TERMINAL_STATES:
+            return
+
+        state.status = "completed"
+        state.updated_at = float(time.time())
+        state.ended_at = state.updated_at
+        state.metadata["result"] = self._to_jsonable(result)
+
+        await self._save_checkpoint(
+            state=state,
+            event="subagent_completed",
+            payload={"result": self._to_jsonable(result)},
+        )
+
+        if self._persistence is not None and state.task_id:
+            mark_terminal = getattr(self._persistence, "mark_terminal", None)
+            if callable(mark_terminal):
+                maybe = mark_terminal(
+                    task_id=state.task_id,
+                    status="COMPLETED",
+                    reason="subagent_completed",
+                )
+                if asyncio.iscoroutine(maybe):
+                    await maybe
+
+        await self._emit_progress(
+            state=state,
+            status="completed",
+            phase="subagent_completed",
+            summary=f"{state.agent_type} completed",
+            percent=100,
+        )
+        await self._cleanup_worktree(state)
+
+    @staticmethod
+    def _to_jsonable(value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(k): SubAgentManager._to_jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [SubAgentManager._to_jsonable(v) for v in value]
+        if hasattr(value, "to_dict") and callable(value.to_dict):
+            try:
+                return SubAgentManager._to_jsonable(value.to_dict())
+            except Exception:
+                return str(value)
+        if hasattr(value, "__dict__"):
+            try:
+                return SubAgentManager._to_jsonable(dict(value.__dict__))
+            except Exception:
+                return str(value)
+        return str(value)

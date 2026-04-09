@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
 from core.agents.contracts import AgentHandoffRequest, AgentHandoffResult, HandoffSignal
+from core.agents.subagent_coder import CodingTask, SubAgentCoder
 from core.agents.subagent_manager import SubAgentLifecycleError, SubAgentManager
-from core.agents.worktree_manager import WorktreeManager
+from core.agents.worktree_manager import WorktreeContext, WorktreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -55,10 +57,38 @@ class HandoffManager:
 
     def __init__(self, registry, *, subagent_manager: SubAgentManager | None = None) -> None:
         self.registry = registry
-        self.subagent_manager = subagent_manager or SubAgentManager(
-            worktree_manager=WorktreeManager(),
-        )
         self._subagent_failure_counts: dict[str, int] = {}
+        self._message_bus = self._build_message_bus()
+        self._persistence = self._build_task_persistence()
+        self._subagent_coder = SubAgentCoder(
+            message_bus=self._message_bus,
+            persistence=self._persistence,
+        )
+        self.subagent_manager = subagent_manager or SubAgentManager(
+            lifecycle_factory=self._build_subagent_lifecycle,
+            worktree_manager=WorktreeManager(),
+            persistence=self._persistence,
+            message_bus=self._message_bus,
+            failure_hook=self._on_runtime_subagent_failure,
+        )
+
+    @staticmethod
+    def _build_message_bus():
+        try:
+            from core.messaging.message_bus import MessageBus
+
+            return MessageBus()
+        except Exception:
+            return None
+
+    @staticmethod
+    def _build_task_persistence():
+        try:
+            from core.tasks.task_persistence import TaskPersistence
+
+            return TaskPersistence()
+        except Exception:
+            return None
 
     def validate_request(self, request: AgentHandoffRequest) -> None:
         if str(request.parent_agent or "").strip().lower() != "maya":
@@ -117,6 +147,9 @@ class HandoffManager:
             "conversation_id": request.conversation_id,
             "base_branch": str(metadata.get("base_branch") or "HEAD"),
             "worktree_base": metadata.get("worktree_base"),
+            "instruction": request.user_text,
+            "file_writes": list(metadata.get("file_writes") or []),
+            "test_pattern": metadata.get("test_pattern"),
         }
 
     def _is_subagent_circuit_open(self, target: str) -> bool:
@@ -127,6 +160,34 @@ class HandoffManager:
 
     def _record_subagent_success(self, target: str) -> None:
         self._subagent_failure_counts[target] = 0
+
+    def _on_runtime_subagent_failure(self, agent_type: str, _agent_id: str) -> None:
+        self._record_subagent_failure(str(agent_type or "").strip().lower())
+
+    async def _build_subagent_lifecycle(
+        self,
+        agent_type: str,
+        task_context: dict,
+        worktree_path: str | None,
+    ):
+        if str(agent_type or "").strip().lower() != "subagent_coder":
+            return None
+
+        coding_task = CodingTask.from_task_context(task_context or {})
+        if not coding_task.task_id:
+            coding_task.task_id = str((task_context or {}).get("task_id") or "")
+
+        worktree = WorktreeContext(
+            worktree_id=str((task_context or {}).get("worktree_id") or ""),
+            task_id=coding_task.task_id,
+            path=str(worktree_path or ""),
+            branch=str((task_context or {}).get("worktree_branch") or ""),
+            base_branch=str((task_context or {}).get("base_branch") or "HEAD"),
+            status="running",
+            created_at=float(time.time()),
+            updated_at=float(time.time()),
+        )
+        return asyncio.create_task(self._subagent_coder.execute(coding_task, worktree))
 
     async def _delegate_subagent(self, request: AgentHandoffRequest) -> AgentHandoffResult:
         target = str(request.target_agent or "").strip().lower()

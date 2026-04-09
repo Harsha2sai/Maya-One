@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from core.agents.subagent_manager import SubAgentLifecycleError, SubAgentManager
@@ -175,6 +177,37 @@ async def test_record_failure_marks_terminal_and_notifies_breaker_hook():
 
 
 @pytest.mark.asyncio
+async def test_async_runtime_task_completion_marks_completed_and_persists_result():
+    bus = _FakeBus()
+    persistence = _FakePersistence()
+    worktrees = _FakeWorktreeManager()
+
+    async def _runner():
+        await asyncio.sleep(0.01)
+        return {
+            "summary": "coder completed",
+            "changed_files": ["src/generated.py"],
+        }
+
+    manager = SubAgentManager(
+        message_bus=bus,
+        persistence=persistence,
+        worktree_manager=worktrees,
+        lifecycle_factory=lambda _t, _ctx, _path: asyncio.create_task(_runner()),
+    )
+
+    spawned = await manager.spawn("subagent_coder", _lineage_context())
+    await asyncio.sleep(0.05)
+    status = manager.get_status(spawned["agent_id"])
+
+    assert status["status"] == "completed"
+    assert status["metadata"]["result"]["summary"] == "coder completed"
+    assert worktrees.cleaned[0]["status"] == "completed"
+    assert persistence.terminals[0]["status"] == "COMPLETED"
+    assert bus.events[-1][1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_spawn_failure_marks_failed_and_raises():
     manager = SubAgentManager(
         lifecycle_factory=lambda _t, _ctx, _path: (_ for _ in ()).throw(RuntimeError("spawn down")),
@@ -182,4 +215,3 @@ async def test_spawn_failure_marks_failed_and_raises():
 
     with pytest.raises(RuntimeError):
         await manager.spawn("subagent_coder", _lineage_context())
-
