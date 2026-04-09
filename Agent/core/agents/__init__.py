@@ -1,6 +1,15 @@
 # Agents Module Init
 from .base import SpecializedAgent, AgentContext, AgentResponse
 from .registry import AgentRegistry, get_agent_registry
+from .security_agent import (
+    SecretFinding,
+    SecretReport,
+    SecurityAgent,
+    SecurityFinding,
+    SecurityReport,
+    VulnerabilityFinding,
+    VulnerabilityReport,
+)
 from .subagent_persistence_bridge import RecoveryPolicy, RecoverySnapshot, SubagentPersistenceBridge
 from .subagent_architect import (
     ArchitectResult,
@@ -37,6 +46,13 @@ __all__ = [
     'AgentResponse',
     'AgentRegistry',
     'get_agent_registry',
+    'SecurityAgent',
+    'SecurityFinding',
+    'SecurityReport',
+    'VulnerabilityFinding',
+    'VulnerabilityReport',
+    'SecretFinding',
+    'SecretReport',
     'SubAgentManager',
     'SubAgentLifecycleError',
     'SubagentPersistenceBridge',

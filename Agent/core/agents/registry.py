@@ -7,6 +7,7 @@ from core.agents.base import SpecializedAgent, AgentContext, AgentResponse
 from core.agents.contracts import AgentCapabilityMatch, AgentHandoffRequest, AgentHandoffResult
 from core.agents.media_agent_handler import MediaAgentHandler
 from core.agents.research_agent import ResearchSpecialistAgent
+from core.agents.security_agent import SecurityAgent
 from core.agents.scheduling_agent_handler import SchedulingAgentHandler
 from core.agents.system_operator_agent import SystemOperatorAgent
 from core.agents.planner_agent import PlannerAgent
@@ -30,6 +31,7 @@ class AgentRegistry:
         self.register_agent(PlannerAgent())
         self.register_agent(MediaAgentHandler())
         self.register_agent(SchedulingAgentHandler())
+        self.register_agent(SecurityAgent())
         logger.info(f"✅ Registered {len(self.agents)} specialized agents")
     
     def register_agent(self, agent: SpecializedAgent):
