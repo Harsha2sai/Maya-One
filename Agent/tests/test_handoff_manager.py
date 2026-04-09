@@ -133,7 +133,7 @@ async def test_subagent_target_routes_to_subagent_manager_spawn():
             self.calls = []
 
         async def spawn(self, agent_type, task_context, worktree_path=None):
-            self.calls.append((agent_type, task_context, worktree_path))
+            self.calls.append(("spawn", agent_type, task_context, worktree_path))
             return {
                 "agent_id": "subag_1",
                 "agent_type": agent_type,
@@ -169,9 +169,87 @@ async def test_subagent_target_routes_to_subagent_manager_spawn():
     assert result.next_action == "background"
     assert result.structured_payload["runtime"] == "subagent_manager"
     assert subagent_manager.calls
-    _, task_context, _ = subagent_manager.calls[0]
+    _, _, task_context, _ = subagent_manager.calls[0]
     assert task_context["parent_handoff_id"] == "handoff-1"
     assert task_context["delegation_chain_id"] == "chain-explicit"
+
+
+@pytest.mark.asyncio
+async def test_background_subagent_target_routes_to_spawn_background():
+    class _SubagentManager:
+        def __init__(self):
+            self.calls = []
+
+        async def spawn(self, agent_type, task_context, worktree_path=None):
+            raise AssertionError("foreground spawn should not be used")
+
+        async def spawn_background(self, agent_type, task_context, recoverable=True):
+            self.calls.append(("spawn_background", agent_type, task_context, recoverable))
+            return {
+                "task_ref": "subag_bg_1",
+                "agent_id": "subag_bg_1",
+                "agent_type": agent_type,
+                "status": "running",
+                "recoverable": recoverable,
+            }
+
+    manager = HandoffManager(AgentRegistry(), subagent_manager=_SubagentManager())
+    result = await manager.delegate(
+        _request(
+            target_agent="subagent_coder",
+            execution_mode="background",
+            task_id="task-bg-1",
+            metadata={"user_id": "u1"},
+        ),
+        background=True,
+        recoverable=True,
+    )
+
+    assert result.status == "completed"
+    assert result.next_action == "background"
+    assert result.structured_payload["background"] is True
+    assert result.structured_payload["recoverable"] is True
+    assert result.structured_payload["subagent"]["task_ref"] == "subag_bg_1"
+    assert manager.subagent_manager.calls[0][0] == "spawn_background"
+    assert manager.subagent_manager.calls[0][3] is True
+
+
+@pytest.mark.asyncio
+async def test_delegate_background_convenience_uses_background_path():
+    class _SubagentManager:
+        def __init__(self):
+            self.calls = []
+
+        async def spawn(self, agent_type, task_context, worktree_path=None):
+            raise AssertionError("foreground spawn should not be used")
+
+        async def spawn_background(self, agent_type, task_context, recoverable=True):
+            self.calls.append((agent_type, task_context, recoverable))
+            return {
+                "task_ref": "subag_bg_2",
+                "agent_id": "subag_bg_2",
+                "agent_type": agent_type,
+                "status": "running",
+                "recoverable": recoverable,
+            }
+
+    subagent_manager = _SubagentManager()
+    manager = HandoffManager(AgentRegistry(), subagent_manager=subagent_manager)
+    result = await manager.delegate_background(
+        _request(
+            target_agent="subagent_architect",
+            execution_mode="planning",
+            task_id="task-bg-2",
+            metadata={"user_id": "u1"},
+        ),
+        recoverable=False,
+    )
+
+    assert result.status == "completed"
+    assert result.structured_payload["background"] is True
+    assert result.structured_payload["recoverable"] is False
+    assert result.structured_payload["subagent"]["agent_type"] == "subagent_architect"
+    assert subagent_manager.calls[0][2] is False
 
 
 @pytest.mark.asyncio

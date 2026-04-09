@@ -220,7 +220,13 @@ class HandoffManager:
             architect_task.task_id = str((task_context or {}).get("task_id") or "")
         return asyncio.create_task(self._subagent_architect.execute(architect_task, worktree))
 
-    async def _delegate_subagent(self, request: AgentHandoffRequest) -> AgentHandoffResult:
+    async def _delegate_subagent(
+        self,
+        request: AgentHandoffRequest,
+        *,
+        background: bool = False,
+        recoverable: bool = False,
+    ) -> AgentHandoffResult:
         target = str(request.target_agent or "").strip().lower()
         if self._is_subagent_circuit_open(target):
             raise HandoffLimitError(
@@ -230,11 +236,18 @@ class HandoffManager:
 
         try:
             metadata = dict(request.metadata or {})
-            spawned = await self.subagent_manager.spawn(
-                target,
-                self._subagent_context(request),
-                worktree_path=metadata.get("worktree_path"),
-            )
+            if background:
+                spawned = await self.subagent_manager.spawn_background(
+                    target,
+                    self._subagent_context(request),
+                    recoverable=recoverable,
+                )
+            else:
+                spawned = await self.subagent_manager.spawn(
+                    target,
+                    self._subagent_context(request),
+                    worktree_path=metadata.get("worktree_path"),
+                )
             self._record_subagent_success(target)
             return AgentHandoffResult(
                 handoff_id=request.handoff_id,
@@ -246,8 +259,10 @@ class HandoffManager:
                 structured_payload={
                     "subagent": spawned,
                     "runtime": "subagent_manager",
+                    "background": background,
+                    "recoverable": recoverable,
                 },
-                next_action="background" if request.execution_mode in {"background", "planning"} else "continue",
+                next_action="background" if background or request.execution_mode in {"background", "planning"} else "continue",
                 metadata={
                     "task_scope": "tracked" if request.task_id else "inline_untracked",
                 },
@@ -269,7 +284,12 @@ class HandoffManager:
                 metadata={"task_scope": "tracked" if request.task_id else "inline_untracked"},
             )
 
-    async def delegate(self, request: AgentHandoffRequest) -> AgentHandoffResult:
+    async def delegate(
+        self,
+        request: AgentHandoffRequest,
+        background: bool = False,
+        recoverable: bool = False,
+    ) -> AgentHandoffResult:
         started = time.perf_counter()
         logger.info(
             "handoff_requested target=%s parent=%s active_agent=%s handoff_id=%s",
@@ -281,7 +301,11 @@ class HandoffManager:
         try:
             self.validate_request(request)
             if str(request.target_agent or "").strip().lower() in self.SUBAGENT_TARGETS:
-                result = await self._delegate_subagent(request)
+                result = await self._delegate_subagent(
+                    request,
+                    background=background,
+                    recoverable=recoverable,
+                )
                 elapsed_ms = (time.perf_counter() - started) * 1000.0
                 logger.info(
                     "handoff_completed target=%s status=%s total_ms=%.2f handoff_id=%s",
@@ -344,6 +368,17 @@ class HandoffManager:
                 error_detail=str(exc),
                 metadata={"task_scope": "inline_untracked" if not request.task_id else "tracked"},
             )
+
+    async def delegate_background(
+        self,
+        request: AgentHandoffRequest,
+        recoverable: bool = True,
+    ) -> AgentHandoffResult:
+        return await self.delegate(
+            request,
+            background=True,
+            recoverable=recoverable,
+        )
 
 def get_handoff_manager(registry, *, subagent_manager: SubAgentManager | None = None) -> HandoffManager:
     return HandoffManager(registry, subagent_manager=subagent_manager)
