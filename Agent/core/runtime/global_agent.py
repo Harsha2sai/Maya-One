@@ -35,6 +35,8 @@ class GlobalAgentContainer:
     _memory_warmup_task: Optional[asyncio.Task[Any]] = None
     _app_cache_preload_task: Optional[asyncio.Task[Any]] = None
     _msg_hub: Any = None         # MayaMsgHub (P28 infrastructure)
+    _worktree_manager: Any = None  # P29 worktree isolation manager
+    _subagent_manager: Any = None  # P29 subagent lifecycle manager
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
     _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
     _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
@@ -72,6 +74,10 @@ class GlobalAgentContainer:
         from core.memory.agentscope_store import MayaAgentScopeMemory
         from core.observability import MayaMonitor
         from core.a2a import MayaA2AServer
+        from core.agents.subagent import (
+            SubAgentManager as RuntimeSubAgentManager,
+            WorktreeManager as RuntimeWorktreeManager,
+        )
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -109,6 +115,12 @@ class GlobalAgentContainer:
         from core.messaging import MayaMsgHub
         cls._msg_hub = MayaMsgHub()
         logger.info("📨 MayaMsgHub initialized (P28 infrastructure)")
+        cls._worktree_manager = RuntimeSubWorktreeManager()
+        cls._subagent_manager = RuntimeSubAgentManager(
+            msg_hub=cls._msg_hub,
+            worktree_manager=cls._worktree_manager,
+        )
+        logger.info("🤖 SubAgentManager initialized (P29)")
         cls._monitor = MayaMonitor()
         logger.info("📈 MayaMonitor initialized (P28 observability)")
         cls._a2a_server = MayaA2AServer(agent_name="maya")
@@ -352,6 +364,11 @@ class GlobalAgentContainer:
     def get_msg_hub(cls) -> Any:
         """Return the shared MayaMsgHub instance (P28+)."""
         return cls._msg_hub
+
+    @classmethod
+    def get_subagent_manager(cls) -> Any:
+        """Return the shared P29 SubAgentManager instance."""
+        return cls._subagent_manager
 
     @classmethod
     def get_monitor(cls) -> Any:
