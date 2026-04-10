@@ -1,0 +1,13 @@
+[
+  {
+    "timestamp": "2026-04-09T14:32:23.038231",
+    "action": "test_action",
+    "tool_name": "test_tool",
+    "success": true,
+    "context": {
+      "test": "data"
+    },
+    "result": null,
+    "error": null
+  }
+]

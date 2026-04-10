@@ -726,7 +726,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
         float(os.getenv("VOICE_INGRESS_REPLAY_WINDOW_S", "1.25")),
     )
     ingress_seen: dict[str, float] = {}
-    voice_final_grace_s = max(0.1, float(os.getenv("VOICE_FINAL_GRACE_S", "0.60")))
+    voice_final_grace_s = max(0.1, float(os.getenv("VOICE_FINAL_GRACE_S", "0.75")))
     voice_coalesce_window_s = max(0.2, float(os.getenv("VOICE_COALESCE_WINDOW_S", "1.60")))
     voice_post_audio_silence_s = max(0.1, float(os.getenv("VOICE_POST_AUDIO_SILENCE_S", "0.45")))
     agent_heartbeat_interval_s = max(2.0, float(os.getenv("AGENT_HEARTBEAT_INTERVAL_S", "5.0")))
@@ -2394,11 +2394,45 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
             accepted_mono: float,
         ) -> None:
             try:
-                token_count = len(re.findall(r"\b[\w'-]+\b", accepted_text))
-                has_strong_punctuation = bool(re.search(r"[.!?]['\"]?\s*$", accepted_text))
-                immediate_flush = has_strong_punctuation and token_count >= 6
-                flush_reason = "punctuation" if immediate_flush else "timer"
-                grace_delay = 0.05 if immediate_flush else voice_final_grace_s
+                normalized_text = re.sub(r"\s+", " ", accepted_text).strip()
+                token_count = len(re.findall(r"\b[\w'-]+\b", normalized_text))
+                sentence_count = _count_sentences(normalized_text)
+                has_terminal_punctuation = bool(re.search(r"[.!?]['\"]?\s*$", normalized_text))
+                has_soft_boundary = bool(re.search(r"[,;:]\s*$", normalized_text))
+                ends_with_continuation = bool(
+                    re.search(
+                        r"\b(and|but|because|so|then|which|that|who|when|where|while|if)\s*[.!?,'\"]*\s*$",
+                        normalized_text.lower(),
+                    )
+                )
+                likely_mid_thought = (
+                    not has_terminal_punctuation
+                    or has_soft_boundary
+                    or ends_with_continuation
+                )
+                immediate_flush = (
+                    has_terminal_punctuation
+                    and token_count >= 10
+                    and (sentence_count >= 2 or not likely_mid_thought)
+                )
+                if immediate_flush:
+                    flush_reason = "immediate"
+                    grace_delay = 0.12
+                else:
+                    flush_reason = "final_transcript" if source == "session" else "grace_timeout"
+                    extra_grace = 0.30 if likely_mid_thought else 0.12
+                    grace_delay = min(1.8, voice_final_grace_s + extra_grace)
+
+                logger.debug(
+                    "voice_turn_flush_plan reason=%s source=%s tokens=%s sentences=%s terminal_punct=%s mid_thought=%s grace_delay=%.2f",
+                    flush_reason,
+                    source,
+                    token_count,
+                    sentence_count,
+                    has_terminal_punctuation,
+                    likely_mid_thought,
+                    grace_delay,
+                )
                 await asyncio.sleep(grace_delay)
                 last_audio_ts, latest_seq = _get_voice_state()
                 if latest_seq != accepted_seq:
@@ -2426,11 +2460,12 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                         source,
                     )
                 logger.info(
-                    "🎙️ VOICE_TURN_ACCEPTED turn_id=%s seq=%s sender=%s source=%s text=%s",
+                    "🎙️ VOICE_TURN_ACCEPTED turn_id=%s seq=%s sender=%s source=%s flush_reason=%s text=%s",
                     local_turn_id,
                     accepted_seq,
                     accepted_sender,
                     source,
+                    flush_reason,
                     accepted_text[:120],
                 )
                 task = asyncio.create_task(

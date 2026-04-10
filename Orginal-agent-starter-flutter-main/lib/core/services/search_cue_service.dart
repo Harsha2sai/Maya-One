@@ -2,13 +2,23 @@ import 'dart:collection';
 
 import 'package:audioplayers/audioplayers.dart';
 
+enum CueState {
+  searching,
+  toolCalling,
+  completed,
+}
+
 class SearchCueService {
-  static const String _assetPath = 'audio/search_start_chime.wav';
+  static const Map<CueState, String> _assetByState = <CueState, String>{
+    CueState.searching: 'audio/search_start_chime.wav',
+    CueState.toolCalling: 'audio/tool_call_chime.wav',
+    CueState.completed: 'audio/turn_complete_chime.wav',
+  };
 
   final AudioPlayer? _injectedPlayer;
   final Future<void> Function()? _preloadOverride;
   final Future<void> Function(String assetPath)? _playOverride;
-  final LinkedHashSet<String> _playedTurns = LinkedHashSet<String>();
+  final LinkedHashSet<String> _playedCueKeys = LinkedHashSet<String>();
 
   AudioPlayer? _player;
   bool _preloaded = false;
@@ -41,7 +51,10 @@ class SearchCueService {
       _preloaded = true;
       return;
     }
-    await _resolvePlayer().setSourceAsset(_assetPath);
+    final player = _resolvePlayer();
+    for (final assetPath in _assetByState.values) {
+      await player.setSourceAsset(assetPath);
+    }
     _preloaded = true;
   }
 
@@ -49,27 +62,44 @@ class SearchCueService {
     String turnId, {
     required bool soundEnabled,
   }) async {
+    return playStateCue(
+      turnId,
+      state: CueState.searching,
+      soundEnabled: soundEnabled,
+    );
+  }
+
+  Future<bool> playStateCue(
+    String turnId, {
+    required CueState state,
+    required bool soundEnabled,
+  }) async {
     final normalizedTurnId = turnId.trim();
+    final assetPath = _assetByState[state];
+    if (assetPath == null) {
+      return false;
+    }
     if (!soundEnabled || normalizedTurnId.isEmpty) {
       return false;
     }
-    if (_playedTurns.contains(normalizedTurnId)) {
+    final cueKey = '$normalizedTurnId::${state.name}';
+    if (_playedCueKeys.contains(cueKey)) {
       return false;
     }
-    _playedTurns.add(normalizedTurnId);
+    _playedCueKeys.add(cueKey);
     _enforceBoundedState();
 
     try {
       final playOverride = _playOverride;
       if (playOverride != null) {
-        await playOverride(_assetPath);
+        await playOverride(assetPath);
       } else {
         await preload();
-        await _resolvePlayer().play(AssetSource(_assetPath));
+        await _resolvePlayer().play(AssetSource(assetPath));
       }
       return true;
     } catch (_) {
-      _playedTurns.remove(normalizedTurnId);
+      _playedCueKeys.remove(cueKey);
       rethrow;
     }
   }
@@ -79,17 +109,17 @@ class SearchCueService {
     if (normalizedTurnId.isEmpty) {
       return;
     }
-    _playedTurns.remove(normalizedTurnId);
+    _playedCueKeys.removeWhere((key) => key.startsWith('$normalizedTurnId::'));
   }
 
   void reset() {
-    _playedTurns.clear();
+    _playedCueKeys.clear();
   }
 
   void _enforceBoundedState() {
-    while (_playedTurns.length > 20) {
-      final oldest = _playedTurns.first;
-      _playedTurns.remove(oldest);
+    while (_playedCueKeys.length > 60) {
+      final oldest = _playedCueKeys.first;
+      _playedCueKeys.remove(oldest);
     }
   }
 
