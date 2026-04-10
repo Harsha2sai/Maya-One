@@ -34,6 +34,10 @@ class GlobalAgentContainer:
     _host_capability_profile: Any = None
     _memory_warmup_task: Optional[asyncio.Task[Any]] = None
     _app_cache_preload_task: Optional[asyncio.Task[Any]] = None
+    _msg_hub: Any = None         # MayaMsgHub (P28 infrastructure)
+    _monitor: Any = None         # MayaMonitor (P28 observability bridge)
+    _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
+    _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
 
     @classmethod
     async def initialize(cls):
@@ -65,6 +69,9 @@ class GlobalAgentContainer:
         from core.tasks.task_tools import get_task_tools
         from core.registry.tool_registry import get_registry
         from core.system.host_capability_profile import collect_host_capability_profile
+        from core.memory.agentscope_store import MayaAgentScopeMemory
+        from core.observability import MayaMonitor
+        from core.a2a import MayaA2AServer
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -97,6 +104,17 @@ class GlobalAgentContainer:
         memdir_root = str(os.getenv("MAYA_MEMDIR_HOME", "")).strip() or None
         cls._session_store = SessionStore(base_dir=memdir_root)
         cls._user_preferences_store = UserPreferences(base_dir=memdir_root)
+
+        # P28: Initialize MsgHub (infrastructure only — not yet used)
+        from core.messaging import MayaMsgHub
+        cls._msg_hub = MayaMsgHub()
+        logger.info("📨 MayaMsgHub initialized (P28 infrastructure)")
+        cls._monitor = MayaMonitor()
+        logger.info("📈 MayaMonitor initialized (P28 observability)")
+        cls._a2a_server = MayaA2AServer(agent_name="maya")
+        logger.info("🔌 MayaA2AServer initialized available=%s", cls._a2a_server.available)
+        cls._agentscope_memory = MayaAgentScopeMemory(db_path=cls._task_store.db_path)
+        logger.info("🧠 MayaAgentScopeMemory initialized (parallel to HybridMemoryManager)")
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -329,6 +347,26 @@ class GlobalAgentContainer:
     def get_user_preferences_store(cls) -> Any:
         """Return the shared memdir UserPreferences store instance."""
         return cls._user_preferences_store
+    
+    @classmethod
+    def get_msg_hub(cls) -> Any:
+        """Return the shared MayaMsgHub instance (P28+)."""
+        return cls._msg_hub
+
+    @classmethod
+    def get_monitor(cls) -> Any:
+        """Return the shared MayaMonitor instance (P28+)."""
+        return cls._monitor
+
+    @classmethod
+    def get_a2a_server(cls) -> Any:
+        """Return the shared MayaA2AServer foundation instance (P28+)."""
+        return cls._a2a_server
+
+    @classmethod
+    def get_agentscope_memory(cls) -> Any:
+        """Return the shared MayaAgentScopeMemory parallel store (P28+)."""
+        return cls._agentscope_memory
 
     @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
@@ -423,3 +461,11 @@ class GlobalAgentContainer:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to stop {task_attr}: {e}")
             setattr(cls, task_attr, None)
+
+        if cls._a2a_server is not None:
+            try:
+                await cls._a2a_server.stop()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop MayaA2AServer: {e}")
+            finally:
+                cls._a2a_server = None

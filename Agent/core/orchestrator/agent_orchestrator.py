@@ -484,6 +484,17 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             trace_id=trace_id,
             enable_llm_planner=self._enable_research_llm_planner,
         )
+        try:
+            from core.runtime.global_agent import GlobalAgentContainer
+
+            monitor = GlobalAgentContainer.get_monitor()
+            if monitor is not None:
+                total_ms = max(0, int(plan_ms) + int(search_ms) + int(synth_ms))
+                monitor.log_route("research", float(total_ms), trace_id=trace_id)
+                monitor.log_tool("web_search", float(search_ms), trace_id=trace_id)
+        except Exception:
+            # Observability must never break orchestration flow.
+            pass
 
     async def _run_inline_research_pipeline(
         self,
