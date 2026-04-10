@@ -1,5 +1,6 @@
 # Agents Module Init
 from .base import SpecializedAgent, AgentContext, AgentResponse
+from .documentation_agent import DocumentationAgent
 from .registry import AgentRegistry, get_agent_registry
 from .security_agent import (
     SecretFinding,
@@ -46,6 +47,7 @@ __all__ = [
     'AgentResponse',
     'AgentRegistry',
     'get_agent_registry',
+    'DocumentationAgent',
     'SecurityAgent',
     'SecurityFinding',
     'SecurityReport',

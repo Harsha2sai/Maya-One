@@ -5,6 +5,7 @@ import logging
 from typing import List, Optional, Tuple
 from core.agents.base import SpecializedAgent, AgentContext, AgentResponse
 from core.agents.contracts import AgentCapabilityMatch, AgentHandoffRequest, AgentHandoffResult
+from core.agents.documentation_agent import DocumentationAgent
 from core.agents.media_agent_handler import MediaAgentHandler
 from core.agents.research_agent import ResearchSpecialistAgent
 from core.agents.security_agent import SecurityAgent
@@ -32,6 +33,7 @@ class AgentRegistry:
         self.register_agent(MediaAgentHandler())
         self.register_agent(SchedulingAgentHandler())
         self.register_agent(SecurityAgent())
+        self.register_agent(DocumentationAgent())
         logger.info(f"✅ Registered {len(self.agents)} specialized agents")
     
     def register_agent(self, agent: SpecializedAgent):

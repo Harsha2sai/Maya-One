@@ -16,6 +16,7 @@ SignalName = Literal[
     "transfer_to_media",
     "transfer_to_scheduling",
     "transfer_to_security",
+    "transfer_to_documentation",
     "transfer_to_subagent_coder",
     "transfer_to_subagent_reviewer",
     "transfer_to_subagent_architect",
