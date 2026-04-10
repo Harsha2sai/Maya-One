@@ -17,18 +17,38 @@ from core.memory.hybrid_memory_manager import HybridMemoryManager
 from core.memory.preference_manager import PreferenceManager
 from core.orchestrator.agent_router import AgentRouter
 from core.orchestrator.chat_mixin import ChatResponseMixin
+from core.orchestrator.context_assembler import ContextAssembler
 from core.orchestrator.fast_path_router import FastPathRouter, DirectToolIntent
+from core.orchestrator.interaction_manager import InteractionManager
 from core.orchestrator.media_resolver import MediaResolver
 from core.orchestrator.orchestration_flow import OrchestrationFlow
+from core.orchestrator.orchestrator_constants import (
+    CONVERSATIONAL_MEMORY_TRIGGERS,
+    DEEP_RESEARCH_KEYWORDS,
+    MEDIA_EXCLUDE_PATTERNS,
+    MEDIA_PATTERNS,
+    RECALL_EXCLUDED_TOOLS,
+    RECALL_EXCLUSION_PATTERNS,
+    REPORT_EXPORT_KEYWORDS,
+    REPORT_EXPORT_PATTERNS,
+    TASK_COMPLETION_PATTERNS,
+    TOOL_ERROR_HINT_PATTERN,
+    VOICE_ACTION_SECOND_TOKEN_ALLOWLIST,
+    VOICE_CONTINUATION_MARKERS,
+    VOICE_SHORT_COMMAND_ALLOWLIST,
+    VOICE_TRANSCRIPTION_NORMALIZATIONS,
+)
 from core.orchestrator.pronoun_rewriter import PronounRewriter
 from core.orchestrator.research_handler import ResearchHandler
 from core.orchestrator.media_handler import MediaHandler
 from core.orchestrator.memory_context_service import MemoryContextService
 from core.orchestrator.scheduling_handler import SchedulingHandler
+from core.orchestrator.session_lifecycle import SessionLifecycle
 from core.orchestrator.response_synthesizer import ResponseSynthesizer
 from core.orchestrator.tool_executor import ToolExecutor
 from core.orchestrator.tool_response_builder import ToolResponseBuilder
 from core.orchestrator.task_runtime_service import TaskRuntimeService
+from core.orchestrator.voice_coordinator import VoiceCoordinator
 from core.tools.livekit_tool_adapter import adapt_tool_list
 from core.routing.router import get_router
 from core.security.input_guard import InputGuard
@@ -280,6 +300,10 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         )
         self._media_handler = MediaHandler(owner=self)
         self._scheduling_handler = SchedulingHandler(owner=self)
+        self._session_lifecycle = SessionLifecycle(owner=self)
+        self._context_assembler = ContextAssembler(owner=self)
+        self._interaction_manager = InteractionManager(owner=self)
+        self._voice_coordinator = VoiceCoordinator(owner=self)
         self._enable_research_llm_planner = self._is_truthy_env(
             os.getenv("ENABLE_RESEARCH_LLM_PLANNER", "false")
         )
@@ -287,6 +311,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             turn_state=self.turn_state,
             parse_multi_app_fn=self._parse_multi_app,
             is_recall_exclusion_intent_fn=self._is_recall_exclusion_intent,
+            resolve_active_subject_fn=self._resolve_active_subject_for_fast_path,
         )
         self._tool_response_builder = ToolResponseBuilder(owner=self)
         self._tool_executor = ToolExecutor(owner=self, coerce_user_role_fn=_coerce_user_role)
@@ -364,208 +389,31 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         logger.info("🚀 Enhanced AgentOrchestrator initialized with Planning, TaskStore, and HybridMemory")
 
     def set_session_bootstrap_context(self, session_id: str, payload: Dict[str, Any]) -> None:
-        session_key = str(session_id or "").strip()
-        if not session_key:
-            return
-        self._session_bootstrap_contexts[session_key] = dict(payload or {})
+        self._session_lifecycle.set_session_bootstrap_context(session_id, payload)
 
     def clear_session_bootstrap_context(self, session_id: str) -> None:
-        session_key = str(session_id or "").strip()
-        if not session_key:
-            return
-        self._session_bootstrap_contexts.pop(session_key, None)
+        self._session_lifecycle.clear_session_bootstrap_context(session_id)
 
     def _augment_message_with_session_bootstrap(self, message: str, session_id: str) -> str:
-        session_key = str(session_id or "").strip()
-        payload = self._session_bootstrap_contexts.get(session_key) or {}
-        if not payload:
-            return message
-
-        topic_summary = str(payload.get("topic_summary") or "").strip()
-        recent_events = payload.get("recent_events") or []
-        last_tool_results = payload.get("last_tool_results") or []
-        conversation_id = str(payload.get("conversation_id") or "").strip()
-        project_id = str(payload.get("project_id") or "").strip()
-        recent_count = len(recent_events) if isinstance(recent_events, list) else 0
-        tool_count = len(last_tool_results) if isinstance(last_tool_results, list) else 0
-
-        logger.info(
-            "bootstrap_context_stats session_id=%s conversation_id=%s recent_events_count=%s last_tool_results_count=%s topic_summary_len=%s",
-            session_key or "none",
-            conversation_id or "none",
-            recent_count,
-            tool_count,
-            len(topic_summary or ""),
-        )
-
-        lines: List[str] = []
-        if topic_summary:
-            lines.append(f"Topic summary: {topic_summary}")
-        if conversation_id:
-            lines.append(f"Conversation ID: {conversation_id}")
-        if project_id:
-            lines.append(f"Project ID: {project_id}")
-        if isinstance(recent_events, list) and recent_events:
-            lines.append("Recent events:")
-            for item in recent_events[:6]:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role") or "").strip() or "system"
-                message_type = str(item.get("message_type") or "").strip() or "text"
-                content = re.sub(r"\s+", " ", str(item.get("content") or "").strip())
-                if not content:
-                    continue
-                lines.append(f"- {role}/{message_type}: {content}")
-        if isinstance(last_tool_results, list) and last_tool_results:
-            lines.append("Recent tool results:")
-            for item in last_tool_results[:3]:
-                if not isinstance(item, dict):
-                    continue
-                tool_name = str(item.get("tool_name") or "").strip() or "tool"
-                summary = re.sub(r"\s+", " ", str(item.get("summary") or "").strip())
-                if not summary:
-                    continue
-                task_id = str(item.get("task_id") or "").strip()
-                suffix = f" (task_id={task_id})" if task_id else ""
-                lines.append(f"- {tool_name}: {summary}{suffix}")
-        if not lines:
-            return message
-
-        bootstrap_note = (
-            "Conversation resume context:\n"
-            + "\n".join(lines)
-            + "\n\nCurrent user message:\n"
-            + str(message or "")
-        )
-        return bootstrap_note
+        return self._session_lifecycle.augment_message_with_session_bootstrap(message, session_id)
 
     def _extract_user_message_segment(self, augmented: str) -> Optional[str]:
-        """
-        Extract raw user message from bootstrap-augmented text.
+        return self._session_lifecycle.extract_user_message_segment(augmented)
 
-        Augmented format ends with:
-            "\\n\\nCurrent user message:\\n<raw user text>"
-        """
-        marker = "\n\nCurrent user message:\n"
-        sample = str(augmented or "")
-        marker_index = sample.find(marker)
-        if marker_index == -1:
-            return None
-        extracted = sample[marker_index + len(marker):].strip()
-        return extracted or None
-
-    CONVERSATIONAL_MEMORY_TRIGGERS = (
-        r"\b(remember|recall|remind me|earlier|last time|you said|i said|i told you|i asked)\b",
-        r"\b(my name|my preference|my usual|what do i|who am i)\b",
-        r"\b(what did (i|we|you))\b",
-        r"\b(do you know|do you remember)\b",
-    )
-    RECALL_EXCLUSION_PATTERNS = (
-        r"\bwhat\s+did\s+i\s+ask\b",
-        r"\bwhat\s+did\s+i\s+say\b",
-        r"\bdid\s+i\s+ask\b",
-        r"\bdid\s+i\s+say\b",
-        r"\bi\s+told\s+you\b",
-        r"\byou\s+said\b",
-        r"\bwe\s+discussed\b",
-    )
-    RECALL_EXCLUDED_TOOLS = {"web_search", "get_current_datetime", "get_current_date"}
-    TASK_COMPLETION_PATTERNS = (
-        r"\bi completed(?: the)? action\b",
-        r"\baction cancelled\b",
-        r"\btask done\b",
-        r"\btask completed\b",
-    )
-    _TOOL_ERROR_HINT_PATTERN = re.compile(
-        r"(traceback|exception|error executing command|timed out|timeout|failed|permission denied|access denied|blocked)",
-        flags=re.IGNORECASE,
-    )
-    _REPORT_EXPORT_PATTERNS = (
-        r"\b(save|export)\s+(it|this|that|report|document|file)?\s*(to|in)?\s*(my\s+)?downloads\b",
-        r"\b(save|export)\s+(as|into)\s+(docx|document|file)\b",
-        r"\b(save|export|write)\s+.*\b(report|document|docx)\b.*\b(downloads|file)\b",
-        r"\b(create|generate|prepare)\s+(a\s+)?(report|document|doc)\b.*\b(save|export)\b",
-    )
-    _REPORT_EXPORT_KEYWORDS = (
-        "save to downloads",
-        "save it in my downloads",
-        "save in my downloads",
-        "export report",
-        "save as docx",
-        "save document",
-    )
-    _DEEP_RESEARCH_KEYWORDS = (
-        "report",
-        "in depth",
-        "in-depth",
-        "detailed",
-        "full analysis",
-        "thorough",
-        "full report",
-    )
-    MEDIA_PATTERNS = (
-        r"\bplay\s+.+",
-        r"\bsearch\s+.+\b(song|music|track|playlist|video)\b",
-        r"\bqueue\b",
-        r"\brecommend\b",
-        r"\bsuggest\b.+\bmusic\b",
-        r"\bwhat(?:'s| is)\s+playing\b",
-        r"\byoutube\b",
-        r"\bspotify\b",
-    )
-    MEDIA_EXCLUDE_PATTERNS = (
-        r"\bwhat time is it\b",
-        r"^\s*open\s+\w+",
-        r"\b(open|close)\s+(firefox|chrome|calculator|folder|downloads)\b",
-        r"\b(next|skip|previous|pause|resume|stop music)\b",
-    )
-    # Pronoun rewriting is handled by PronounRewriter class (P16-02)
-    _VOICE_TRANSCRIPTION_NORMALIZATIONS = {
-        "diwnloads": "downloads",
-        "downlods": "downloads",
-        "downlodes": "downloads",
-        "donwloads": "downloads",
-        "downloades": "downloads",
-    }
-    _VOICE_SHORT_COMMAND_ALLOWLIST = {
-        "yes",
-        "no",
-        "ok",
-        "okay",
-        "sure",
-        "stop",
-        "pause",
-        "resume",
-        "play",
-        "next",
-        "continue",
-        "cancel",
-        "thanks",
-        "thank you",
-    }
-    _VOICE_CONTINUATION_MARKERS = {
-        "just",
-        "and",
-        "but",
-        "so",
-        "then",
-        "also",
-        "that",
-        "this",
-        "it",
-    }
-    _VOICE_ACTION_SECOND_TOKEN_ALLOWLIST = {
-        "open",
-        "close",
-        "search",
-        "play",
-        "set",
-        "take",
-        "run",
-        "start",
-        "show",
-        "list",
-    }
+    CONVERSATIONAL_MEMORY_TRIGGERS = CONVERSATIONAL_MEMORY_TRIGGERS
+    RECALL_EXCLUSION_PATTERNS = RECALL_EXCLUSION_PATTERNS
+    RECALL_EXCLUDED_TOOLS = RECALL_EXCLUDED_TOOLS
+    TASK_COMPLETION_PATTERNS = TASK_COMPLETION_PATTERNS
+    _TOOL_ERROR_HINT_PATTERN = TOOL_ERROR_HINT_PATTERN
+    _REPORT_EXPORT_PATTERNS = REPORT_EXPORT_PATTERNS
+    _REPORT_EXPORT_KEYWORDS = REPORT_EXPORT_KEYWORDS
+    _DEEP_RESEARCH_KEYWORDS = DEEP_RESEARCH_KEYWORDS
+    MEDIA_PATTERNS = MEDIA_PATTERNS
+    MEDIA_EXCLUDE_PATTERNS = MEDIA_EXCLUDE_PATTERNS
+    _VOICE_TRANSCRIPTION_NORMALIZATIONS = VOICE_TRANSCRIPTION_NORMALIZATIONS
+    _VOICE_SHORT_COMMAND_ALLOWLIST = VOICE_SHORT_COMMAND_ALLOWLIST
+    _VOICE_CONTINUATION_MARKERS = VOICE_CONTINUATION_MARKERS
+    _VOICE_ACTION_SECOND_TOKEN_ALLOWLIST = VOICE_ACTION_SECOND_TOKEN_ALLOWLIST
 
     def _classify_tool_intent_type(self, tool_name: str) -> str:
         return self._tool_response_builder.classify_tool_intent_type(tool_name)
@@ -662,121 +510,28 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         user_id: str,
         origin: str,
     ) -> AgentResponse:
-        import random
-        import re
-
-        logger.info("identity_fast_path_matched origin=%s", origin)
-        logger.info("context_builder_memory_skipped reason=identity_fast_path")
-
-        WHO_ARE_YOU = (
-            "I'm Maya, your AI voice assistant, made by Harsha.",
-            "My name is Maya. I'm a voice AI assistant created by Harsha.",
-            "I'm Maya — a voice assistant built by Harsha to help you "
-            "with research, tasks, system control, and conversation.",
-        )
-
-        WHO_MADE_YOU = (
-            "I was made by Harsha.",
-            "Harsha built me. I'm Maya, a voice AI assistant.",
-            "My creator is Harsha. I'm Maya.",
-        )
-
-        WHAT_CAN_YOU_DO = (
-            "I can help with web research, playing music, opening apps, "
-            "managing files, setting reminders, running tasks, and "
-            "general conversation. Just ask.",
-            "I handle research, system control, media, tasks, and chat. "
-            "What do you need?",
-        )
-
-        INTRODUCE_YOURSELF = (
-            "I'm Maya, a voice AI assistant made by Harsha. I can help "
-            "with research, music, apps, files, tasks, and conversation.",
-            "Hello — I'm Maya. Harsha built me to be your AI assistant "
-            "for voice and chat. How can I help?",
-        )
-
-        GENERIC_IDENTITY = (
-            "I'm Maya, your AI assistant, made by Harsha.",
-        )
-
-        utterance_l = message.lower()
-
-        if re.search(
-            r"\bwho\s+(?:made|created|built|developed)\s+you\b"
-            r"|\byour\s+(?:creator|developer|maker)\b"
-            r"|\bwhat\s+(?:company|team)\s+(?:made|built)\s+you\b",
-            utterance_l,
-        ):
-            responses = WHO_MADE_YOU
-        elif re.search(
-            r"\bwhat can you do\b|\byour (?:features|capabilities)\b"
-            r"|\bhow can you help\b",
-            utterance_l,
-        ):
-            responses = WHAT_CAN_YOU_DO
-        elif re.search(r"\bintroduce yourself\b", utterance_l):
-            responses = INTRODUCE_YOURSELF
-        elif re.search(
-            r"\bwho are you\b|\bwhat are you\b"
-            r"|\bwhat is your name\b|\byour name\b"
-            r"|\bare you an ai\b|\bare you a bot\b",
-            utterance_l,
-        ):
-            responses = WHO_ARE_YOU
-        else:
-            responses = GENERIC_IDENTITY
-
-        response_text = random.choice(responses)
-
-        return self._tag_response_with_routing_type(
-            ResponseFormatter.build_response(
-                display_text=response_text,
-                voice_text=response_text,
-            ),
-            "informational",
+        return await self._interaction_manager.handle_identity_fast_path(
+            message=message,
+            user_id=user_id,
+            origin=origin,
         )
 
     def _match_small_talk_fast_path(self, message: str) -> Optional[str]:
-        text = str(message or "").strip().lower()
-        if not text:
-            return None
-
-        if re.search(r"^\s*(hi|hello|hey)\b", text):
-            return "Hello. I'm Maya. How can I help you today?"
-        if "how are you" in text:
-            return "I'm doing well and ready to help. What do you need?"
-        if re.search(r"\b(thanks|thank you|cheers)\b", text):
-            return "You're welcome."
-        if re.search(r"\b(bye|goodbye|see you)\b", text):
-            return "Goodbye."
-        return None
+        return self._interaction_manager.match_small_talk_fast_path(message)
 
     def _extract_subject_from_text(self, raw_text: str) -> str:
-        # Backward-compatible wrapper: subject extraction logic lives in ResearchHandler.
         return self._research_handler._extract_subject_from_text(raw_text)
 
     def _session_key_for_context(self, tool_context: Any = None) -> str:
-        return (
-            getattr(tool_context, "session_id", None)
-            or self._current_session_id
-            or getattr(getattr(self, "room", None), "name", None)
-            or "console_session"
-        )
+        return self._session_lifecycle.resolve_session_queue_key(tool_context)
 
     def _extract_summary_sentence(self, summary: str) -> str:
-        # Backward-compatible wrapper: summary extraction logic lives in ResearchHandler.
         return self._research_handler._extract_summary_sentence(summary)
 
     def _store_research_context(self, query: str, summary: str, *, tool_context: Any = None) -> None:
         session_key = self._session_key_for_context(tool_context)
-        self._research_handler.store_research_context(
-            query=query,
-            summary=summary,
-            session_key=session_key,
-        )
-        active = self._research_handler.get_active_research_context(session_key)
-        if active:
+        self._research_handler.store_research_context(query=query, summary=summary, session_key=session_key)
+        if active := self._research_handler.get_active_research_context(session_key):
             self._last_research_contexts[session_key] = dict(active)
 
     def _get_active_research_context(self, tool_context: Any = None) -> Optional[Dict[str, Any]]:
@@ -785,28 +540,26 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         if context:
             self._last_research_contexts[session_key] = dict(context)
             return context
-        context = self._last_research_contexts.get(session_key)
-        if not context:
+        if not (context := self._last_research_contexts.get(session_key)):
             return None
-        expires_at = float(context.get("expires_at") or 0.0)
-        if expires_at <= time.time():
+        if float(context.get("expires_at") or 0.0) <= time.time():
             self._last_research_contexts.pop(session_key, None)
             return None
         return context
 
     def _resolve_research_subject_from_context(self, tool_context: Any = None) -> str:
-        # Backward-compatible wrapper: route-filtered resolution logic lives in ResearchHandler.
-        session_key = (
-            getattr(tool_context, "session_id", None)
-            or self._current_session_id
-            or getattr(getattr(self, "room", None), "name", None)
-            or ""
-        )
+        session_key = self._session_key_for_context(tool_context)
         payload = self._session_bootstrap_contexts.get(str(session_key or "").strip()) or {}
         return self._research_handler.resolve_research_subject_from_context(
             research_context=self._get_active_research_context(tool_context),
             conversation_history=self._conversation_history,
             bootstrap_payload=payload,
+        )
+
+    def _resolve_active_subject_for_fast_path(self) -> str:
+        return self._research_handler.resolve_active_subject_for_fast_path(
+            self._get_active_research_context(),
+            self._resolve_research_subject_from_context(),
         )
 
     def rewrite_research_query_for_context(
@@ -815,24 +568,10 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         *,
         tool_context: Any = None,
     ) -> tuple[str, bool, bool]:
-        """
-        Rewrite a query by resolving pronouns to their antecedent subjects.
-
-        Delegates to PronounRewriter for actual rewriting logic.
-        This method provides backward compatibility with existing call sites.
-
-        Args:
-            query: The input query potentially containing pronouns
-            tool_context: Optional tool context for session resolution
-
-        Returns:
-            Tuple of (rewritten_query, changed, ambiguous)
-        """
-        research_context = self._get_active_research_context(tool_context)
         return self._pronoun_rewriter.rewrite(
             query,
             conversation_history=self._conversation_history,
-            research_context=research_context,
+            research_context=self._get_active_research_context(tool_context),
             tool_context=tool_context,
         )
 
@@ -842,34 +581,15 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         *,
         tool_context: Any = None,
     ) -> tuple[str, bool, bool]:
-        """
-        Pre-router check for pronoun follow-up queries.
-
-        Quick check before routing to determine if pronoun rewriting is needed.
-        Delegates to PronounRewriter for actual rewriting.
-
-        Args:
-            raw_query: The input query
-            tool_context: Optional tool context for session resolution
-
-        Returns:
-            Tuple of (rewritten_query, changed, ambiguous)
-        """
         query = re.sub(r"\s+", " ", str(raw_query or "")).strip()
         if not query:
             return "", False, False
-
-        # Quick check: skip if no pronouns or followup phrases
         if not self._pronoun_rewriter.should_check_rewrite(query):
             return query, False, False
-
-        # Delegate to main rewrite method. Restrict history scan to research route
-        # to avoid non-research subject contamination in pre-router override.
-        research_context = self._get_active_research_context(tool_context)
         return self._pronoun_rewriter.rewrite(
             query,
             conversation_history=self._conversation_history,
-            research_context=research_context,
+            research_context=self._get_active_research_context(tool_context),
             tool_context=tool_context,
             history_route_filter="research",
         )
@@ -1036,33 +756,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         tool_context: Any = None,
         host_profile: Optional[Dict[str, Any]] = None,
     ) -> str:
-        lines = [f"User request: {str(message or '').strip()}"]
-        if self._current_session_id:
-            lines.append(f"Session: {self._current_session_id}")
-        if getattr(tool_context, "conversation_id", None):
-            lines.append(f"Conversation ID: {getattr(tool_context, 'conversation_id')}")
-        if self._conversation_history:
-            recent = self._conversation_history[-3:]
-            summarized = " | ".join(
-                f"{item.get('role', 'unknown')}: {str(item.get('content') or '')[:120]}"
-                for item in recent
-            )
-            lines.append(f"Recent context: {summarized}")
-        memory_context = ""
-        try:
-            memory_context = self._retrieve_memory_context(
-                str(message or ""),
-                user_id=user_id,
-                session_id=self._current_session_id,
-                origin="chat",
-            )
-        except Exception as exc:
-            logger.debug("context_slice_memory_skipped target=%s error=%s", target_agent, exc)
-        if memory_context:
-            lines.append(memory_context.strip())
-        if target_agent in {"system_operator", "planner"} and host_profile:
-            lines.append(self._host_profile_to_text(host_profile))
-        return "\n".join([line for line in lines if line]).strip()
+        return self._context_assembler.build_context_slice(
+            target_agent=target_agent,
+            message=message,
+            user_id=user_id,
+            tool_context=tool_context,
+            host_profile=host_profile,
+        )
 
     def _consume_handoff_signal(
         self,
@@ -1145,30 +845,10 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         user_id: str,
         session_id: Optional[str],
     ) -> None:
-        self._current_user_id = user_id
-        self._current_session_id = session_id
+        self._session_lifecycle.update_turn_identity(user_id=user_id, session_id=session_id)
 
     def _start_new_turn(self, user_message: str, turn_id: Optional[str] = None) -> str:
-        """
-        Reset per-turn transient state before processing a new user turn.
-        This prevents completion/result text from leaking across turns.
-        """
-        # Explicit reset patterns required by safeguards/static analysis.
-        self.turn_state["current_turn_id"] = None
-        self.turn_state["user_message"] = ""
-        self.turn_state["assistant_buffer"] = ""
-        self.turn_state["delta_seq"] = 0
-        self.turn_state["pending_system_action_result"] = ""
-        self.turn_state["pending_tool_result_text"] = ""
-        self.turn_state["pending_task_completion_summary"] = ""
-
-        resolved_turn_id = str(turn_id or uuid.uuid4())
-        self.turn_state["current_turn_id"] = resolved_turn_id
-        self.turn_state["user_message"] = str(user_message or "")
-
-        if hasattr(self.agent, "current_turn_id"):
-            self.agent.current_turn_id = resolved_turn_id
-        return resolved_turn_id
+        return self._session_lifecycle.start_new_turn(user_message, turn_id=turn_id)
 
     def _append_conversation_history(
         self,
@@ -1177,17 +857,12 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         source: str = "history",
         route: str = "",
     ) -> None:
-        text = str(content or "").strip()
-        if not text:
-            return
-        source_name = str(source or "history")
-        self._conversation_history.append(
-            {"role": role, "content": text, "source": source_name, "route": str(route or "")}
+        self._session_lifecycle.append_conversation_history(
+            role=role,
+            content=content,
+            source=source,
+            route=route,
         )
-        max_turns = max(4, int(os.getenv("PHASE6_HISTORY_TURNS", "20")))
-        max_messages = max_turns * 2
-        if len(self._conversation_history) > max_messages:
-            self._conversation_history = self._conversation_history[-max_messages:]
 
     async def _publish_runtime_topic_event(self, topic_name: str, payload: Dict[str, Any]) -> bool:
         room = getattr(self, "room", None)
@@ -1207,186 +882,52 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
 
     @staticmethod
     def _is_multi_step_task_request(message_lower: str) -> bool:
-        text = str(message_lower or "").strip()
-        if not text:
-            return False
-        if any(phrase in text for phrase in ("set a reminder", "set reminder", "reminder to")):
-            return True
-        sequential_markers = (" and then ", " then open ", " then launch ", " then start ")
-        action_markers = (
-            "open ",
-            "launch ",
-            "start ",
-            "close ",
-            "set ",
-            "check ",
-            "email ",
-            "remind ",
-        )
-        return any(marker in text for marker in sequential_markers) and any(
-            marker in text for marker in action_markers
-        )
+        return ResearchHandler.is_multi_step_task_request(message_lower)
 
     def _is_report_export_request(self, message: str) -> bool:
-        text = str(message or "").strip().lower()
-        if not text:
-            return False
-        if any(keyword in text for keyword in self._REPORT_EXPORT_KEYWORDS):
-            return True
-        has_export_verb = bool(
-            re.search(r"\b(save|export|download|write|store)\b", text)
-        )
-        has_file_target = bool(
-            re.search(r"\b(downloads|file|docx|document)\b", text)
-        )
-        has_report_object = bool(re.search(r"\b(report|analysis)\b", text))
-        if has_export_verb and (has_file_target or has_report_object):
-            return True
-        return any(
-            re.search(pattern, text, flags=re.IGNORECASE)
-            for pattern in self._REPORT_EXPORT_PATTERNS
+        return self._research_handler.is_report_export_request(
+            message,
+            report_export_keywords=self._REPORT_EXPORT_KEYWORDS,
+            report_export_patterns=self._REPORT_EXPORT_PATTERNS,
         )
 
     def _should_use_deep_research_voice(self, query: str) -> bool:
-        text = str(query or "").strip().lower()
-        if not text:
-            return False
-        if any(keyword in text for keyword in self._DEEP_RESEARCH_KEYWORDS):
-            return True
-        words = re.findall(r"\b[\w'-]+\b", text)
-        return len(words) >= 25
+        return self._voice_coordinator.should_use_deep_research_voice(
+            query,
+            deep_keywords=self._DEEP_RESEARCH_KEYWORDS,
+        )
 
     @staticmethod
     def _slugify_topic(text: str) -> str:
-        normalized = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower())
-        normalized = normalized.strip("-")
-        if not normalized:
-            return "research-report"
-        return normalized[:60]
+        return ResearchHandler.slugify_topic(text)
 
     def _build_report_output_path(self, query: str) -> str:
-        stamp = datetime.now().strftime("%Y%m%d-%H%M")
-        topic_slug = self._slugify_topic(query)
-        return f"~/Downloads/{topic_slug}-{stamp}.docx"
+        return self._research_handler.build_report_output_path(query)
 
     @staticmethod
     def _extract_report_focus_query(user_text: str) -> str:
-        text = str(user_text or "").strip()
-        if not text:
-            return ""
-        text = re.sub(
-            r"(?i)\b(and\s+)?(make|create|write|prepare)\s+(a\s+)?(full\s+)?(report|document|doc)\b",
-            " ",
-            text,
-        )
-        text = re.sub(
-            r"(?i)\b(and\s+)?(save|export)\s+(it|this|that|report|document)?\s*(to|in)?\s*(my\s+)?downloads\b",
-            " ",
-            text,
-        )
-        text = re.sub(r"\s+", " ", text).strip(" ,.")
-        return text or str(user_text or "").strip()
+        return ResearchHandler.extract_report_focus_query(user_text)
 
     def inject_session_continuity_summary(self, summary: str) -> bool:
-        """
-        Inject one-time continuity context from the previous session.
-        """
-        text = str(summary or "").strip()
-        if not text or self._session_continuity_injected:
-            return False
-
-        message = f"Context from your last conversation with this user: {text}"
-        self._append_conversation_history(
-            "assistant",
-            message,
-            source="session_continuity",
-        )
-        self._session_continuity_injected = True
-        return True
+        return self._session_lifecycle.inject_session_continuity_summary(summary)
 
     def _filter_chat_history_for_fallthrough(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        filtered: List[Dict[str, Any]] = []
-        for entry in history:
-            if not isinstance(entry, dict):
-                filtered.append(entry)
-                continue
-            role = str(entry.get("role") or "").strip().lower()
-            content = str(entry.get("content") or "").strip()
-            source = str(entry.get("source") or "").strip().lower()
-            if role == "assistant" and source in {"tool_output", "task_step", "direct_action"}:
-                continue
-            if role == "assistant" and any(
-                re.search(pattern, content, flags=re.IGNORECASE)
-                for pattern in self.TASK_COMPLETION_PATTERNS
-            ):
-                continue
-            filtered.append(entry)
-        return filtered
+        return self._context_assembler.filter_chat_history_for_fallthrough(history)
 
     def _context_message_tokens(self, messages: List[Any]) -> int:
-        guard = self.context_guard or self._phase6_context_guard
-        if guard is None:
-            return sum(len(str(getattr(msg, "content", ""))) // 4 for msg in messages)
-        total = 0
-        for msg in messages:
-            content = getattr(msg, "content", "")
-            if isinstance(content, list):
-                content_text = " ".join(str(part) for part in content)
-            else:
-                content_text = str(content)
-            total += guard.count_tokens(content_text)
-        return total
+        return self._context_assembler.context_message_tokens(messages)
 
     @staticmethod
     def _chat_ctx_messages(chat_ctx: Any) -> List[Any]:
-        messages = getattr(chat_ctx, "messages", [])
-        if callable(messages):
-            try:
-                messages = messages()
-            except Exception:
-                messages = []
-        return list(messages or [])
+        return ContextAssembler.chat_ctx_messages(chat_ctx)
 
     @staticmethod
     def _message_content_to_text(message: Any) -> str:
-        if isinstance(message, dict):
-            content = message.get("content")
-        else:
-            content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            chunks: List[str] = []
-            for part in content:
-                if isinstance(part, str):
-                    chunks.append(part)
-                    continue
-                if isinstance(part, dict):
-                    text_value = part.get("text") or part.get("content") or ""
-                    if text_value:
-                        chunks.append(str(text_value))
-                    continue
-                text_value = getattr(part, "text", None)
-                if text_value:
-                    chunks.append(str(text_value))
-                    continue
-                part_content = getattr(part, "content", None)
-                if part_content:
-                    chunks.append(str(part_content))
-            return " ".join(chunk.strip() for chunk in chunks if str(chunk).strip()).strip()
-        if isinstance(content, dict):
-            return str(content.get("text") or content.get("content") or "").strip()
-        if content is None:
-            return ""
-        return str(content).strip()
+        return ContextAssembler.message_content_to_text(message)
 
     @staticmethod
     def _message_role_value(message: Any) -> str:
-        if isinstance(message, dict):
-            role = message.get("role")
-        else:
-            role = getattr(message, "role", None)
-        return str(role or "").strip().lower()
+        return ContextAssembler.message_role_value(message)
 
     def _is_voice_continuation_fragment(
         self,
@@ -1395,42 +936,17 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         origin: str,
         chat_ctx_messages: List[Any],
     ) -> bool:
-        if str(origin or "").strip().lower() != "voice":
-            return False
-        if not chat_ctx_messages:
-            return False
-        normalized = str(routing_text or "").strip().lower()
-        if not normalized:
-            return False
-        if normalized in self._VOICE_SHORT_COMMAND_ALLOWLIST:
-            return False
-
-        tokens = re.findall(r"\b[\w'-]+\b", normalized)
-        if not tokens or len(tokens) > 6:
-            return False
-        if len(tokens) == 1 and tokens[0] in self._VOICE_SHORT_COMMAND_ALLOWLIST:
-            return False
-        if tokens[0] not in self._VOICE_CONTINUATION_MARKERS:
-            return False
-        if len(tokens) > 1 and tokens[1] in self._VOICE_ACTION_SECOND_TOKEN_ALLOWLIST:
-            return False
-
-        # Require at least one prior assistant turn so we only gate true follow-up fragments.
-        for message in reversed(chat_ctx_messages):
-            if self._message_role_value(message) != "assistant":
-                continue
-            if self._message_content_to_text(message):
-                return True
-        return False
+        return self._voice_coordinator.is_voice_continuation_fragment(
+            routing_text=routing_text,
+            origin=origin,
+            chat_ctx_messages=chat_ctx_messages,
+            short_command_allowlist=self._VOICE_SHORT_COMMAND_ALLOWLIST,
+            continuation_markers=self._VOICE_CONTINUATION_MARKERS,
+            action_second_token_allowlist=self._VOICE_ACTION_SECOND_TOKEN_ALLOWLIST,
+        )
 
     def _tool_name(self, tool: Any) -> str:
-        """Best-effort tool name extraction across wrapped tool types."""
-        name = getattr(tool, "name", None)
-        if not name and hasattr(tool, "info"):
-            name = getattr(tool.info, "name", None)
-        if not name:
-            name = getattr(tool, "__name__", "")
-        return str(name or "").strip()
+        return self._context_assembler.tool_name(tool)
 
     async def _maybe_await(self, value: Any) -> Any:
         if inspect.isawaitable(value):
@@ -1438,228 +954,29 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         return value
 
     def _resolve_phase3_chat_tools(self) -> List[Any]:
-        """
-        Returns a safe, schema-normalized tool subset for Phase 3 chat routing.
-        Keeps destructive/local-shell tools out of the first tool-enabled phase.
-        """
-        if max(1, int(getattr(settings, "architecture_phase", 1))) < 3:
-            return []
-        if not self.enable_chat_tools:
-            return []
-
-        allowlist = {
-            "open_app",
-            "close_app",
-            "set_volume",
-            "take_screenshot",
-            "web_search",
-            "get_weather",
-            "get_current_datetime",
-            "get_date",
-            "get_time",
-            "set_alarm",
-            "list_alarms",
-            "delete_alarm",
-            "set_reminder",
-            "list_reminders",
-            "delete_reminder",
-            "create_note",
-            "list_notes",
-            "read_note",
-            "delete_note",
-            "create_calendar_event",
-            "list_calendar_events",
-            "delete_calendar_event",
-            "send_email",
-        }
-
-        try:
-            from core.runtime.global_agent import GlobalAgentContainer
-            all_tools = GlobalAgentContainer.get_tools() or []
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to resolve global tools for Phase 3: {e}")
-            return []
-
-        selected = []
-        for tool in all_tools:
-            name = self._tool_name(tool).lower()
-            if name not in allowlist:
-                continue
-
-            # Strict schema guard for providers that reject missing properties.
-            try:
-                if hasattr(tool, "info") and hasattr(tool.info, "parameters"):
-                    params = tool.info.parameters
-                    if params is None:
-                        tool.info.parameters = {
-                            "type": "object",
-                            "properties": {},
-                            "required": [],
-                        }
-                    elif isinstance(params, dict):
-                        params.setdefault("type", "object")
-                        params.setdefault("properties", {})
-                        params.setdefault("required", [])
-                        tool.info.parameters = params
-            except Exception as e:
-                logger.warning(f"⚠️ Tool schema normalization failed for {name}: {e}")
-
-            selected.append(tool)
-
-        logger.info(f"🧰 Phase 3 tool subset ready: {len(selected)} tools")
-        return selected
+        return self._context_assembler.resolve_phase3_chat_tools(
+            enable_chat_tools=self.enable_chat_tools,
+            architecture_phase=int(getattr(settings, "architecture_phase", 1)),
+        )
 
     def _parse_legacy_function_call(self, text: str) -> Optional[tuple[str, Dict[str, Any]]]:
-        """
-        Parse model-emitted legacy function markup like:
-        <function>web_search{"query":"..."}</function>
-        """
-        if not text:
-            return None
-
-        match = re.search(
-            r"<function>\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(\{.*?\})?\s*</function>",
-            text,
-            re.IGNORECASE | re.DOTALL,
-        )
-        if not match:
-            # Also support plain malformed variants such as:
-            # web_search={"query":"..."}  OR  web_search{"query":"..."}
-            flat_match = re.search(
-                r"^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:=)?\s*(\{.*\})\s*$",
-                text.strip(),
-                re.IGNORECASE | re.DOTALL,
-            )
-            if not flat_match:
-                return None
-            match = flat_match
-
-        tool_name = (match.group(1) or "").strip()
-        args_blob = (match.group(2) or "").strip()
-        args: Dict[str, Any] = {}
-        if args_blob:
-            try:
-                parsed = json.loads(args_blob)
-                if isinstance(parsed, dict):
-                    args = parsed
-            except Exception:
-                # Lightweight fallback for common malformed payloads.
-                query_match = re.search(r'"query"\s*:\s*"([^"]+)"', args_blob)
-                if query_match:
-                    args = {"query": query_match.group(1)}
-
-        if not tool_name:
-            return None
-        return (tool_name, args)
+        return self._voice_coordinator.parse_legacy_function_call(text)
 
     def _is_tool_call_generation_error(self, err: Exception) -> bool:
-        """
-        Detect provider-side function-call formatting failures that should
-        trigger a no-tools retry instead of failing the turn.
-        """
-        msg = str(err or "").lower()
-        patterns = (
-            "failed to call a function",
-            "tool call validation failed",
-            "attempted to call tool",
-            "not in request.tools",
-            "invalid tool",
-            "invalid function call",
-        )
-        return any(p in msg for p in patterns)
+        return self._voice_coordinator.is_tool_call_generation_error(err)
 
     def _normalize_tool_invocation(
         self,
         tool_name: str,
         args: Dict[str, Any],
     ) -> tuple[str, Dict[str, Any]]:
-        """
-        Repair malformed tool names occasionally emitted by providers, e.g.
-        `web_search={\"query\":\"x\"}` or `web_search{\"query\":\"x\"}`.
-        """
-        normalized_name = str(tool_name or "").strip()
-        normalized_args: Dict[str, Any] = dict(args or {})
-
-        def _merge_json_blob(blob: str) -> None:
-            blob = (blob or "").strip()
-            if not blob:
-                return
-            if not blob.startswith("{"):
-                return
-            try:
-                parsed = json.loads(blob)
-                if isinstance(parsed, dict):
-                    normalized_args.update(parsed)
-                    return
-            except Exception:
-                pass
-
-            query_match = re.search(r'"query"\s*:\s*"([^"]+)"', blob)
-            if query_match:
-                normalized_args.setdefault("query", query_match.group(1))
-
-        # Pattern: tool_name={...}
-        if "=" in normalized_name:
-            left, right = normalized_name.split("=", 1)
-            if left.strip():
-                normalized_name = left.strip()
-                _merge_json_blob(right)
-
-        # Pattern: tool_name{...}
-        brace_idx = normalized_name.find("{")
-        if brace_idx > 0 and normalized_name.endswith("}"):
-            embedded_blob = normalized_name[brace_idx:]
-            normalized_name = normalized_name[:brace_idx].strip()
-            _merge_json_blob(embedded_blob)
-
-        return normalized_name, normalized_args
+        return self._voice_coordinator.normalize_tool_invocation(tool_name, args)
 
     def _strip_legacy_function_markup(self, text: str) -> str:
-        if not text:
-            return ""
-        cleaned = re.sub(
-            r"<function>\s*[a-zA-Z_][a-zA-Z0-9_]*\s*(?:\{.*?\})?\s*</function>",
-            "",
-            text,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        return cleaned.strip()
+        return self._voice_coordinator.strip_legacy_function_markup(text)
 
     def _sanitize_response(self, text: str) -> str:
-        """
-        Remove leaked tool-markup payloads before any UI/TTS publish path.
-        Handles both closed and unclosed variants:
-        - <tool_name>{...}</tool_name>
-        - <tool_name>{...}
-        """
-        if not text:
-            return ""
-
-        cleaned = self._strip_legacy_function_markup(text)
-        leak_detected = False
-
-        closed_tag_pattern = re.compile(
-            r"<([a-zA-Z_][\w-]*)>\s*\{[\s\S]*?\}\s*</\1>",
-            flags=re.IGNORECASE,
-        )
-        open_tag_pattern = re.compile(
-            r"<([a-zA-Z_][\w-]*)>\s*\{[\s\S]*?\}(?:\s|$)",
-            flags=re.IGNORECASE,
-        )
-
-        if closed_tag_pattern.search(cleaned):
-            leak_detected = True
-            cleaned = closed_tag_pattern.sub(" ", cleaned)
-
-        if open_tag_pattern.search(cleaned):
-            leak_detected = True
-            cleaned = open_tag_pattern.sub(" ", cleaned)
-
-        if leak_detected:
-            logger.warning("tool_markup_leak_detected")
-
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        return cleaned
+        return self._voice_coordinator.sanitize_response(text)
 
     def _sanitize_research_voice_for_tts(
         self,
@@ -1668,110 +985,19 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         *,
         voice_mode: str = "brief",
     ) -> tuple[str, str]:
-        """Return clean TTS text for research results."""
-        from core.research.result_synthesizer import ResultSynthesizer
-
-        def _has_json_signatures(text: str) -> bool:
-            sample = str(text or "")
-            return bool(
-                re.search(r'(?i)"?\b(display|voice)\b"?\s*:', sample)
-                or re.search(r"[{}]", sample)
-            )
-
-        raw_voice = str(voice or "").strip()
-        if not raw_voice:
-            display_fallback = ResultSynthesizer._normalize_voice(
-                ResultSynthesizer._voice_from_display(display, voice_mode=voice_mode),
-                voice_mode=voice_mode,
-            )
-            if display_fallback:
-                return display_fallback, "display_fallback"
-            return "", "empty"
-
-        direct = ResultSynthesizer._normalize_voice(
-            self._sanitize_response(raw_voice),
+        return self._voice_coordinator.sanitize_research_voice_for_tts(
+            voice,
+            display,
             voice_mode=voice_mode,
         )
-        if direct and not _has_json_signatures(direct):
-            return direct, "direct"
-
-        cleaned_source = re.sub(r'(?i)"?\b(display|voice)\b"?\s*:\s*', " ", raw_voice)
-        cleaned_source = re.sub(r"[{}\"]", " ", cleaned_source)
-        cleaned_source = re.sub(r"(?im)^\s*sources?\s*:.*$", " ", cleaned_source)
-        cleaned_source = re.sub(r"\s+", " ", cleaned_source).strip()
-        cleaned = ResultSynthesizer._normalize_voice(
-            self._sanitize_response(cleaned_source),
-            voice_mode=voice_mode,
-        )
-        if cleaned and not _has_json_signatures(cleaned):
-            return cleaned, "cleaned"
-
-        display_fallback = ResultSynthesizer._normalize_voice(
-            ResultSynthesizer._voice_from_display(display, voice_mode=voice_mode),
-            voice_mode=voice_mode,
-        )
-        if display_fallback and not _has_json_signatures(display_fallback):
-            return display_fallback, "display_fallback"
-        return "", "empty"
 
     def _parse_multi_app(self, app_phrase: str) -> List[str]:
-        """
-        Parse "open X and Y" / "open X, Y" into one shell command per app.
-        Returns empty list when phrase is not multi-app or not safely mappable.
-        """
-        phrase = (app_phrase or "").strip().lower().strip(" .,!?:;")
-        if not phrase:
-            return []
-
-        parts = [p.strip() for p in re.split(r"\s*(?:,|&|\band\b)\s*", phrase) if p.strip()]
-        if len(parts) < 2:
-            return []
-
-        command_map = {
-            "firefox": "firefox",
-            "chrome": "google-chrome",
-            "google chrome": "google-chrome",
-            "chromium": "chromium-browser",
-            "brave": "brave-browser",
-            "edge": "microsoft-edge",
-            "calculator": "gnome-calculator",
-            "files": "nautilus",
-            "file manager": "nautilus",
-            "terminal": "gnome-terminal",
-        }
-
-        commands: List[str] = []
-        for raw_part in parts:
-            part = re.sub(r"^\b(the|my)\b\s+", "", raw_part).strip()
-            part = re.sub(r"\s+\b(app|application)\b$", "", part).strip()
-            cmd = command_map.get(part)
-            if not cmd:
-                return []
-            commands.append(cmd)
-
-        # Preserve order while de-duplicating.
-        deduped = list(dict.fromkeys(commands))
-        return deduped if len(deduped) > 1 else []
+        return self._voice_coordinator.parse_multi_app(app_phrase)
 
     # ─── Inlined from legacy.py ────────────────────────────────────────────────
 
     def set_session(self, session: Any):
-        """Update the active LiveKit session (used for audio recovery)."""
-        session_identity = str(id(session))
-        if self._attached_session_identity == session_identity:
-            logger.info(
-                "🟡 ORCHESTRATOR_SESSION_ATTACH_SKIPPED_SAME_SESSION session_identity=%s",
-                session_identity,
-            )
-            return
-        logger.info(f"🔄 Orchestrator switching to new AgentSession: {session}")
-        self.session = session
-        self._attached_session_identity = session_identity
-        self._session_continuity_injected = False
-        self._conversation_history = [
-            msg for msg in self._conversation_history
-            if str(msg.get("source", "")) != "session_continuity"
-        ]
+        self._session_lifecycle.set_session(session)
 
     def setup_handlers(self):
         """Registers all event handlers for the room and session. Idempotent — safe to call multiple times."""
@@ -1820,63 +1046,17 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             self._spawn_background_task(self._announce(message))
 
     def _on_transcription_received(self, transcription):
-        """Handle user transcription events and publish to data channel."""
-        try:
-            if transcription.is_final and transcription.participant and transcription.participant.is_local:
-                turn_id = self._start_new_turn(transcription.text)
-
-                self._spawn_background_task(
-                    publish_user_message(self.room, turn_id, transcription.text)
-                )
-                self._spawn_background_task(
-                    publish_agent_thinking(self.room, turn_id, "thinking")
-                )
-        except Exception as e:
-            logger.error(f"❌ Error handling transcription: {e}")
+        self._voice_coordinator.on_transcription_received(transcription)
 
     async def process_chat_message(self, text: str):
-        """Processes text-based chat messages by updating context and triggering reply."""
-        try:
-            logger.info(f"📝 Adding user text to agent context: {text}")
-            if hasattr(self.agent, "chat_ctx") and hasattr(self.agent, "update_chat_ctx"):
-                new_ctx = self.agent.chat_ctx.copy()
-                new_ctx.add_message(role="user", content=text)
-                await self.agent.update_chat_ctx(new_ctx)
-                logger.info("✅ Chat context updated")
-            logger.info("🤖 Triggering agent reply...")
-            self.session.generate_reply()
-        except Exception as e:
-            logger.error(f"❌ Error in process_chat_message: {e}")
+        await self._voice_coordinator.process_chat_message(text)
 
     def _on_data_received(self, *args):
-        """Handles incoming data messages (e.g., from the chat UI)."""
-        try:
-            data, topic = None, None
-            if len(args) >= 4:
-                data, topic = args[0], args[3]
-            elif len(args) == 1:
-                obj = args[0]
-                data = getattr(obj, "data", None)
-                topic = getattr(obj, "topic", None)
-            if (topic == "chat" or topic == "lk.chat") and data:
-                text = data.decode("utf-8")
-                logger.info(f"📩 Chat message received: {text}")
-                self._spawn_background_task(self.process_chat_message(text))
-        except Exception as e:
-            logger.error(f"❌ Error handling data message: {e}")
+        self._voice_coordinator.on_data_received(*args)
 
     @staticmethod
     def parse_client_config(participant: Any) -> Dict[str, Any]:
-        """Parses client configuration from participant metadata."""
-        if not participant.metadata:
-            return {}
-        try:
-            config = json.loads(participant.metadata)
-            logger.info(f"🔧 Parsed client config: {config}")
-            return config
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to parse metadata: {e}")
-            return {}
+        return VoiceCoordinator.parse_client_config(participant)
 
     # ─── End inlined legacy methods ────────────────────────────────────────────
 
@@ -1888,7 +1068,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_id: str | None = None,
         origin: str = "chat",
     ) -> List[Dict[str, Any]]:
-        return self._memory_context_service.retrieve_memories(
+        return self._context_assembler.retrieve_memories(
             user_input,
             k=k,
             user_id=user_id,
@@ -1897,7 +1077,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         )
 
     def _format_memory_context(self, memories: List[Dict[str, Any]]) -> str:
-        return self._memory_context_service.format_memory_context(memories)
+        return self._context_assembler.format_memory_context(memories)
 
     def _retrieve_memory_context(
         self,
@@ -1907,7 +1087,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_id: str | None = None,
         origin: str = "chat",
     ) -> str:
-        return self._memory_context_service.retrieve_memory_context(
+        return self._context_assembler.retrieve_memory_context(
             user_input,
             k=k,
             user_id=user_id,
@@ -1921,20 +1101,20 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         *args: Any,
         timeout_s: float,
     ) -> Any:
-        return await self._memory_context_service.run_sync_with_timeout(
+        return await self._context_assembler.run_sync_with_timeout(
             func,
             *args,
             timeout_s=timeout_s,
         )
 
     def _is_tool_focused_query(self, message: str) -> bool:
-        return self._memory_context_service.is_tool_focused_query(message)
+        return self._context_assembler.is_tool_focused_query(message)
 
     def _is_memory_relevant(self, text: str) -> bool:
-        return self._memory_context_service.is_memory_relevant(text)
+        return self._context_assembler.is_memory_relevant(text)
 
     def _is_recall_exclusion_intent(self, text: str) -> bool:
-        return self._memory_context_service.is_recall_exclusion_intent(text)
+        return self._context_assembler.is_recall_exclusion_intent(text)
 
     def _should_skip_memory(
         self,
@@ -1942,7 +1122,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         origin: str,
         routing_mode_type: str,
     ) -> tuple[bool, str]:
-        return self._memory_context_service.should_skip_memory(
+        return self._context_assembler.should_skip_memory(
             text,
             origin,
             routing_mode_type,
@@ -1957,7 +1137,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         user_id: str | None = None,
         session_id: str | None = None,
     ) -> str:
-        return await self._memory_context_service.retrieve_memory_context_async(
+        return await self._context_assembler.retrieve_memory_context_async(
             user_input,
             origin=origin,
             routing_mode_type=routing_mode_type,
@@ -1966,83 +1146,32 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         )
 
     def _is_malformed_short_request(self, message: str) -> bool:
-        """
-        Catch clearly malformed short inputs and request a clean rephrase.
-        Keeps recovery behavior deterministic across direct and Flutter paths.
-        """
-        text = (message or "").strip().lower()
-        if not text:
-            return True
-
-        words = re.findall(r"[a-z]{2,}", text)
-        weird_tokens = len(re.findall(r"[\[\]\{\}]", text))
-        punctuation = len(re.findall(r"[^\w\s]", text))
-
-        if weird_tokens > 0 and len(words) <= 4:
-            return True
-        if len(text) <= 32 and punctuation >= 4 and len(words) <= 3:
-            return True
-        return False
+        return self._interaction_manager.is_malformed_short_request(message)
 
     def _is_conversational_query(self, message: str) -> bool:
-        text = (message or "").strip().lower()
-        if not text:
-            return False
-        patterns = (
-            r"\b(what(?:'s| is)\s+your\s+name|who\s+are\s+you|who\s+(?:made|created|built)\s+you|what\s+are\s+you)\b",
-            r"\b(what can you do|how can you help)\b",
-            r"\b(thanks|thank you|cheers)\b",
-            r"\b(hi|hello|hey|good morning|good evening)\b",
-            r"\b(bye|goodbye|see you)\b",
-        )
-        return any(re.search(p, text) for p in patterns)
+        return self._interaction_manager.is_conversational_query(message)
 
     def _is_name_query(self, message: str) -> bool:
-        text = (message or "").strip().lower()
-        if not text:
-            return False
-        return bool(re.search(r"\b(what(?:'s| is)\s+your\s+name|who\s+are\s+you)\b", text))
+        return self._interaction_manager.is_name_query(message)
 
     def _is_creator_query(self, message: str) -> bool:
-        text = (message or "").strip().lower()
-        if not text:
-            return False
-        return bool(re.search(r"\b(who\s+(?:made|created|built)\s+you|who\s+is\s+your\s+creator)\b", text))
+        return self._interaction_manager.is_creator_query(message)
+
+    def _is_identity_dominant_query(self, message: str) -> bool:
+        return self._interaction_manager.is_identity_dominant_query(message)
+
+    def _strip_identity_preamble_if_needed(self, user_query: str, raw_text: str) -> str:
+        return self._interaction_manager.strip_identity_preamble_if_needed(user_query, raw_text)
+
+    async def _apply_action_state_carryover(self, message: str) -> str:
+        return await self._interaction_manager.apply_action_state_carryover(message)
 
     def _is_user_name_recall_query(self, message: str) -> bool:
-        text = (message or "").strip().lower()
-        if not text:
-            return False
-        return bool(
-            re.search(
-                r"\b(what(?:'s| is)\s+my\s+name|do you know my name|what do you know about me|what have i told you about me)\b",
-                text,
-            )
-        )
+        return self._interaction_manager.is_user_name_recall_query(message)
 
     @staticmethod
     def _extract_name_from_memory_messages(messages: List[Any]) -> Optional[str]:
-        name_pattern = re.compile(r"\bmy name is\s+([A-Za-z][A-Za-z0-9' -]{0,40})", re.IGNORECASE)
-        profile_pattern = re.compile(
-            r"\buser profile fact:\s*name\s*=\s*([A-Za-z][A-Za-z0-9' -]{0,40})",
-            re.IGNORECASE,
-        )
-        for message in messages or []:
-            source = ""
-            content: Any = ""
-            if isinstance(message, dict):
-                source = str(message.get("source", "")).lower()
-                content = message.get("content", "")
-            else:
-                source = str(getattr(message, "source", "")).lower()
-                content = getattr(message, "content", "")
-            if source != "memory" and "[memory" not in str(content).lower():
-                continue
-            content_text = content if isinstance(content, str) else str(content)
-            match = name_pattern.search(content_text) or profile_pattern.search(content_text)
-            if match:
-                return match.group(1).strip().strip(".,!?;:\"'")
-        return None
+        return InteractionManager.extract_name_from_memory_messages(messages)
 
     async def _lookup_profile_name_from_memory(
         self,
@@ -2051,88 +1180,20 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_id: str | None,
         origin: str = "chat",
     ) -> Optional[str]:
-        """
-        Fallback lookup for canonical profile facts when semantic memory snippets
-        do not include an explicit "my name is ..." line.
-        """
-        try:
-            retriever = getattr(self.memory, "retrieve_relevant_memories_with_scope_fallback_async", None)
-            if not callable(retriever):
-                return None
-            memories = await retriever(
-                query="User profile fact: name=",
-                user_id=user_id,
-                session_id=session_id,
-                origin=origin,
-                k=6,
-            )
-        except Exception as e:
-            logger.warning("profile_name_lookup_failed user_id=%s session_id=%s error=%s", user_id, session_id, e)
-            return None
-
-        profile_pattern = re.compile(
-            r"\buser profile fact:\s*name\s*=\s*([A-Za-z][A-Za-z0-9' -]{0,40})",
-            re.IGNORECASE,
+        return await self._interaction_manager.lookup_profile_name_from_memory(
+            user_id=user_id,
+            session_id=session_id,
+            origin=origin,
         )
-        for item in memories or []:
-            meta = item.get("metadata") if isinstance(item, dict) else {}
-            if isinstance(meta, dict):
-                if str(meta.get("memory_kind", "")).lower() == "profile_fact" and str(meta.get("field", "")).lower() == "name":
-                    value = str(meta.get("value") or "").strip().strip(".,!?;:\"'")
-                    if value:
-                        return value
-
-            text = str(item.get("text") if isinstance(item, dict) else "" or "")
-            match = profile_pattern.search(text)
-            if match:
-                return match.group(1).strip().strip(".,!?;:\"'")
-        return None
 
     def _summarize_task_start(self, user_text: str, steps: List[Any]) -> str:
-        first_desc = ""
-        if steps:
-            first_desc = str(getattr(steps[0], "description", "") or "").strip()
-        first_desc = re.sub(r"^\s*understand and execute:\s*", "", first_desc, flags=re.IGNORECASE)
-        if "relevant past memories" in first_desc.lower():
-            first_desc = ""
-        first_desc = " ".join(first_desc.split())
-        summary = first_desc or " ".join((user_text or "").strip().split())
-        summary = summary[:180]
-        return f"I've started a task with {len(steps)} steps: {summary}..."
+        return ResearchHandler.summarize_task_start(user_text, steps)
 
     def _queue_preference_update(self, user_id: str, key: str, value: Any, source: str) -> None:
-        if not self.preference_manager:
-            return
-        if not str(user_id or "").strip():
-            return
-        set_pref = getattr(self.preference_manager, "set", None)
-        if callable(set_pref):
-            asyncio.create_task(set_pref(user_id, key, value))
-            logger.info(
-                "preference_implicit_update_queued user_id=%s key=%s value=%s source=%s",
-                user_id,
-                key,
-                value,
-                source,
-            )
-            return
-        update_pref = getattr(self.preference_manager, "update_preference", None)
-        if callable(update_pref):
-            asyncio.create_task(update_pref(user_id, key, value))
-            logger.info(
-                "preference_implicit_update_queued user_id=%s key=%s value=%s source=%s",
-                user_id,
-                key,
-                value,
-                source,
-            )
+        self._interaction_manager.queue_preference_update(user_id, key, value, source)
 
     def _queue_preference_extraction(self, user_text: str, user_id: str) -> None:
-        if not self.preference_manager:
-            return
-        extract = getattr(self.preference_manager, "extract_from_text", None)
-        if callable(extract) and str(user_text or "").strip():
-            asyncio.create_task(extract(user_text, user_id))
+        self._interaction_manager.queue_preference_extraction(user_text, user_id)
 
     def _capture_implicit_preference_from_direct_tool(
         self,
@@ -2321,7 +1382,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
 
     @staticmethod
     def _compose_report_markdown(query: str, summary: str, sources: list[Any]) -> str:
-        return TaskRuntimeService.compose_report_markdown(query, summary, sources)
+        return ResearchHandler.compose_report_markdown(query, summary, sources)
 
     async def _ensure_task_worker(self, user_id: str) -> None:
         await self._task_runtime_service.ensure_task_worker(user_id)
@@ -2330,12 +1391,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         await self._task_runtime_service.shutdown()
 
     def _resolve_session_queue_key(self, tool_context: Any = None) -> str:
-        return (
-            getattr(tool_context, "session_id", None)
-            or self._current_session_id
-            or getattr(getattr(self, "room", None), "name", None)
-            or "console_session"
-        )
+        return self._session_lifecycle.resolve_session_queue_key(tool_context)
 
     def _queue_rejection_response(self) -> AgentResponse:
         response = ResponseFormatter.build_response(

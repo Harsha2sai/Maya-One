@@ -28,8 +28,60 @@ class HandoffLimitError(RuntimeError):
         self.code = code
 
 
+class HandoffCircuitOpenError(HandoffLimitError):
+    """Raised when handoff circuit breaker is open."""
+
+    def __init__(self, message: str = "Handoff circuit breaker open") -> None:
+        super().__init__("handoff_circuit_open", message)
+
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 3, recovery_timeout: int = 30, success_threshold: int = 2):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.success_threshold = success_threshold
+        self._failures = 0
+        self._successes = 0
+        self._state = "closed"
+        self._opened_at: float | None = None
+
+    def allow_request(self) -> bool:
+        if self._state == "closed":
+            return True
+        if self._state == "open":
+            if self._opened_at is not None and time.time() - self._opened_at >= self.recovery_timeout:
+                self._state = "half-open"
+                self._successes = 0
+                return True
+            return False
+        return True
+
+    def record_success(self) -> None:
+        if self._state == "half-open":
+            self._successes += 1
+            if self._successes >= self.success_threshold:
+                self._state = "closed"
+                self._failures = 0
+                self._successes = 0
+                self._opened_at = None
+            return
+        self._failures = 0
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        self._successes = 0
+        if self._failures >= self.failure_threshold:
+            self._state = "open"
+            self._opened_at = time.time()
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+
 class HandoffManager:
-    MAX_DEPTH = 1
+    MAX_HANDOFF_DEPTH = 5
+    MAX_DEPTH = MAX_HANDOFF_DEPTH
     MAX_SUBAGENT_FAILURES = 3
     ALLOWED_TARGETS = {
         "research",
@@ -63,6 +115,11 @@ class HandoffManager:
 
     def __init__(self, registry, *, subagent_manager: SubAgentManager | None = None) -> None:
         self.registry = registry
+        self._depth_breaker = CircuitBreaker(
+            failure_threshold=3,
+            recovery_timeout=30,
+            success_threshold=2,
+        )
         self._subagent_failure_counts: dict[str, int] = {}
         self._message_bus = self._build_message_bus()
         self._persistence = self._build_task_persistence()
@@ -119,8 +176,10 @@ class HandoffManager:
         if request.target_agent not in self.ALLOWED_TARGETS:
             raise HandoffValidationError(f"invalid target_agent: {request.target_agent}")
 
-        if request.max_depth != self.MAX_DEPTH:
-            raise HandoffValidationError(f"max_depth must be {self.MAX_DEPTH}")
+        if int(request.max_depth) <= 0:
+            raise HandoffValidationError("max_depth must be positive")
+        if int(request.max_depth) > self.MAX_HANDOFF_DEPTH:
+            raise HandoffValidationError(f"max_depth must be <= {self.MAX_HANDOFF_DEPTH}")
 
         if request.delegation_depth >= request.max_depth:
             logger.warning(
@@ -288,6 +347,37 @@ class HandoffManager:
                 metadata={"task_scope": "tracked" if request.task_id else "inline_untracked"},
             )
 
+    async def _do_delegate(
+        self,
+        request: AgentHandoffRequest,
+        background: bool = False,
+        recoverable: bool = False,
+    ) -> AgentHandoffResult:
+        self.validate_request(request)
+        if str(request.target_agent or "").strip().lower() in self.SUBAGENT_TARGETS:
+            return await self._delegate_subagent(
+                request,
+                background=background,
+                recoverable=recoverable,
+            )
+
+        match = await self.registry.can_accept(request)
+        if match.confidence <= 0.0 and match.hard_constraints_passed:
+            logger.info(
+                "handoff_zero_confidence_allowed target=%s handoff_id=%s reason=%s",
+                request.target_agent,
+                request.handoff_id,
+                match.reason,
+            )
+        logger.info(
+            "handoff_accepted target=%s confidence=%.3f reason=%s handoff_id=%s",
+            request.target_agent,
+            match.confidence,
+            match.reason,
+            request.handoff_id,
+        )
+        return await self.registry.handle(request)
+
     async def delegate(
         self,
         request: AgentHandoffRequest,
@@ -303,42 +393,18 @@ class HandoffManager:
             request.handoff_id,
         )
         try:
-            self.validate_request(request)
-            if str(request.target_agent or "").strip().lower() in self.SUBAGENT_TARGETS:
-                result = await self._delegate_subagent(
-                    request,
-                    background=background,
-                    recoverable=recoverable,
-                )
-                elapsed_ms = (time.perf_counter() - started) * 1000.0
-                logger.info(
-                    "handoff_completed target=%s status=%s total_ms=%.2f handoff_id=%s",
-                    request.target_agent,
-                    result.status,
-                    elapsed_ms,
-                    request.handoff_id,
-                )
-                return result
-            match = await self.registry.can_accept(request)
-            # Zero confidence is acceptable for explicit Maya-selected handoffs when
-            # hard constraints passed. This typically happens on rewritten follow-up
-            # turns where keyword matching is weak, but Maya has already chosen the
-            # specialist target and the contract should remain observable.
-            if match.confidence <= 0.0 and match.hard_constraints_passed:
-                logger.info(
-                    "handoff_zero_confidence_allowed target=%s handoff_id=%s reason=%s",
-                    request.target_agent,
-                    request.handoff_id,
-                    match.reason,
-                )
-            logger.info(
-                "handoff_accepted target=%s confidence=%.3f reason=%s handoff_id=%s",
-                request.target_agent,
-                match.confidence,
-                match.reason,
-                request.handoff_id,
+            if not self._depth_breaker.allow_request():
+                raise HandoffCircuitOpenError("Handoff circuit breaker open")
+
+            result = await self._do_delegate(
+                request,
+                background=background,
+                recoverable=recoverable,
             )
-            result = await self.registry.handle(request)
+            if result.status == "completed":
+                self._depth_breaker.record_success()
+            elif str(request.target_agent or "").strip().lower() not in self.SUBAGENT_TARGETS:
+                self._depth_breaker.record_failure()
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             logger.info(
                 "handoff_completed target=%s status=%s total_ms=%.2f handoff_id=%s",
@@ -349,6 +415,7 @@ class HandoffManager:
             )
             return result
         except Exception as exc:
+            self._depth_breaker.record_failure()
             elapsed_ms = (time.perf_counter() - started) * 1000.0
             error_code = exc.code if isinstance(exc, HandoffLimitError) else exc.__class__.__name__
             logger.error(

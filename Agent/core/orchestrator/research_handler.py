@@ -20,6 +20,7 @@ import logging
 import re
 import time
 import uuid
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -261,6 +262,39 @@ class ResearchHandler:
 
         return ""
 
+    @staticmethod
+    def resolve_active_subject_for_fast_path(
+        research_context: Optional[Dict[str, Any]],
+        fallback_subject: str,
+    ) -> str:
+        context = research_context or {}
+        if context:
+            summary_sentence = str(context.get("summary_sentence") or "").strip()
+            if summary_sentence:
+                war_match = re.search(
+                    r"\b(?:the\s+)?([A-Za-z][A-Za-z\s]+?\s+war)\b",
+                    summary_sentence,
+                    flags=re.IGNORECASE,
+                )
+                if war_match:
+                    candidate = re.sub(r"\s+", " ", war_match.group(1)).strip()
+                    if candidate:
+                        return candidate
+
+            query = str(context.get("query") or "").strip()
+            between_match = re.search(
+                r"\bwar\s+between\s+([A-Za-z][A-Za-z\s]+?)\s+and\s+([A-Za-z][A-Za-z\s]+)\b",
+                query,
+                flags=re.IGNORECASE,
+            )
+            if between_match:
+                left = re.sub(r"\s+", " ", between_match.group(1)).strip()
+                right = re.sub(r"\s+", " ", between_match.group(2)).strip()
+                if left and right:
+                    return f"{left} and {right} war"
+
+        return str(fallback_subject or "").strip()
+
     # -------------------------------------------------------------------------
     # Subject Extraction
     # -------------------------------------------------------------------------
@@ -363,6 +397,104 @@ class ResearchHandler:
             return ""
         sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
         return sentence.rstrip(" ,;:")
+
+    # -------------------------------------------------------------------------
+    # Task / Report Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def is_multi_step_task_request(message_lower: str) -> bool:
+        text = str(message_lower or "").strip()
+        if not text:
+            return False
+        if any(phrase in text for phrase in ("set a reminder", "set reminder", "reminder to")):
+            return True
+        sequential_markers = (" and then ", " then open ", " then launch ", " then start ")
+        action_markers = (
+            "open ",
+            "launch ",
+            "start ",
+            "close ",
+            "set ",
+            "check ",
+            "email ",
+            "remind ",
+        )
+        return any(marker in text for marker in sequential_markers) and any(
+            marker in text for marker in action_markers
+        )
+
+    def is_report_export_request(
+        self,
+        message: str,
+        *,
+        report_export_keywords: tuple[str, ...],
+        report_export_patterns: tuple[str, ...],
+    ) -> bool:
+        text = str(message or "").strip().lower()
+        if not text:
+            return False
+        if any(keyword in text for keyword in report_export_keywords):
+            return True
+        has_export_verb = bool(re.search(r"\b(save|export|download|write|store)\b", text))
+        has_file_target = bool(re.search(r"\b(downloads|file|docx|document)\b", text))
+        has_report_object = bool(re.search(r"\b(report|analysis)\b", text))
+        if has_export_verb and (has_file_target or has_report_object):
+            return True
+        return any(
+            re.search(pattern, text, flags=re.IGNORECASE)
+            for pattern in report_export_patterns
+        )
+
+    @staticmethod
+    def slugify_topic(text: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower())
+        normalized = normalized.strip("-")
+        if not normalized:
+            return "research-report"
+        return normalized[:60]
+
+    def build_report_output_path(self, query: str) -> str:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")
+        topic_slug = self.slugify_topic(query)
+        return f"~/Downloads/{topic_slug}-{stamp}.docx"
+
+    @staticmethod
+    def extract_report_focus_query(user_text: str) -> str:
+        text = str(user_text or "").strip()
+        if not text:
+            return ""
+        text = re.sub(
+            r"(?i)\b(and\s+)?(make|create|write|prepare)\s+(a\s+)?(full\s+)?(report|document|doc)\b",
+            " ",
+            text,
+        )
+        text = re.sub(
+            r"(?i)\b(and\s+)?(save|export)\s+(it|this|that|report|document)?\s*(to|in)?\s*(my\s+)?downloads\b",
+            " ",
+            text,
+        )
+        text = re.sub(r"\s+", " ", text).strip(" ,.")
+        return text or str(user_text or "").strip()
+
+    @staticmethod
+    def summarize_task_start(user_text: str, steps: List[Any]) -> str:
+        first_desc = ""
+        if steps:
+            first_desc = str(getattr(steps[0], "description", "") or "").strip()
+        first_desc = re.sub(r"^\s*understand and execute:\s*", "", first_desc, flags=re.IGNORECASE)
+        if "relevant past memories" in first_desc.lower():
+            first_desc = ""
+        first_desc = " ".join(first_desc.split())
+        summary = first_desc or " ".join((user_text or "").strip().split())
+        summary = summary[:180]
+        return f"I've started a task with {len(steps)} steps: {summary}..."
+
+    @staticmethod
+    def compose_report_markdown(query: str, summary: str, sources: list[Any]) -> str:
+        from core.orchestrator.task_runtime_service import TaskRuntimeService
+
+        return TaskRuntimeService.compose_report_markdown(query, summary, sources)
 
     # -------------------------------------------------------------------------
     # Context Key Helpers
