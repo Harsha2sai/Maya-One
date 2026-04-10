@@ -33,6 +33,16 @@ from .subagent_reviewer import (
     SubAgentReviewerError,
 )
 from .subagent_manager import SubAgentManager, SubAgentLifecycleError
+from .team import (
+    ReviewFinding,
+    ReviewReducer,
+    ReviewSeverity,
+    ReviewSummary,
+    TeamCoordinator,
+    TeamExecution,
+    TeamTask,
+    TeamTaskStatus,
+)
 from .worktree_manager import (
     CleanupPolicy,
     WorktreeContext,
@@ -57,6 +67,14 @@ __all__ = [
     'SecretReport',
     'SubAgentManager',
     'SubAgentLifecycleError',
+    'TeamCoordinator',
+    'TeamTask',
+    'TeamExecution',
+    'TeamTaskStatus',
+    'ReviewReducer',
+    'ReviewFinding',
+    'ReviewSummary',
+    'ReviewSeverity',
     'SubagentPersistenceBridge',
     'RecoveryPolicy',
     'RecoverySnapshot',
