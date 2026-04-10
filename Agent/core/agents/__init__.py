@@ -1,6 +1,14 @@
 # Agents Module Init
 from .base import SpecializedAgent, AgentContext, AgentResponse
 from .documentation_agent import DocumentationAgent
+from .project import (
+    ClarificationQuestion,
+    PRD,
+    PRDGenerator,
+    ProjectManager,
+    RequirementsGatherer,
+    RequirementsState,
+)
 from .registry import AgentRegistry, get_agent_registry
 from .security_agent import (
     SecretFinding,
@@ -58,6 +66,12 @@ __all__ = [
     'AgentRegistry',
     'get_agent_registry',
     'DocumentationAgent',
+    'ProjectManager',
+    'RequirementsGatherer',
+    'RequirementsState',
+    'ClarificationQuestion',
+    'PRDGenerator',
+    'PRD',
     'SecurityAgent',
     'SecurityFinding',
     'SecurityReport',
