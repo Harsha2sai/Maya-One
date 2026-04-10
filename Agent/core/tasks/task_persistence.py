@@ -137,8 +137,23 @@ class TaskPersistenceManager:
         terminal_states = tuple(TERMINAL_TASK_STATES)
         placeholders = ", ".join(["?"] * len(terminal_states))
 
+        extra_columns = {"persistent": "0", "background_mode": "0", "cron_expression": "NULL"}
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            try:
+                available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            except sqlite3.OperationalError:
+                return []
+
+        selected_columns = ["id", "user_id", "status", "metadata"]
+        for column_name, fallback in extra_columns.items():
+            if column_name in available_columns:
+                selected_columns.append(column_name)
+            else:
+                selected_columns.append(f"{fallback} AS {column_name}")
+
         sql = (
-            f"SELECT id, user_id, status, metadata FROM tasks "
+            f"SELECT {', '.join(selected_columns)} FROM tasks "
             f"WHERE status NOT IN ({placeholders})"
         )
         params: List[Any] = list(terminal_states)
@@ -162,7 +177,10 @@ class TaskPersistenceManager:
                     metadata = json.loads(str(raw_metadata))
                 except Exception:
                     metadata = {}
-            if not bool(metadata.get("scheduled_task") or metadata.get("background_mode")):
+            row_background_mode = bool(int(row["background_mode"] or 0))
+            row_persistent = bool(int(row["persistent"] or 0))
+            metadata_background = bool(metadata.get("scheduled_task") or metadata.get("background_mode"))
+            if not (metadata_background or row_background_mode or row_persistent):
                 continue
             recovered.append(
                 {
@@ -170,6 +188,9 @@ class TaskPersistenceManager:
                     "user_id": row["user_id"],
                     "status": row["status"],
                     "metadata": metadata,
+                    "persistent": row_persistent,
+                    "background_mode": row_background_mode,
+                    "cron_expression": row["cron_expression"],
                 }
             )
         return recovered

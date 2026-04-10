@@ -210,6 +210,10 @@ class SQLiteTaskStore(BaseTaskStore):
                 delegation_depth INTEGER DEFAULT 0,
                 delegation_chain TEXT,
                 progress_notes TEXT,
+                persistent INTEGER DEFAULT 0,
+                cron_expression TEXT,
+                recovery_checkpoint TEXT,
+                background_mode INTEGER DEFAULT 0,
                 result TEXT,
                 error TEXT
             );
@@ -247,7 +251,18 @@ class SQLiteTaskStore(BaseTaskStore):
             """)
 
     def _validate_schema(self):
-        required_task_columns = {"id", "user_id", "title", "status", "created_at", "metadata"}
+        required_task_columns = {
+            "id",
+            "user_id",
+            "title",
+            "status",
+            "created_at",
+            "metadata",
+            "persistent",
+            "cron_expression",
+            "recovery_checkpoint",
+            "background_mode",
+        }
         required_step_columns = {"id", "task_id", "status", "metadata"}
         
         try:
@@ -261,6 +276,18 @@ class SQLiteTaskStore(BaseTaskStore):
                 if "metadata" not in task_columns:
                     conn.execute("ALTER TABLE tasks ADD COLUMN metadata TEXT")
                     logger.info("🛠️ Added missing column tasks.metadata")
+                if "persistent" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN persistent INTEGER DEFAULT 0")
+                    logger.info("🛠️ Added missing column tasks.persistent")
+                if "cron_expression" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN cron_expression TEXT")
+                    logger.info("🛠️ Added missing column tasks.cron_expression")
+                if "recovery_checkpoint" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN recovery_checkpoint TEXT")
+                    logger.info("🛠️ Added missing column tasks.recovery_checkpoint")
+                if "background_mode" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN background_mode INTEGER DEFAULT 0")
+                    logger.info("🛠️ Added missing column tasks.background_mode")
                 
                 cursor = conn.execute("PRAGMA table_info(task_steps)")
                 step_columns = {row[1] for row in cursor.fetchall()}
@@ -385,7 +412,7 @@ class SQLiteTaskStore(BaseTaskStore):
                     data = dict(row)
                     # Deserialize JSON fields
                     for k, v in data.items():
-                        if k in ['progress_notes', 'delegation_chain', 'metadata'] and v:
+                        if k in ['progress_notes', 'delegation_chain', 'metadata', 'recovery_checkpoint'] and v:
                             try:
                                 data[k] = json.loads(v)
                             except: pass
@@ -500,7 +527,7 @@ class SQLiteTaskStore(BaseTaskStore):
                         t_data = dict(row)
                          # Deserialize JSON fields
                         for k, v in t_data.items():
-                            if k in ['progress_notes', 'delegation_chain', 'metadata'] and v:
+                            if k in ['progress_notes', 'delegation_chain', 'metadata', 'recovery_checkpoint'] and v:
                                 try: t_data[k] = json.loads(v)
                                 except: pass
                         
@@ -559,7 +586,7 @@ class SQLiteTaskStore(BaseTaskStore):
                     for row in rows:
                         t_data = dict(row)
                         for k, v in t_data.items():
-                            if k in ['progress_notes', 'delegation_chain', 'metadata'] and v:
+                            if k in ['progress_notes', 'delegation_chain', 'metadata', 'recovery_checkpoint'] and v:
                                 try: t_data[k] = json.loads(v)
                                 except: pass
                         

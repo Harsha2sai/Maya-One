@@ -51,6 +51,10 @@ class Task(BaseModel):
     error: Optional[str] = None
 
     metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    persistent: bool = False
+    cron_expression: Optional[str] = None
+    recovery_checkpoint: Optional[Dict[str, Any]] = None
+    background_mode: bool = False
 
     @field_validator('priority', mode='before')
     @classmethod
