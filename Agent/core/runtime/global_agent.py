@@ -25,6 +25,7 @@ class GlobalAgentContainer:
     _llm: Any = None             # Base LLM
     _smart_llm: Any = None       # SmartLLM (with tools)
     _orchestrator: Any = None    # ConsoleOrchestrator (created once)
+    _hook_registry: Any = None   # HookRegistry
     _task_workers: dict[str, Any] = {}
     _sentinel: Any = None        # BehavioralSentinel
     provider_supervisor: Any = None
@@ -54,6 +55,7 @@ class GlobalAgentContainer:
         from core.tools.tool_manager import ToolManager
         from providers.factory import ProviderFactory
         from core.tasks.task_store import SQLiteTaskStore
+        from core.hooks.registry import HookRegistry
         from core.memory.hybrid_memory_manager import HybridMemoryManager
         from core.memory.memory_ingestor import MemoryIngestor
         from core.memory.preference_manager import PreferenceManager
@@ -88,6 +90,7 @@ class GlobalAgentContainer:
         
         # 2. Initialize Task Store (Singleton)
         cls._task_store = SQLiteTaskStore("./dev_maya_one.db")
+        cls._hook_registry = HookRegistry()
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -305,6 +308,11 @@ class GlobalAgentContainer:
     def get_orchestrator(cls) -> Any:
         """Return the shared AgentOrchestrator instance."""
         return cls._orchestrator
+
+    @classmethod
+    def get_hook_registry(cls) -> Any:
+        """Return the shared HookRegistry instance."""
+        return cls._hook_registry
 
     @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
