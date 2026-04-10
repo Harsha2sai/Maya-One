@@ -26,6 +26,8 @@ class GlobalAgentContainer:
     _smart_llm: Any = None       # SmartLLM (with tools)
     _orchestrator: Any = None    # ConsoleOrchestrator (created once)
     _hook_registry: Any = None   # HookRegistry
+    _session_store: Any = None   # Memdir SessionStore
+    _user_preferences_store: Any = None  # Memdir UserPreferences
     _task_workers: dict[str, Any] = {}
     _sentinel: Any = None        # BehavioralSentinel
     provider_supervisor: Any = None
@@ -57,6 +59,7 @@ class GlobalAgentContainer:
         from core.tasks.task_store import SQLiteTaskStore
         from core.hooks.registry import HookRegistry
         from core.memory.hybrid_memory_manager import HybridMemoryManager
+        from core.memory.memdir import SessionStore, UserPreferences
         from core.memory.memory_ingestor import MemoryIngestor
         from core.memory.preference_manager import PreferenceManager
         from core.tasks.task_tools import get_task_tools
@@ -91,6 +94,9 @@ class GlobalAgentContainer:
         # 2. Initialize Task Store (Singleton)
         cls._task_store = SQLiteTaskStore("./dev_maya_one.db")
         cls._hook_registry = HookRegistry()
+        memdir_root = str(os.getenv("MAYA_MEMDIR_HOME", "")).strip() or None
+        cls._session_store = SessionStore(base_dir=memdir_root)
+        cls._user_preferences_store = UserPreferences(base_dir=memdir_root)
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -313,6 +319,16 @@ class GlobalAgentContainer:
     def get_hook_registry(cls) -> Any:
         """Return the shared HookRegistry instance."""
         return cls._hook_registry
+
+    @classmethod
+    def get_session_store(cls) -> Any:
+        """Return the shared memdir SessionStore instance."""
+        return cls._session_store
+
+    @classmethod
+    def get_user_preferences_store(cls) -> Any:
+        """Return the shared memdir UserPreferences store instance."""
+        return cls._user_preferences_store
 
     @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
