@@ -47,9 +47,8 @@ from .team import (
     ReviewSeverity,
     ReviewSummary,
     TeamCoordinator,
-    TeamExecution,
-    TeamTask,
-    TeamTaskStatus,
+    TeamMode,
+    TeamResult,
 )
 from .worktree_manager import (
     CleanupPolicy,
@@ -82,9 +81,8 @@ __all__ = [
     'SubAgentManager',
     'SubAgentLifecycleError',
     'TeamCoordinator',
-    'TeamTask',
-    'TeamExecution',
-    'TeamTaskStatus',
+    'TeamMode',
+    'TeamResult',
     'ReviewReducer',
     'ReviewFinding',
     'ReviewSummary',

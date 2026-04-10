@@ -37,6 +37,8 @@ class GlobalAgentContainer:
     _msg_hub: Any = None         # MayaMsgHub (P28 infrastructure)
     _worktree_manager: Any = None  # P29 worktree isolation manager
     _subagent_manager: Any = None  # P29 subagent lifecycle manager
+    _team_coordinator: Any = None  # P30 team mode coordinator
+    _ralph_executor: Any = None    # P30 $ralph executor
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
     _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
     _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
@@ -78,6 +80,8 @@ class GlobalAgentContainer:
             SubAgentManager as RuntimeSubAgentManager,
             WorktreeManager as RuntimeWorktreeManager,
         )
+        from core.agents.team import TeamCoordinator
+        from core.agents.coding import RalphExecutor
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -121,6 +125,14 @@ class GlobalAgentContainer:
             worktree_manager=cls._worktree_manager,
         )
         logger.info("🤖 SubAgentManager initialized (P29)")
+        cls._team_coordinator = TeamCoordinator(
+            subagent_manager=cls._subagent_manager,
+            msg_hub=cls._msg_hub,
+        )
+        cls._ralph_executor = RalphExecutor(
+            subagent_manager=cls._subagent_manager,
+        )
+        logger.info("🤝 TeamCoordinator + RalphExecutor initialized (P30)")
         cls._monitor = MayaMonitor()
         logger.info("📈 MayaMonitor initialized (P28 observability)")
         cls._a2a_server = MayaA2AServer(agent_name="maya")
@@ -369,6 +381,16 @@ class GlobalAgentContainer:
     def get_subagent_manager(cls) -> Any:
         """Return the shared P29 SubAgentManager instance."""
         return cls._subagent_manager
+
+    @classmethod
+    def get_team_coordinator(cls) -> Any:
+        """Return the shared P30 TeamCoordinator instance."""
+        return cls._team_coordinator
+
+    @classmethod
+    def get_ralph_executor(cls) -> Any:
+        """Return the shared P30 RalphExecutor instance."""
+        return cls._ralph_executor
 
     @classmethod
     def get_monitor(cls) -> Any:
