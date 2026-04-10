@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from config.settings import settings
 from core.agents.contracts import AgentCapabilityMatch, AgentHandoffRequest, AgentHandoffResult, HandoffSignal
 from core.agents.handoff_manager import HandoffManager, HandoffValidationError, get_handoff_manager
 from core.agents.registry import AgentRegistry
@@ -59,6 +60,38 @@ def test_get_handoff_manager_returns_fresh_instance():
     manager_one = get_handoff_manager(AgentRegistry())
     manager_two = get_handoff_manager(AgentRegistry())
     assert manager_one is not manager_two
+
+
+def test_depth_one_is_always_allowed(monkeypatch):
+    monkeypatch.setattr(settings, "multi_agent_features_enabled", False)
+    monkeypatch.setattr(settings, "multi_agent_depth3_enabled", False)
+    manager = HandoffManager(AgentRegistry())
+    manager.validate_request(_request(max_depth=1))
+
+
+def test_depth_two_requires_multi_agent_features_flag(monkeypatch):
+    manager = HandoffManager(AgentRegistry())
+
+    monkeypatch.setattr(settings, "multi_agent_features_enabled", False)
+    monkeypatch.setattr(settings, "multi_agent_depth3_enabled", False)
+    with pytest.raises(HandoffValidationError):
+        manager.validate_request(_request(max_depth=2))
+
+    monkeypatch.setattr(settings, "multi_agent_features_enabled", True)
+    monkeypatch.setattr(settings, "multi_agent_depth3_enabled", False)
+    manager.validate_request(_request(max_depth=2))
+
+
+def test_depth_three_requires_depth3_gate(monkeypatch):
+    manager = HandoffManager(AgentRegistry())
+
+    monkeypatch.setattr(settings, "multi_agent_features_enabled", True)
+    monkeypatch.setattr(settings, "multi_agent_depth3_enabled", False)
+    with pytest.raises(HandoffValidationError):
+        manager.validate_request(_request(max_depth=3))
+
+    monkeypatch.setattr(settings, "multi_agent_depth3_enabled", True)
+    manager.validate_request(_request(max_depth=3))
 
 
 @pytest.mark.asyncio
