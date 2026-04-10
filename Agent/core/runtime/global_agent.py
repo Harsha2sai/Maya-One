@@ -21,6 +21,7 @@ class GlobalAgentContainer:
     memory_ingestor: Any = None        # MemoryIngestor
     _preference_manager: Any = None
     _task_store: Any = None      # SQLiteTaskStore
+    _task_persistence: Any = None
     _tools: List[Any] = []
     _llm: Any = None             # Base LLM
     _smart_llm: Any = None       # SmartLLM (with tools)
@@ -54,6 +55,7 @@ class GlobalAgentContainer:
         from core.tools.tool_manager import ToolManager
         from providers.factory import ProviderFactory
         from core.tasks.task_store import SQLiteTaskStore
+        from core.tasks.task_persistence import TaskPersistenceManager
         from core.memory.hybrid_memory_manager import HybridMemoryManager
         from core.memory.memory_ingestor import MemoryIngestor
         from core.memory.preference_manager import PreferenceManager
@@ -88,6 +90,7 @@ class GlobalAgentContainer:
         
         # 2. Initialize Task Store (Singleton)
         cls._task_store = SQLiteTaskStore("./dev_maya_one.db")
+        cls._task_persistence = TaskPersistenceManager("./dev_maya_one.db")
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -292,6 +295,10 @@ class GlobalAgentContainer:
     @classmethod
     def get_memory(cls) -> Any:
         return cls._memory
+
+    @classmethod
+    def get_task_persistence(cls) -> Any:
+        return cls._task_persistence
 
     @classmethod
     def get_tools(cls) -> List[Any]:

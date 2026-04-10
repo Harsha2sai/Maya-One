@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 
+from config.settings import settings
 from core.agents.subagent_architect import ArchitectTask, SubAgentArchitect
 from core.agents.contracts import AgentHandoffRequest, AgentHandoffResult, HandoffSignal
 from core.agents.subagent_coder import CodingTask, SubAgentCoder
@@ -30,6 +31,8 @@ class HandoffLimitError(RuntimeError):
 
 class HandoffManager:
     MAX_DEPTH = 1
+    MAX_DEPTH_FEATURES = 2
+    MAX_DEPTH_DEPTH3 = 3
     MAX_SUBAGENT_FAILURES = 3
     ALLOWED_TARGETS = {
         "research",
@@ -99,11 +102,26 @@ class HandoffManager:
     @staticmethod
     def _build_task_persistence():
         try:
+            from core.runtime.global_agent import GlobalAgentContainer
             from core.tasks.task_persistence import TaskPersistence
 
+            shared = GlobalAgentContainer.get_task_persistence()
+            if shared is not None:
+                return shared
             return TaskPersistence()
         except Exception:
             return None
+
+    @classmethod
+    def _allowed_max_depth(cls) -> int:
+        max_depth = cls.MAX_DEPTH
+        if bool(getattr(settings, "multi_agent_features_enabled", False)):
+            max_depth = cls.MAX_DEPTH_FEATURES
+        if bool(getattr(settings, "multi_agent_features_enabled", False)) and bool(
+            getattr(settings, "multi_agent_depth3_enabled", False)
+        ):
+            max_depth = cls.MAX_DEPTH_DEPTH3
+        return max_depth
 
     def validate_request(self, request: AgentHandoffRequest) -> None:
         if str(request.parent_agent or "").strip().lower() != "maya":
@@ -119,8 +137,11 @@ class HandoffManager:
         if request.target_agent not in self.ALLOWED_TARGETS:
             raise HandoffValidationError(f"invalid target_agent: {request.target_agent}")
 
-        if request.max_depth != self.MAX_DEPTH:
-            raise HandoffValidationError(f"max_depth must be {self.MAX_DEPTH}")
+        allowed_max_depth = self._allowed_max_depth()
+        if request.max_depth < self.MAX_DEPTH or request.max_depth > allowed_max_depth:
+            raise HandoffValidationError(
+                f"max_depth must be between {self.MAX_DEPTH} and {allowed_max_depth}"
+            )
 
         if request.delegation_depth >= request.max_depth:
             logger.warning(

@@ -58,6 +58,12 @@ class SupabaseTaskStore(BaseTaskStore):
         try:
             trace_id = _ensure_task_trace_context(task)
             task_data = task.model_dump(mode='json')
+            # Keep Supabase writes backward compatible while persistence schema
+            # rollout remains SQLite-first for this phase.
+            task_data.pop("persistent", None)
+            task_data.pop("cron_expression", None)
+            task_data.pop("recovery_checkpoint", None)
+            task_data.pop("background_mode", None)
             if 'steps' in task_data:
                 plan_steps = task_data.pop('steps')
                 if isinstance(plan_steps, list):
@@ -101,6 +107,10 @@ class SupabaseTaskStore(BaseTaskStore):
             trace_id = _ensure_task_trace_context(task)
             task_data = task.model_dump(mode='json', exclude={'created_at', 'id', 'user_id'})
             task_data['updated_at'] = datetime.now(timezone.utc).isoformat()
+            task_data.pop("persistent", None)
+            task_data.pop("cron_expression", None)
+            task_data.pop("recovery_checkpoint", None)
+            task_data.pop("background_mode", None)
             if 'steps' in task_data:
                 plan_steps = task_data.pop('steps')
                 if isinstance(plan_steps, list):
@@ -211,7 +221,11 @@ class SQLiteTaskStore(BaseTaskStore):
                 delegation_chain TEXT,
                 progress_notes TEXT,
                 result TEXT,
-                error TEXT
+                error TEXT,
+                persistent INTEGER DEFAULT 0,
+                cron_expression TEXT,
+                recovery_checkpoint TEXT,
+                background_mode INTEGER DEFAULT 0
             );
             
             CREATE TABLE IF NOT EXISTS task_steps (
@@ -261,6 +275,18 @@ class SQLiteTaskStore(BaseTaskStore):
                 if "metadata" not in task_columns:
                     conn.execute("ALTER TABLE tasks ADD COLUMN metadata TEXT")
                     logger.info("🛠️ Added missing column tasks.metadata")
+                if "persistent" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN persistent INTEGER DEFAULT 0")
+                    logger.info("🛠️ Added missing column tasks.persistent")
+                if "cron_expression" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN cron_expression TEXT")
+                    logger.info("🛠️ Added missing column tasks.cron_expression")
+                if "recovery_checkpoint" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN recovery_checkpoint TEXT")
+                    logger.info("🛠️ Added missing column tasks.recovery_checkpoint")
+                if "background_mode" not in task_columns:
+                    conn.execute("ALTER TABLE tasks ADD COLUMN background_mode INTEGER DEFAULT 0")
+                    logger.info("🛠️ Added missing column tasks.background_mode")
                 
                 cursor = conn.execute("PRAGMA table_info(task_steps)")
                 step_columns = {row[1] for row in cursor.fetchall()}
@@ -385,7 +411,7 @@ class SQLiteTaskStore(BaseTaskStore):
                     data = dict(row)
                     # Deserialize JSON fields
                     for k, v in data.items():
-                        if k in ['progress_notes', 'delegation_chain', 'metadata'] and v:
+                        if k in ['progress_notes', 'delegation_chain', 'metadata', 'recovery_checkpoint'] and v:
                             try:
                                 data[k] = json.loads(v)
                             except: pass
@@ -500,7 +526,7 @@ class SQLiteTaskStore(BaseTaskStore):
                         t_data = dict(row)
                          # Deserialize JSON fields
                         for k, v in t_data.items():
-                            if k in ['progress_notes', 'delegation_chain', 'metadata'] and v:
+                            if k in ['progress_notes', 'delegation_chain', 'metadata', 'recovery_checkpoint'] and v:
                                 try: t_data[k] = json.loads(v)
                                 except: pass
                         
@@ -559,7 +585,7 @@ class SQLiteTaskStore(BaseTaskStore):
                     for row in rows:
                         t_data = dict(row)
                         for k, v in t_data.items():
-                            if k in ['progress_notes', 'delegation_chain', 'metadata'] and v:
+                            if k in ['progress_notes', 'delegation_chain', 'metadata', 'recovery_checkpoint'] and v:
                                 try: t_data[k] = json.loads(v)
                                 except: pass
                         
