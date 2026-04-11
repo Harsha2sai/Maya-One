@@ -172,19 +172,7 @@ class SubAgentManager:
         }
         sys_prompt = prompts.get(agent_type, RESEARCHER_AGENT_PROMPT)
 
-        api_key = os.getenv("GROQ_API_KEY")
-        model_name = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
-        if not api_key:
-            raise ReActAgentBuildError("GROQ_API_KEY is missing")
-
-        model = OpenAIChatModel(
-            model_name=model_name,
-            api_key=api_key,
-            client_type="openai",
-            client_kwargs={"base_url": "https://api.groq.com/openai/v1"},
-            stream=False,
-        )
-
+        model = self._build_model()
         formatter = OpenAIChatFormatter()
         toolkit = context.get("tools", []) if context else []
 
@@ -195,6 +183,64 @@ class SubAgentManager:
             formatter=formatter,
             toolkit=toolkit,
             max_iters=10,
+        )
+
+    def _build_model(self) -> OpenAIChatModel:
+        """
+        Build an AgentScope model from Maya's active LLM provider settings.
+        Supports: groq, openai, anthropic (via openai-compat), gemini (via openai-compat).
+        """
+        provider = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+        model_name = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile").strip()
+
+        # Provider → (api_key_env, base_url)
+        PROVIDER_MAP = {
+            "groq": (
+                "GROQ_API_KEY",
+                "https://api.groq.com/openai/v1",
+            ),
+            "openai": (
+                "OPENAI_API_KEY",
+                None,  # use default OpenAI endpoint
+            ),
+            "anthropic": (
+                "ANTHROPIC_API_KEY",
+                "https://api.anthropic.com/v1",
+            ),
+            "gemini": (
+                "GEMINI_API_KEY",
+                "https://generativelanguage.googleapis.com/v1beta/openai",
+            ),
+            "deepseek": (
+                "DEEPSEEK_API_KEY",
+                "https://api.deepseek.com/v1",
+            ),
+        }
+
+        if provider not in PROVIDER_MAP:
+            raise ReActAgentBuildError(
+                f"Unsupported LLM provider for subagents: '{provider}'. "
+                f"Supported: {list(PROVIDER_MAP)}"
+            )
+
+        key_env, base_url = PROVIDER_MAP[provider]
+        api_key = os.getenv(key_env, "").strip()
+
+        if not api_key:
+            raise ReActAgentBuildError(
+                f"Missing API key for provider '{provider}': set {key_env}"
+            )
+
+        client_kwargs = {}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        return OpenAIChatModel(
+            model_name=model_name,
+            api_key=api_key,
+            client_type="openai",
+            client_kwargs=client_kwargs if client_kwargs else None,
+            stream=False,
         )
 
     async def _fallback_execute(self, task: str, agent_type: str) -> str:
