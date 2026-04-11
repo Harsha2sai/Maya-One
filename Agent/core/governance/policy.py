@@ -147,6 +147,21 @@ class ToolRiskPolicy:
         "create_pdf": RiskLevel.HIGH,
         "create_docx": RiskLevel.HIGH,
 
+        # P31 Tier 1 — file ops
+        "file_read":             RiskLevel.LOW,
+        "file_glob":             RiskLevel.LOW,
+        "file_grep":             RiskLevel.LOW,
+        "file_edit":             RiskLevel.HIGH,
+        "file_write":            RiskLevel.HIGH,   # p31 version (distinct from system file_write)
+
+        # P31 Tier 1 — shell execution
+        "bash":                  RiskLevel.CRITICAL,
+
+        # P31 Tier 2 — agent coordination
+        "spawn_subagent":        RiskLevel.HIGH,
+        "check_agent_result":    RiskLevel.LOW,
+        "send_agent_message":    RiskLevel.MEDIUM,
+
         # CRITICAL (Browser automation - high risk)
         "browser_open": RiskLevel.CRITICAL,
         "browser_current_url": RiskLevel.CRITICAL,

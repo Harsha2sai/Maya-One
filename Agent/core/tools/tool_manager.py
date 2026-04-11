@@ -238,6 +238,23 @@ class ToolManager:
                 logger.warning(f"⛔ {reason}")
                 return f"⛔ {reason}"
 
+            # 2.5 PRE_TOOL hook
+            try:
+                from core.runtime.global_agent import GlobalAgentContainer
+                _hook_reg = GlobalAgentContainer.get_hook_registry()
+                if _hook_reg is not None:
+                    from core.hooks.triggers import TOOL_PRE_EXECUTE
+                    hook_ctx = {
+                        "tool_name": name,
+                        "params": params,
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "trace_id": trace_id,
+                    }
+                    await _hook_reg.fire(TOOL_PRE_EXECUTE, hook_ctx)
+            except Exception as _hook_err:
+                logger.debug("pre_tool_hook_error tool=%s: %s", name, _hook_err)
+
             # 3. Execute
             logger.info(f"🔧 Executing tool: {name} | Role: {user_role.name}")
             found_tool = tool_map.get(name.lower())
@@ -328,7 +345,25 @@ class ToolManager:
                             "outcome": "success",
                         },
                     )
-                    
+
+                    # 4.05 POST_TOOL hook
+                    try:
+                        from core.runtime.global_agent import GlobalAgentContainer
+                        _hook_reg = GlobalAgentContainer.get_hook_registry()
+                        if _hook_reg is not None:
+                            from core.hooks.triggers import TOOL_POST_EXECUTE
+                            await _hook_reg.fire(TOOL_POST_EXECUTE, {
+                                "tool_name": name,
+                                "result": str(result)[:500],
+                                "latency_ms": latency_ms,
+                                "user_id": user_id,
+                                "session_id": session_id,
+                                "trace_id": trace_id,
+                                "success": True,
+                            })
+                    except Exception as _hook_err:
+                        logger.debug("post_tool_hook_error tool=%s: %s", name, _hook_err)
+
                     # 4.1 Publish finished event
                     if room and turn_id:
                         asyncio.create_task(

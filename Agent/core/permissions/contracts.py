@@ -23,6 +23,7 @@ class PermissionMode(str, Enum):
     AUTO = "auto"  # Auto-accept low-risk, ask for high-risk
     DONT_ASK = "dontAsk"  # Assume yes to all prompts (dangerous)
     BYPASS = "bypassPermissions"  # No permission checks at all
+    LOCKED = "locked"  # Emergency: nothing runs
 
 
 class PermissionHookType(str, Enum):
@@ -163,6 +164,8 @@ class PermissionChecker:
     def _resolve_mode(self, mode_value: Any) -> PermissionMode:
         if mode_value is None:
             return self.config.default_mode
+        if isinstance(mode_value, PermissionMode):
+            return mode_value
         try:
             return PermissionMode(str(mode_value))
         except Exception:
@@ -259,6 +262,13 @@ class PermissionChecker:
     def _check_mode_policy(self, request: PermissionRequest) -> PermissionResult:
         mode = request.mode
         tool = str(request.tool_name or "").strip().lower()
+
+        if mode == PermissionMode.LOCKED:
+            return PermissionResult(
+                allowed=False,
+                mode=mode,
+                reason="locked mode: all tool execution suspended",
+            )
 
         if mode == PermissionMode.BYPASS:
             return PermissionResult(
