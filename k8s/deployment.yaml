@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maya-agent
+  namespace: maya
+  labels:
+    app: maya-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maya-agent
+  template:
+    metadata:
+      labels:
+        app: maya-agent
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+      - name: maya
+        image: maya-agent:latest
+        imagePullPolicy: IfNotPresent
+        args: ["dev"]
+        ports:
+        - containerPort: 5050
+          name: http
+
+        envFrom:
+        - configMapRef:
+            name: maya-config
+
+        env:
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maya-secrets
+              key: groq-api-key
+        - name: LIVEKIT_URL
+          valueFrom:
+            secretKeyRef:
+              name: maya-secrets
+              key: livekit-url
+        - name: LIVEKIT_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maya-secrets
+              key: livekit-api-key
+        - name: LIVEKIT_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: maya-secrets
+              key: livekit-api-secret
+        - name: ELEVENLABS_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maya-secrets
+              key: elevenlabs-api-key
+        - name: DEEPGRAM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: maya-secrets
+              key: deepgram-api-key
+
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5050
+          initialDelaySeconds: 20
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5050
+          initialDelaySeconds: 10
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        volumeMounts:
+        - name: maya-data
+          mountPath: /home/maya/.maya
+        - name: maya-logs
+          mountPath: /app/logs
+
+      volumes:
+      - name: maya-data
+        persistentVolumeClaim:
+          claimName: maya-data-pvc
+      - name: maya-logs
+        emptyDir: {}
+
+      restartPolicy: Always
+
