@@ -40,6 +40,8 @@ class GlobalAgentContainer:
     _team_coordinator: Any = None  # P30 team mode coordinator
     _ralph_executor: Any = None    # P30 $ralph executor
     _buddy: Any = None             # P33 Buddy companion
+    _command_registry: Any = None  # P34 slash command registry
+    _plugin_loader: Any = None     # P34 plugin loader
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
     _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
     _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
@@ -84,6 +86,8 @@ class GlobalAgentContainer:
         from core.agents.team import TeamCoordinator
         from core.agents.coding import RalphExecutor
         from core.buddy import BuddyCompanion
+        from core.commands import CommandRegistry
+        from core.plugins import PluginLoader
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -121,7 +125,7 @@ class GlobalAgentContainer:
         from core.messaging import MayaMsgHub
         cls._msg_hub = MayaMsgHub()
         logger.info("📨 MayaMsgHub initialized (P28 infrastructure)")
-        cls._worktree_manager = RuntimeSubWorktreeManager()
+        cls._worktree_manager = RuntimeWorktreeManager()
         cls._subagent_manager = RuntimeSubAgentManager(
             msg_hub=cls._msg_hub,
             worktree_manager=cls._worktree_manager,
@@ -140,6 +144,12 @@ class GlobalAgentContainer:
             db_path=cls._task_store.db_path,
         )
         logger.info("BuddyCompanion initialized (P33)")
+        cls._command_registry = CommandRegistry()
+        cls._register_builtin_commands()
+        plugin_dir = str(os.getenv("MAYA_PLUGIN_DIR", "plugins") or "plugins").strip()
+        cls._plugin_loader = PluginLoader(plugin_dir=plugin_dir)
+        loaded_plugins = cls._plugin_loader.load_all(cls._command_registry)
+        logger.info("P34 plugin_loader initialized loaded=%s", loaded_plugins)
         cls._monitor = MayaMonitor()
         logger.info("📈 MayaMonitor initialized (P28 observability)")
         cls._a2a_server = MayaA2AServer(agent_name="maya")
@@ -412,6 +422,70 @@ class GlobalAgentContainer:
     def get_buddy(cls) -> Any:
         """Return the shared P33 BuddyCompanion instance."""
         return cls._buddy
+
+    @classmethod
+    def get_command_registry(cls) -> Any:
+        """Return the shared P34 CommandRegistry instance."""
+        return cls._command_registry
+
+    @classmethod
+    def get_plugin_loader(cls) -> Any:
+        """Return the shared P34 PluginLoader instance."""
+        return cls._plugin_loader
+
+    @classmethod
+    async def dispatch_command(cls, raw: str, context: Optional[dict] = None) -> Optional[str]:
+        """Dispatch slash commands through the shared command registry."""
+        if cls._command_registry is None:
+            return None
+        payload = cls._build_command_context()
+        payload.update(context or {})
+        payload["command_registry"] = cls._command_registry
+        return await cls._command_registry.dispatch(raw, payload)
+
+    @classmethod
+    def _build_command_context(cls) -> dict:
+        from core.governance.gate import ExecutionGate
+
+        return {
+            "subagent_manager": cls._subagent_manager,
+            "buddy": cls._buddy,
+            "execution_gate": ExecutionGate,
+            "command_registry": cls._command_registry,
+            "memory": cls._memory,
+        }
+
+    @classmethod
+    def _register_builtin_commands(cls) -> None:
+        from core.commands import SlashCommand
+        from core.commands.handlers.agent import handle_agents, handle_kill, handle_spawn
+        from core.commands.handlers.buddy import handle_buddy, handle_evolve, handle_xp
+        from core.commands.handlers.memory import handle_forget, handle_recall, handle_remember
+        from core.commands.handlers.mode import handle_lock, handle_mode, handle_unlock
+        from core.commands.handlers.system import handle_help, handle_reset, handle_status
+
+        if cls._command_registry is None:
+            return
+
+        builtins = [
+            SlashCommand("spawn", "Spawn a specialist subagent", "/spawn <type> <task>", handle_spawn),
+            SlashCommand("agents", "List active agents", "/agents", handle_agents),
+            SlashCommand("kill", "Terminate an agent", "/kill <agent_id>", handle_kill),
+            SlashCommand("buddy", "Show Buddy status", "/buddy", handle_buddy),
+            SlashCommand("xp", "Show Buddy XP details", "/xp", handle_xp),
+            SlashCommand("evolve", "Award Buddy XP event", "/evolve [event]", handle_evolve),
+            SlashCommand("mode", "Get or set permission mode", "/mode [mode_name]", handle_mode),
+            SlashCommand("lock", "Lock tool execution", "/lock", handle_lock),
+            SlashCommand("unlock", "Unlock to default mode", "/unlock", handle_unlock),
+            SlashCommand("remember", "Store lightweight command memory", "/remember <key> <value>", handle_remember),
+            SlashCommand("forget", "Forget lightweight command memory", "/forget <key>", handle_forget),
+            SlashCommand("recall", "Recall lightweight command memory", "/recall <key>", handle_recall),
+            SlashCommand("help", "List available commands", "/help", handle_help),
+            SlashCommand("status", "Show system status", "/status", handle_status),
+            SlashCommand("reset", "Reset command-facing state", "/reset", handle_reset),
+        ]
+        for cmd in builtins:
+            cls._command_registry.register(cmd)
 
     @classmethod
     def get_monitor(cls) -> Any:
