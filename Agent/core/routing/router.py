@@ -86,8 +86,18 @@ class ExecutionRouter:
         from telemetry.session_monitor import get_session_monitor
         monitor = get_session_monitor()
 
-        # Classify intent
-        intent = self.classifier.classify(user_text, self.memory_context)
+        # Classify intent (context-aware when summary is available).
+        context_payload = context if isinstance(context, dict) else {}
+        conversation_summary = str(context_payload.get("conversation_summary") or "").strip()
+        classify_with_context = getattr(self.classifier, "classify_with_context", None)
+        if conversation_summary and callable(classify_with_context):
+            intent = classify_with_context(
+                user_text,
+                conversation_summary=conversation_summary,
+                memory_context=self.memory_context,
+            )
+        else:
+            intent = self.classifier.classify(user_text, self.memory_context)
         
         intent_name = normalize_intent(intent.intent_type)
         self.logger.info(f"🎯 Intent: {intent_name} (conf={intent.confidence:.2f})")
@@ -127,13 +137,53 @@ class ExecutionRouter:
         
         else:  # CONVERSATION
             if knowledge_context:
+                synthesized = await self._synthesize_knowledge_response(
+                    query=user_text,
+                    knowledge_context=knowledge_context,
+                    assistant=assistant,
+                    fallback_intro="Here is some information I found:",
+                )
                 return RouteResult(
                     handled=True,
-                    response=f"Here is some information I found:\n{knowledge_context}",
+                    response=synthesized,
                     intent_type=intent.intent_type,
                     needs_llm=True
                 )
             return self._handle_conversation(user_text, intent)
+
+    async def _synthesize_knowledge_response(
+        self,
+        *,
+        query: str,
+        knowledge_context: str,
+        assistant: Any = None,
+        fallback_intro: str = "Here is some information I found:",
+    ) -> str:
+        """
+        Build a user-facing response from retrieved knowledge snippets.
+
+        If assistant synthesis hooks are available, use them; otherwise return
+        deterministic fallback formatting.
+        """
+        del query
+        snippets = str(knowledge_context or "").strip()
+        if not snippets:
+            return fallback_intro
+
+        if assistant is not None:
+            synth_fn = getattr(assistant, "synthesize_knowledge_response", None)
+            if callable(synth_fn):
+                try:
+                    maybe_text = synth_fn(snippets)
+                    if hasattr(maybe_text, "__await__"):
+                        maybe_text = await maybe_text
+                    text = str(maybe_text or "").strip()
+                    if text:
+                        return text
+                except Exception as exc:
+                    self.logger.warning("knowledge_synthesis_failed: %s", exc)
+
+        return f"{fallback_intro}\n{snippets}"
     
     async def _handle_tool_action(self, user_text: str, intent: IntentResult, context: Any = None) -> RouteResult:
         """Handle a tool action intent"""

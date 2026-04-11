@@ -163,13 +163,14 @@ class TeamCoordinator:
 
         start = time.monotonic()
         try:
-            coro = handler(task.payload) if asyncio.iscoroutinefunction(handler) \
-                else asyncio.to_thread(handler, task.payload)
-
-            if task.timeout_s:
-                result = await asyncio.wait_for(coro, timeout=task.timeout_s)
+            if asyncio.iscoroutinefunction(handler):
+                coro = handler(task.payload)
+                if task.timeout_s:
+                    result = await asyncio.wait_for(coro, timeout=task.timeout_s)
+                else:
+                    result = await coro
             else:
-                result = await coro
+                result = handler(task.payload)
 
             return TeamExecution(
                 task_id=task.task_id,

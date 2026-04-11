@@ -101,6 +101,20 @@ class AgentRouter:
         self._llm = llm_client
         self._depth: Dict[str, int] = {}
         self.MAX_DEPTH = 3
+        self._last_route: Dict[str, str] = {}
+        self._pending_clarifications: Dict[str, str] = {}
+
+    def consume_pending_clarification(self, user_id: str) -> str:
+        key = str(user_id or "anonymous")
+        return str(self._pending_clarifications.pop(key, "") or "")
+
+    @staticmethod
+    def _is_ambiguous_followup_query(utterance_l: str) -> bool:
+        text = str(utterance_l or "").strip().lower()
+        return bool(
+            re.search(r"^\s*what(?:'s| is)\s+(?:the\s+)?reason\b", text)
+            or text in {"why", "why?", "what about that", "what about it"}
+        )
 
     @staticmethod
     def _message_role(message: Any) -> str:
@@ -198,6 +212,7 @@ class AgentRouter:
 
     async def route(self, utterance: str, user_id: str, chat_ctx: List[Any] | None = None) -> str:
         user_key = str(user_id or "anonymous")
+        self._pending_clarifications.pop(user_key, None)
         current = self._depth.get(user_key, 0)
         if current >= self.MAX_DEPTH:
             logger.warning("agent_depth_exceeded: %s at depth %s", user_key, current)
@@ -212,12 +227,14 @@ class AgentRouter:
         # Memory patterns take highest priority
         if any(re.search(pattern, utterance_l) for pattern in self._USER_MEMORY_PATTERNS):
             result = "chat"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
         # Note operations should stay in chat tool path and never map to identity.
         if any(re.search(pattern, utterance_l) for pattern in self._NOTE_PATTERNS):
             result = "chat"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
@@ -228,17 +245,20 @@ class AgentRouter:
         # Identity patterns — second priority, unless explicit tool/system intent is present.
         if identity_hit and not (research_intent_hit or system_intent_hit):
             result = "identity"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
         # Deterministic explicit research/system intents to avoid identity misrouting.
         if research_intent_hit:
             result = "research"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
         if system_intent_hit:
             result = "system"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
@@ -250,25 +270,38 @@ class AgentRouter:
             or "tell me a joke" in utterance_l
         ):
             result = "chat"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
-        # Deterministic media controls
+        # Deterministic media/scheduling controls
         media_play_hit = any(re.search(pattern, utterance_l) for pattern in self._MEDIA_PLAY_PATTERNS)
+        scheduling_hit = any(re.search(pattern, utterance_l) for pattern in self._SCHEDULING_PATTERNS)
+        if media_play_hit and scheduling_hit:
+            result = "chat"
+            self._pending_clarifications[user_key] = (
+                "I found multiple possible actions. Do you want media playback or scheduling?"
+            )
+            self._last_route[user_key] = result
+            logger.info("agent_router_pending_clarification_set user=%s", user_key)
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
         if media_play_hit:
             result = "media_play"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
         task_list_hit = any(re.search(pattern, utterance_l) for pattern in self._TASK_LIST_PATTERNS)
         if task_list_hit:
             result = "chat"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
-        scheduling_hit = any(re.search(pattern, utterance_l) for pattern in self._SCHEDULING_PATTERNS)
         if scheduling_hit:
             result = "scheduling"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
@@ -277,11 +310,23 @@ class AgentRouter:
         freshness_hit = any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_FRESHNESS_PATTERNS)
         if freshness_hit:
             result = "research"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
+        previous_route = self._last_route.get(user_key)
+        if previous_route and self._is_ambiguous_followup_query(utterance_l):
+            self._last_route[user_key] = previous_route
+            logger.info(
+                "agent_router_decision_context_inherit: '%s' -> %s",
+                str(utterance or "")[:50],
+                previous_route,
+            )
+            return previous_route
+
         if self._context_suggests_chat_followup(utterance_l, chat_ctx):
             result = "chat"
+            self._last_route[user_key] = result
             logger.info("agent_router_decision_context_followup: '%s' -> %s", str(utterance or "")[:50], result)
             return result
 
@@ -326,4 +371,5 @@ Reply with ONLY one word: identity / media_play / research / system / scheduling
             self._depth[user_key] = max(0, self._depth.get(user_key, 1) - 1)
 
         logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+        self._last_route[user_key] = result
         return result

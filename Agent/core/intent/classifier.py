@@ -144,6 +144,47 @@ class IntentClassifier:
             confidence=0.6,
             reason="No specific intent detected, defaulting to conversation"
         )
+
+    def classify_with_context(
+        self,
+        user_text: str,
+        conversation_summary: str = "",
+        memory_context: str = "",
+    ) -> IntentResult:
+        """
+        Context-aware classifier used for short ambiguous follow-ups.
+
+        Falls back to base classify() unless:
+        - the current utterance is ambiguous, and
+        - a conversation summary suggests a concrete tool action.
+        """
+        base = self.classify(user_text, memory_context=memory_context)
+        if base.intent_type == IntentType.TOOL_ACTION:
+            return base
+
+        summary = str(conversation_summary or "").strip()
+        if not summary:
+            return base
+
+        utterance_l = str(user_text or "").strip().lower()
+        ambiguous_followup = bool(
+            re.search(r"^\s*what(?:'s| is)\s+(?:the\s+)?reason\b", utterance_l)
+            or utterance_l in {"why", "why?", "and why", "what about that", "what about it"}
+        )
+        if not ambiguous_followup:
+            return base
+
+        summary_result = self.classify(summary, memory_context=memory_context)
+        if summary_result.intent_type == IntentType.TOOL_ACTION:
+            return IntentResult(
+                intent_type=IntentType.TOOL_ACTION,
+                confidence=max(0.7, float(summary_result.confidence or 0.0)),
+                matched_tool=summary_result.matched_tool,
+                extracted_params=dict(summary_result.extracted_params or {}),
+                reason="Contextual follow-up promoted using conversation summary",
+            )
+
+        return base
     
     def _check_memory_query(self, text: str, memory_context: str) -> Optional[IntentResult]:
         """Check if this is a memory/identity query"""

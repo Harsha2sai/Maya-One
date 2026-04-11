@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.11-slim AS base
+FROM python:3.12-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
@@ -35,4 +35,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["dev"]
-

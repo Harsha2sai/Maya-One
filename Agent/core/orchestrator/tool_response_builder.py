@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any, Dict, Optional
 
+from config.settings import settings
 from core.response.response_formatter import ResponseFormatter
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,15 @@ class ToolResponseBuilder:
             }
 
         if isinstance(raw_result, dict):
+            receipt_status = str((raw_result.get("_tool_receipt") or {}).get("status") or "").strip().lower()
+            if receipt_status == "failed":
+                message = str(raw_result.get("message") or safe_message).strip() or safe_message
+                return {
+                    **raw_result,
+                    "success": False,
+                    "message": message,
+                    "error_code": raw_result.get("error_code") or "tool_failed",
+                }
             if raw_result.get("success") is False:
                 message = str(raw_result.get("message") or safe_message).strip() or safe_message
                 return {
@@ -98,6 +108,15 @@ class ToolResponseBuilder:
 
         if name in {"open_app", "close_app"}:
             app_name = str(data.get("app_name") or data.get("app") or "").strip(" .")
+            strict_mode = bool(getattr(settings, "action_truthfulness_strict", False))
+            verification_tier = str(
+                ((data.get("_tool_receipt") or {}).get("verification") or {}).get("tier") or ""
+            ).strip().lower()
+            if strict_mode and mode == "direct" and verification_tier and verification_tier != "strong":
+                action_word = "opened" if name == "open_app" else "closed"
+                if app_name:
+                    return f"I couldn't verify {app_name} was {action_word}."
+                return "I couldn't verify that action."
             if app_name:
                 verb = "Opened" if name == "open_app" else "Closed"
                 return f"{verb} {app_name}."
@@ -266,7 +285,24 @@ class ToolResponseBuilder:
         tool_invocation: Any,
     ) -> Any:
         structured_data = tool_output if isinstance(tool_output, dict) else {"result": str(tool_output or "")}
-        raw_text = ResponseFormatter.extract_display_candidate(structured_data, tool_invocation.tool_name) or ""
+        strict_mode = bool(getattr(settings, "action_truthfulness_strict", False))
+        verification_tier = str(
+            ((structured_data.get("_tool_receipt") or {}).get("verification") or {}).get("tier") or ""
+        ).strip().lower()
+        raw_text = ""
+        if (
+            strict_mode
+            and tool_invocation.tool_name in {"open_app", "close_app"}
+            and verification_tier
+            and verification_tier != "strong"
+        ):
+            raw_text = self.get_tool_response_template(
+                tool_invocation.tool_name,
+                structured_data,
+                mode="direct",
+            ) or ""
+        if not raw_text:
+            raw_text = ResponseFormatter.extract_display_candidate(structured_data, tool_invocation.tool_name) or ""
         if not raw_text:
             raw_text = self.get_tool_response_template(
                 tool_invocation.tool_name,
