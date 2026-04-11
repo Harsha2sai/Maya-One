@@ -39,6 +39,7 @@ class GlobalAgentContainer:
     _subagent_manager: Any = None  # P29 subagent lifecycle manager
     _team_coordinator: Any = None  # P30 team mode coordinator
     _ralph_executor: Any = None    # P30 $ralph executor
+    _buddy: Any = None             # P33 Buddy companion
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
     _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
     _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
@@ -82,6 +83,7 @@ class GlobalAgentContainer:
         )
         from core.agents.team import TeamCoordinator
         from core.agents.coding import RalphExecutor
+        from core.buddy import BuddyCompanion
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -133,6 +135,11 @@ class GlobalAgentContainer:
             subagent_manager=cls._subagent_manager,
         )
         logger.info("🤝 TeamCoordinator + RalphExecutor initialized (P30)")
+        cls._buddy = BuddyCompanion(
+            subagent_manager=cls._subagent_manager,
+            db_path=cls._task_store.db_path,
+        )
+        logger.info("BuddyCompanion initialized (P33)")
         cls._monitor = MayaMonitor()
         logger.info("📈 MayaMonitor initialized (P28 observability)")
         cls._a2a_server = MayaA2AServer(agent_name="maya")
@@ -400,6 +407,11 @@ class GlobalAgentContainer:
     def get_ralph_executor(cls) -> Any:
         """Return the shared P30 RalphExecutor instance."""
         return cls._ralph_executor
+
+    @classmethod
+    def get_buddy(cls) -> Any:
+        """Return the shared P33 BuddyCompanion instance."""
+        return cls._buddy
 
     @classmethod
     def get_monitor(cls) -> Any:

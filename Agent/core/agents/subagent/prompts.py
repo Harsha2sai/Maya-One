@@ -23,6 +23,14 @@ Output docstrings, README sections, API references.
 Match the voice and style of existing documentation.""",
 }
 
+CODER_AGENT_PROMPT = AGENT_PROMPTS["coder"]
+REVIEWER_AGENT_PROMPT = AGENT_PROMPTS["reviewer"]
+RESEARCHER_AGENT_PROMPT = AGENT_PROMPTS["researcher"]
+ARCHITECT_AGENT_PROMPT = AGENT_PROMPTS["architect"]
+TESTER_AGENT_PROMPT = AGENT_PROMPTS["tester"]
+SECURITY_AGENT_PROMPT = AGENT_PROMPTS["security"]
+DOCUMENTATION_AGENT_PROMPT = AGENT_PROMPTS["documentation"]
+
 
 def get_prompt(agent_type: str) -> str:
     return AGENT_PROMPTS.get(agent_type, f"You are a specialist {agent_type} agent.")
