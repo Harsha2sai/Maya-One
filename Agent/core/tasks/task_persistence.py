@@ -15,9 +15,11 @@ TERMINAL_TASK_STATES = {"COMPLETED", "FAILED", "CANCELLED", "PLAN_FAILED", "STAL
 class TaskPersistenceManager:
     """Persistence bridge for checkpoints, terminal markers, and recovery discovery."""
 
-    def __init__(self, db_path: Optional[str] = None) -> None:
+    def __init__(self, db_path: Optional[str] = None, store: Any = None) -> None:
         resolved = db_path or os.getenv("DATABASE_URL", "sqlite:///./dev_maya_one.db").replace("sqlite:///", "")
         self.db_path = resolved
+        # Backward-compat path used by legacy tests/callers.
+        self.store = store
         self._create_tables()
 
     def _get_conn(self) -> sqlite3.Connection:
@@ -69,6 +71,13 @@ class TaskPersistenceManager:
                 (resolved_checkpoint_id, normalized_task_id, resolved_step_id, payload_json, resolved_ts),
             )
 
+        await self._update_store_task_metadata(
+            normalized_task_id,
+            {
+                "last_checkpoint_id": resolved_checkpoint_id,
+                "last_checkpoint_ts": resolved_ts,
+            },
+        )
         return resolved_checkpoint_id
 
     async def load_checkpoint(self, step_id_or_task_id: str) -> Optional[Dict[str, Any]]:
@@ -130,7 +139,29 @@ class TaskPersistenceManager:
             except sqlite3.OperationalError:
                 pass
 
+        await self._update_store_task_metadata(
+            normalized_task_id,
+            {
+                "terminal_status": str(status or "FAILED").strip().upper(),
+                "terminal_reason": str(reason or "").strip(),
+                "terminal_at": now,
+            },
+        )
         return True
+
+    async def mark_resumed(self, task_id: str, worker_id: str) -> bool:
+        normalized_task_id = str(task_id or "").strip()
+        if not normalized_task_id:
+            return False
+        now = datetime.now(timezone.utc).isoformat()
+        updated = await self._update_store_task_metadata(
+            normalized_task_id,
+            {
+                "resumed_by": str(worker_id or "").strip(),
+                "resumed_at": now,
+            },
+        )
+        return updated
 
     async def recover_background_tasks(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
         normalized_user_id = str(user_id or "").strip()
@@ -194,6 +225,28 @@ class TaskPersistenceManager:
                 }
             )
         return recovered
+
+    async def _update_store_task_metadata(self, task_id: str, updates: Dict[str, Any]) -> bool:
+        """Legacy compatibility hook for store-backed task metadata updates."""
+        if not self.store or not updates:
+            return False
+        try:
+            getter = getattr(self.store, "get_task", None)
+            updater = getattr(self.store, "update_task", None)
+            if getter is None or updater is None:
+                return False
+            task = await getter(task_id)
+            if task is None:
+                return False
+            metadata = getattr(task, "metadata", None)
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata.update(updates)
+            task.metadata = metadata
+            await updater(task)
+            return True
+        except Exception:
+            return False
 
 
 TaskPersistence = TaskPersistenceManager
