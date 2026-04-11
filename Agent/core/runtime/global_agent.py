@@ -41,6 +41,8 @@ class GlobalAgentContainer:
     _ralph_executor: Any = None    # P30 $ralph executor
     _buddy: Any = None             # P33 Buddy companion
     _project_mode: Any = None      # P35 project mode orchestrator
+    _feature_flags: Any = None     # P36 feature flag system
+    _dream_cycle: Any = None       # P36 dream memory consolidator
     _command_registry: Any = None  # P34 slash command registry
     _plugin_loader: Any = None     # P34 plugin loader
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
@@ -88,6 +90,7 @@ class GlobalAgentContainer:
         from core.agents.coding import RalphExecutor
         from core.buddy import BuddyCompanion
         from core.project import ProjectModeOrchestrator
+        from core.features import FeatureFlagSystem
         from core.commands import CommandRegistry
         from core.plugins import PluginLoader
 
@@ -147,6 +150,8 @@ class GlobalAgentContainer:
         )
         logger.info("BuddyCompanion initialized (P33)")
         cls._command_registry = CommandRegistry()
+        cls._feature_flags = FeatureFlagSystem()
+        logger.info("FeatureFlagSystem initialized (P36)")
         cls._project_mode = ProjectModeOrchestrator(
             subagent_manager=cls._subagent_manager,
             buddy=cls._buddy,
@@ -349,6 +354,12 @@ class GlobalAgentContainer:
             enable_chat_tools=max(1, int(getattr(settings, "architecture_phase", 1))) >= 3,
             enable_task_pipeline=max(1, int(getattr(settings, "architecture_phase", 1))) >= 4,
         )
+        from core.memory.dream import DreamCycle
+        cls._dream_cycle = DreamCycle(
+            memory_manager=cls._memory,
+            llm=cls._smart_llm,
+        )
+        logger.info("DreamCycle initialized (P36)")
 
         cls._initialized = True
         logger.info(f"✅ Global agent ready with {len(cls._tools)} tools")
@@ -442,6 +453,16 @@ class GlobalAgentContainer:
         return cls._project_mode
 
     @classmethod
+    def get_feature_flags(cls) -> Any:
+        """Return the shared P36 FeatureFlagSystem instance."""
+        return cls._feature_flags
+
+    @classmethod
+    def get_dream_cycle(cls) -> Any:
+        """Return the shared P36 DreamCycle instance."""
+        return cls._dream_cycle
+
+    @classmethod
     def get_plugin_loader(cls) -> Any:
         """Return the shared P34 PluginLoader instance."""
         return cls._plugin_loader
@@ -467,6 +488,8 @@ class GlobalAgentContainer:
             "command_registry": cls._command_registry,
             "memory": cls._memory,
             "project_mode": cls._project_mode,
+            "feature_flags": cls._feature_flags,
+            "dream_cycle": cls._dream_cycle,
         }
 
     @classmethod
@@ -474,6 +497,8 @@ class GlobalAgentContainer:
         from core.commands import SlashCommand
         from core.commands.handlers.agent import handle_agents, handle_kill, handle_spawn
         from core.commands.handlers.buddy import handle_buddy, handle_evolve, handle_xp
+        from core.commands.handlers.dream import handle_dream
+        from core.commands.handlers.flags import handle_flag
         from core.commands.handlers.memory import handle_forget, handle_recall, handle_remember
         from core.commands.handlers.mode import handle_lock, handle_mode, handle_unlock
         from core.commands.handlers.project import handle_project
@@ -496,6 +521,8 @@ class GlobalAgentContainer:
             SlashCommand("forget", "Forget lightweight command memory", "/forget <key>", handle_forget),
             SlashCommand("recall", "Recall lightweight command memory", "/recall <key>", handle_recall),
             SlashCommand("project", "Manage project mode workflow", "/project <subcommand>", handle_project),
+            SlashCommand("flag", "Manage runtime feature flags", "/flag [enable|disable|list|reset] [FLAG]", handle_flag),
+            SlashCommand("dream", "Consolidate memory for the session", "/dream [--preview]", handle_dream),
             SlashCommand("help", "List available commands", "/help", handle_help),
             SlashCommand("status", "Show system status", "/status", handle_status),
             SlashCommand("reset", "Reset command-facing state", "/reset", handle_reset),
