@@ -27,118 +27,94 @@ def _connect_sqlite(db_path: str) -> sqlite3.Connection:
 
 async def _ensure_notes_table(db_path: Optional[str] = None) -> None:
     db_path = db_path or _get_db_path()
-
-    def _op() -> None:
-        if not db_path.startswith("file:"):
-            os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        with _connect_sqlite(db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS notes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
+    if not db_path.startswith("file:"):
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    with _connect_sqlite(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_notes_user_title ON notes(user_id, title)"
-            )
-
-    await asyncio.to_thread(_op)
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notes_user_title ON notes(user_id, title)"
+        )
 
 
 async def _create_note_record(db_path: str, user_id: str, title: str, content: str) -> int:
     await _ensure_notes_table(db_path)
-
-    def _op() -> int:
-        with _connect_sqlite(db_path) as conn:
-            cursor = conn.execute(
-                "INSERT INTO notes(user_id, title, content) VALUES (?, ?, ?)",
-                (user_id, title, content),
-            )
-            return int(cursor.lastrowid)
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        cursor = conn.execute(
+            "INSERT INTO notes(user_id, title, content) VALUES (?, ?, ?)",
+            (user_id, title, content),
+        )
+        return int(cursor.lastrowid)
 
 
 async def _find_notes_by_title(db_path: str, user_id: str, title: str) -> list[sqlite3.Row]:
     await _ensure_notes_table(db_path)
-
-    def _op() -> list[sqlite3.Row]:
-        with _connect_sqlite(db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT id, user_id, title, content, created_at
-                FROM notes
-                WHERE user_id = ? AND title = ?
-                ORDER BY id ASC
-                """,
-                (user_id, title),
-            ).fetchall()
-            return list(rows)
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, title, content, created_at
+            FROM notes
+            WHERE user_id = ? AND title = ?
+            ORDER BY id ASC
+            """,
+            (user_id, title),
+        ).fetchall()
+        return list(rows)
 
 
 async def _list_note_rows(db_path: str, user_id: str) -> list[sqlite3.Row]:
     await _ensure_notes_table(db_path)
-
-    def _op() -> list[sqlite3.Row]:
-        with _connect_sqlite(db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT id, user_id, title, content, created_at
-                FROM notes
-                WHERE user_id = ?
-                ORDER BY id DESC
-                LIMIT 10
-                """,
-                (user_id,),
-            ).fetchall()
-            return list(rows)
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, title, content, created_at
+            FROM notes
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 10
+            """,
+            (user_id,),
+        ).fetchall()
+        return list(rows)
 
 
 async def _delete_note_by_id(db_path: str, note_id: int) -> bool:
     await _ensure_notes_table(db_path)
-
-    def _op() -> bool:
-        with _connect_sqlite(db_path) as conn:
-            cursor = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
-            return cursor.rowcount == 1
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        cursor = conn.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+        return cursor.rowcount == 1
 
 
 async def _ensure_calendar_events_table(db_path: Optional[str] = None) -> None:
     db_path = db_path or _get_db_path()
-
-    def _op() -> None:
-        if not db_path.startswith("file:"):
-            os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        with _connect_sqlite(db_path) as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS calendar_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    start_time TEXT NOT NULL,
-                    end_time TEXT NOT NULL,
-                    description TEXT NOT NULL DEFAULT '',
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
+    if not db_path.startswith("file:"):
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    with _connect_sqlite(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                start_time TEXT NOT NULL,
+                end_time TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_calendar_events_user_start ON calendar_events(user_id, start_time, id)"
-            )
-
-    await asyncio.to_thread(_op)
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calendar_events_user_start ON calendar_events(user_id, start_time, id)"
+        )
 
 
 async def _create_calendar_event_record(
@@ -150,53 +126,41 @@ async def _create_calendar_event_record(
     description: str = "",
 ) -> int:
     await _ensure_calendar_events_table(db_path)
-
-    def _op() -> int:
-        with _connect_sqlite(db_path) as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO calendar_events(user_id, title, start_time, end_time, description)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (user_id, title, start_time, end_time, description),
-            )
-            return int(cursor.lastrowid)
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO calendar_events(user_id, title, start_time, end_time, description)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (user_id, title, start_time, end_time, description),
+        )
+        return int(cursor.lastrowid)
 
 
 async def _list_calendar_event_rows(db_path: str, user_id: str) -> list[sqlite3.Row]:
     await _ensure_calendar_events_table(db_path)
-
-    def _op() -> list[sqlite3.Row]:
-        with _connect_sqlite(db_path) as conn:
-            rows = conn.execute(
-                """
-                SELECT id, user_id, title, start_time, end_time, description, created_at
-                FROM calendar_events
-                WHERE user_id = ?
-                ORDER BY start_time ASC, id ASC
-                LIMIT 20
-                """,
-                (user_id,),
-            ).fetchall()
-            return list(rows)
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, user_id, title, start_time, end_time, description, created_at
+            FROM calendar_events
+            WHERE user_id = ?
+            ORDER BY start_time ASC, id ASC
+            LIMIT 20
+            """,
+            (user_id,),
+        ).fetchall()
+        return list(rows)
 
 
 async def _delete_calendar_event_by_id(db_path: str, user_id: str, event_id: int) -> bool:
     await _ensure_calendar_events_table(db_path)
-
-    def _op() -> bool:
-        with _connect_sqlite(db_path) as conn:
-            cursor = conn.execute(
-                "DELETE FROM calendar_events WHERE user_id = ? AND id = ?",
-                (user_id, event_id),
-            )
-            return cursor.rowcount == 1
-
-    return await asyncio.to_thread(_op)
+    with _connect_sqlite(db_path) as conn:
+        cursor = conn.execute(
+            "DELETE FROM calendar_events WHERE user_id = ? AND id = ?",
+            (user_id, event_id),
+        )
+        return cursor.rowcount == 1
 
 
 # --- Alarms ---

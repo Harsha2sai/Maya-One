@@ -21,6 +21,7 @@ PROCESS_KILL_DENYLIST = {
     "init",
     "kthreadd",
 }
+PROCESS_KILL_DENYLIST_LOWER = {item.lower() for item in PROCESS_KILL_DENYLIST}
 
 
 class ProcessController:
@@ -51,6 +52,15 @@ class ProcessController:
         if not target:
             return SystemResult(False, action.action_type, "Missing process target.", trace_id=action.trace_id)
 
+        # Block known critical process names even when they are not currently running.
+        if not target.isdigit() and target.lower() in PROCESS_KILL_DENYLIST_LOWER:
+            return SystemResult(
+                False,
+                action.action_type,
+                "I can't kill that process - it's critical to your system",
+                trace_id=action.trace_id,
+            )
+
         if target.isdigit():
             name = self._name_for_pid(int(target))
             pid = int(target)
@@ -59,7 +69,7 @@ class ProcessController:
 
         if not pid or not name:
             return SystemResult(False, action.action_type, "Process not found.", trace_id=action.trace_id)
-        if name in PROCESS_KILL_DENYLIST:
+        if name.lower() in PROCESS_KILL_DENYLIST_LOWER:
             return SystemResult(
                 False,
                 action.action_type,

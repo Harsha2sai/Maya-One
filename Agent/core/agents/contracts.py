@@ -15,6 +15,11 @@ SignalName = Literal[
     "transfer_to_planner",
     "transfer_to_media",
     "transfer_to_scheduling",
+    "transfer_to_security",
+    "transfer_to_documentation",
+    "transfer_to_subagent_coder",
+    "transfer_to_subagent_reviewer",
+    "transfer_to_subagent_architect",
 ]
 
 
@@ -36,8 +41,6 @@ class AgentHandoffRequest:
     handoff_reason: str
     parent_handoff_id: str | None = None
     delegation_chain_id: str | None = None
-    depth_used: int = 0
-    depth_budget: int = 1
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

@@ -87,12 +87,6 @@ class IntentClassifier:
         re.compile(r'do you (know|remember)', re.IGNORECASE),
         re.compile(r'you know (my|me|who)', re.IGNORECASE),
     ]
-    _FOLLOWUP_FRAGMENT_PATTERNS = [
-        re.compile(r'^(why|how so|then what|what next)$', re.IGNORECASE),
-        re.compile(r"^what('?s| is)? the reason$", re.IGNORECASE),
-        re.compile(r'^(and then|and now|what about that|what about it)$', re.IGNORECASE),
-        re.compile(r'^(explain|elaborate|continue|go on)$', re.IGNORECASE),
-    ]
     
     def __init__(self, registry: Optional[ToolRegistry] = None):
         """
@@ -158,43 +152,39 @@ class IntentClassifier:
         memory_context: str = "",
     ) -> IntentResult:
         """
-        Classify intent with optional conversation summary for ambiguous follow-ups.
+        Context-aware classifier used for short ambiguous follow-ups.
 
-        For concise fragment follow-ups, prepend compact context so the classifier
-        can infer intent without changing the global classify() behavior.
+        Falls back to base classify() unless:
+        - the current utterance is ambiguous, and
+        - a conversation summary suggests a concrete tool action.
         """
-        normalized_text = str(user_text or "").strip()
-        if not normalized_text:
-            return self.classify(normalized_text, memory_context)
+        base = self.classify(user_text, memory_context=memory_context)
+        if base.intent_type == IntentType.TOOL_ACTION:
+            return base
 
-        summary = self._compact_summary(conversation_summary)
-        if summary and self._looks_like_ambiguous_followup(normalized_text):
-            contextualized = (
-                f"Context: {summary}\n"
-                f"Follow-up request: {normalized_text}"
+        summary = str(conversation_summary or "").strip()
+        if not summary:
+            return base
+
+        utterance_l = str(user_text or "").strip().lower()
+        ambiguous_followup = bool(
+            re.search(r"^\s*what(?:'s| is)\s+(?:the\s+)?reason\b", utterance_l)
+            or utterance_l in {"why", "why?", "and why", "what about that", "what about it"}
+        )
+        if not ambiguous_followup:
+            return base
+
+        summary_result = self.classify(summary, memory_context=memory_context)
+        if summary_result.intent_type == IntentType.TOOL_ACTION:
+            return IntentResult(
+                intent_type=IntentType.TOOL_ACTION,
+                confidence=max(0.7, float(summary_result.confidence or 0.0)),
+                matched_tool=summary_result.matched_tool,
+                extracted_params=dict(summary_result.extracted_params or {}),
+                reason="Contextual follow-up promoted using conversation summary",
             )
-            return self.classify(contextualized, memory_context)
 
-        return self.classify(normalized_text, memory_context)
-
-    def _looks_like_ambiguous_followup(self, text: str) -> bool:
-        normalized = str(text or "").strip().lower()
-        if not normalized:
-            return False
-        word_count = len(re.findall(r"\b[\w'-]+\b", normalized))
-        if 0 < word_count <= 4:
-            return True
-        return any(pattern.search(normalized) for pattern in self._FOLLOWUP_FRAGMENT_PATTERNS)
-
-    @staticmethod
-    def _compact_summary(summary: str, max_words: int = 40) -> str:
-        normalized = " ".join(str(summary or "").split()).strip()
-        if not normalized:
-            return ""
-        words = normalized.split()
-        if len(words) <= max_words:
-            return normalized
-        return " ".join(words[:max_words]).strip()
+        return base
     
     def _check_memory_query(self, text: str, memory_context: str) -> Optional[IntentResult]:
         """Check if this is a memory/identity query"""

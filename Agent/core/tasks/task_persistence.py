@@ -1,140 +1,199 @@
-"""Task persistence and restart recovery helpers (SQLite-first)."""
+"""SQLite-backed checkpoint persistence for recoverable/background tasks."""
+
 from __future__ import annotations
 
 import json
-import logging
+import os
+import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from core.tasks.task_models import Task, TaskStatus
-from core.tasks.task_store import TaskStore
-from core.telemetry.runtime_metrics import RuntimeMetrics
-
-logger = logging.getLogger(__name__)
-
-TERMINAL_TASK_STATUSES = {
-    TaskStatus.COMPLETED,
-    TaskStatus.FAILED,
-    TaskStatus.CANCELLED,
-    TaskStatus.PLAN_FAILED,
-    TaskStatus.STALE,
-}
+TERMINAL_TASK_STATES = {"COMPLETED", "FAILED", "CANCELLED", "PLAN_FAILED", "STALE"}
 
 
-def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+class TaskPersistenceManager:
+    """Persistence bridge for checkpoints, terminal markers, and recovery discovery."""
 
+    def __init__(self, db_path: Optional[str] = None) -> None:
+        resolved = db_path or os.getenv("DATABASE_URL", "sqlite:///./dev_maya_one.db").replace("sqlite:///", "")
+        self.db_path = resolved
+        self._create_tables()
 
-class TaskPersistence:
-    """Persistence facade for checkpoints, resume markers, and terminal state marks."""
+    def _get_conn(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
 
-    def __init__(self, *, store: Optional[TaskStore] = None) -> None:
-        self.store = store or TaskStore()
+    def _create_tables(self) -> None:
+        with self._get_conn() as conn:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS task_checkpoints (
+                    checkpoint_id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL,
+                    step_id TEXT,
+                    payload TEXT NOT NULL,
+                    ts TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_task_checkpoints_task_ts
+                ON task_checkpoints(task_id, ts DESC);
+                CREATE INDEX IF NOT EXISTS idx_task_checkpoints_step_ts
+                ON task_checkpoints(step_id, ts DESC);
+                """
+            )
 
     async def save_checkpoint(
         self,
         task_id: str,
         step_id: str,
         payload: Dict[str, Any],
-        checkpoint_id: str | None = None,
-        ts: str | None = None,
+        checkpoint_id: Optional[str] = None,
+        ts: Optional[str] = None,
     ) -> str:
-        task = await self.store.get_task(task_id)
-        if task is None:
-            raise LookupError(f"task_not_found:{task_id}")
-        checkpoint_id = str(checkpoint_id or f"chk_{uuid.uuid4().hex[:12]}")
-        timestamp = str(ts or _utc_now_iso())
-        task.metadata = task.metadata or {}
-        checkpoints = task.metadata.get("checkpoints")
-        if not isinstance(checkpoints, list):
-            checkpoints = []
-        checkpoints.append(
-            {
-                "checkpoint_id": checkpoint_id,
-                "step_id": str(step_id or ""),
-                "payload": dict(payload or {}),
-                "ts": timestamp,
-            }
-        )
-        # Keep latest 50 checkpoints/task to bound metadata growth.
-        task.metadata["checkpoints"] = checkpoints[-50:]
-        task.metadata["last_checkpoint_id"] = checkpoint_id
-        task.metadata["last_checkpoint_ts"] = timestamp
-        task.updated_at = datetime.now(timezone.utc)
-        await self.store.update_task(task)
-        return checkpoint_id
+        normalized_task_id = str(task_id or "").strip()
+        if not normalized_task_id:
+            raise ValueError("task_id is required")
+        resolved_step_id = str(step_id or "").strip() or None
+        resolved_checkpoint_id = str(checkpoint_id or f"chk_{uuid.uuid4().hex[:20]}")
+        resolved_ts = str(ts or datetime.now(timezone.utc).isoformat())
+        payload_json = json.dumps(payload or {}, ensure_ascii=True)
 
-    async def load_recoverable_tasks(self) -> List[Task]:
-        backend = getattr(self.store, "backend", None)
-        if backend is not None and hasattr(backend, "_get_conn"):
-            try:
-                conn = backend._get_conn()
-                try:
-                    terminal = [s.value for s in TERMINAL_TASK_STATUSES]
-                    placeholders = ", ".join(["?"] * len(terminal))
-                    rows = conn.execute(
-                        f"SELECT id FROM tasks WHERE status NOT IN ({placeholders}) ORDER BY updated_at DESC",
-                        terminal,
-                    ).fetchall()
-                finally:
-                    conn.close()
-                recoverable: List[Task] = []
-                for row in rows:
-                    task = await self.store.get_task(str(row[0]))
-                    if task is None:
-                        continue
-                    metadata = task.metadata or {}
-                    if metadata.get("resume_disabled"):
-                        continue
-                    recoverable.append(task)
-                return recoverable
-            except Exception as err:
-                logger.warning("task_recovery_scan_failed error=%s", err)
-        # Conservative fallback when full scan is not supported.
-        return []
+        with self._get_conn() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO task_checkpoints (checkpoint_id, task_id, step_id, payload, ts)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (resolved_checkpoint_id, normalized_task_id, resolved_step_id, payload_json, resolved_ts),
+            )
 
-    async def mark_resumed(self, task_id: str, worker_id: str) -> bool:
-        task = await self.store.get_task(task_id)
-        if task is None:
-            RuntimeMetrics.observe("recovery_success_rate", 0.0)
-            return False
-        task.metadata = task.metadata or {}
-        resumes = task.metadata.get("resume_events")
-        if not isinstance(resumes, list):
-            resumes = []
-        resumes.append(
-            {
-                "worker_id": str(worker_id or ""),
-                "ts": _utc_now_iso(),
-            }
-        )
-        task.metadata["resume_events"] = resumes[-20:]
-        task.metadata["resumed_by"] = str(worker_id or "")
-        task.metadata["resumed_at"] = _utc_now_iso()
-        task.updated_at = datetime.now(timezone.utc)
-        ok = await self.store.update_task(task)
-        RuntimeMetrics.observe("recovery_success_rate", 1.0 if ok else 0.0)
-        return ok
+        return resolved_checkpoint_id
+
+    async def load_checkpoint(self, step_id_or_task_id: str) -> Optional[Dict[str, Any]]:
+        identifier = str(step_id_or_task_id or "").strip()
+        if not identifier:
+            return None
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                """
+                SELECT payload
+                FROM task_checkpoints
+                WHERE step_id = ?
+                ORDER BY ts DESC
+                LIMIT 1
+                """,
+                (identifier,),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    """
+                    SELECT payload
+                    FROM task_checkpoints
+                    WHERE task_id = ?
+                    ORDER BY ts DESC
+                    LIMIT 1
+                    """,
+                    (identifier,),
+                ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(str(row["payload"] or "{}"))
+        except Exception:
+            return None
+
+    async def get_checkpoint(self, identifier: str) -> Optional[Dict[str, Any]]:
+        return await self.load_checkpoint(identifier)
+
+    async def read_checkpoint(self, identifier: str) -> Optional[Dict[str, Any]]:
+        return await self.load_checkpoint(identifier)
 
     async def mark_terminal(self, task_id: str, status: str, reason: str) -> bool:
-        task = await self.store.get_task(task_id)
-        if task is None:
+        normalized_task_id = str(task_id or "").strip()
+        if not normalized_task_id:
             return False
-        normalized = str(status or "").strip().upper()
-        try:
-            task.status = TaskStatus[normalized]
-        except Exception:
-            # Keep existing status if unknown; still persist terminal reason.
-            pass
-        task.metadata = task.metadata or {}
-        task.metadata["terminal_reason"] = str(reason or "").strip()
-        task.metadata["terminal_at"] = _utc_now_iso()
-        task.updated_at = datetime.now(timezone.utc)
-        if reason and not task.error:
-            task.error = str(reason or "").strip()
-        return await self.store.update_task(task)
+
+        now = datetime.now(timezone.utc).isoformat()
+        with self._get_conn() as conn:
+            try:
+                conn.execute(
+                    """
+                    UPDATE tasks
+                    SET status = ?, error = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (str(status or "FAILED").strip().upper(), str(reason or "").strip(), now, normalized_task_id),
+                )
+            except sqlite3.OperationalError:
+                pass
+
+        return True
+
+    async def recover_background_tasks(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        normalized_user_id = str(user_id or "").strip()
+        terminal_states = tuple(TERMINAL_TASK_STATES)
+        placeholders = ", ".join(["?"] * len(terminal_states))
+
+        extra_columns = {"persistent": "0", "background_mode": "0", "cron_expression": "NULL"}
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            try:
+                available_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            except sqlite3.OperationalError:
+                return []
+
+        selected_columns = ["id", "user_id", "status", "metadata"]
+        for column_name, fallback in extra_columns.items():
+            if column_name in available_columns:
+                selected_columns.append(column_name)
+            else:
+                selected_columns.append(f"{fallback} AS {column_name}")
+
+        sql = (
+            f"SELECT {', '.join(selected_columns)} FROM tasks "
+            f"WHERE status NOT IN ({placeholders})"
+        )
+        params: List[Any] = list(terminal_states)
+        if normalized_user_id:
+            sql += " AND user_id = ?"
+            params.append(normalized_user_id)
+
+        recovered: List[Dict[str, Any]] = []
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            try:
+                rows = conn.execute(sql, params).fetchall()
+            except sqlite3.OperationalError:
+                return []
+
+        for row in rows:
+            metadata: Dict[str, Any] = {}
+            raw_metadata = row["metadata"]
+            if raw_metadata:
+                try:
+                    metadata = json.loads(str(raw_metadata))
+                except Exception:
+                    metadata = {}
+            row_background_mode = bool(int(row["background_mode"] or 0))
+            row_persistent = bool(int(row["persistent"] or 0))
+            metadata_background = bool(metadata.get("scheduled_task") or metadata.get("background_mode"))
+            if not (metadata_background or row_background_mode or row_persistent):
+                continue
+            recovered.append(
+                {
+                    "task_id": row["id"],
+                    "user_id": row["user_id"],
+                    "status": row["status"],
+                    "metadata": metadata,
+                    "persistent": row_persistent,
+                    "background_mode": row_background_mode,
+                    "cron_expression": row["cron_expression"],
+                }
+            )
+        return recovered
 
 
-def encode_checkpoint_payload(payload: Dict[str, Any]) -> str:
-    return json.dumps(payload or {}, ensure_ascii=True, separators=(",", ":"))
+TaskPersistence = TaskPersistenceManager

@@ -22,13 +22,7 @@ class RuntimeMetrics:
         "worker_step_failures_total": 0,
         "memory_stores_total": 0,
         "memory_queries_total": 0,
-        "memory_hits_total": 0,
-        "handoff_latency_ms": [],
-        "subagent_active_count": 0,
-        "message_bus_queue_depth": 0,
-        "recovery_success_rate": [],
-        "circuit_breaker_open_count": 0,
-        "progress_event_rate": [],
+        "memory_hits_total": 0
     }
     
     _log_file: Path = Path("verification/runtime_validation/runtime_metrics.json")
@@ -75,12 +69,6 @@ class RuntimeMetrics:
              "task_steps_executed_total": 0,
              "task_retries_total": 0,
              "llm_calls_total": 0,
-             "worker_step_failures_total": 0,
-             "handoff_latency_ms": [],
-             "subagent_active_count": 0,
-             "message_bus_queue_depth": 0,
-             "recovery_success_rate": [],
-             "circuit_breaker_open_count": 0,
-             "progress_event_rate": [],
+             "worker_step_failures_total": 0
         }
         cls._flush()

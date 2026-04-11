@@ -39,3 +39,30 @@ def test_validate_raises_when_required_api_key_missing(monkeypatch):
     message = str(exc.value)
     assert "OPENAI_API_KEY" in message
     assert "STT" not in message
+
+
+def test_multi_agent_feature_flag_alias_fallback(monkeypatch):
+    monkeypatch.delenv("MULTI_AGENT_FEATURES_ENABLED", raising=False)
+    monkeypatch.setenv("MAYA_SUBAGENTS", "true")
+
+    settings = Settings.from_env()
+    assert settings.multi_agent_features_enabled is True
+
+
+def test_multi_agent_depth3_flag_alias_fallback(monkeypatch):
+    monkeypatch.delenv("MULTI_AGENT_DEPTH3_ENABLED", raising=False)
+    monkeypatch.setenv("MAYA_BACKGROUND", "1")
+
+    settings = Settings.from_env()
+    assert settings.multi_agent_depth3_enabled is True
+
+
+def test_internal_multi_agent_flags_take_precedence_over_aliases(monkeypatch):
+    monkeypatch.setenv("MULTI_AGENT_FEATURES_ENABLED", "0")
+    monkeypatch.setenv("MAYA_SUBAGENTS", "1")
+    monkeypatch.setenv("MULTI_AGENT_DEPTH3_ENABLED", "0")
+    monkeypatch.setenv("MAYA_BACKGROUND", "1")
+
+    settings = Settings.from_env()
+    assert settings.multi_agent_features_enabled is False
+    assert settings.multi_agent_depth3_enabled is False

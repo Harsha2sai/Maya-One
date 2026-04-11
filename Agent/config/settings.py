@@ -27,6 +27,16 @@ def _env_bool(name: str, default: str = "0") -> bool:
     return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_bool_with_aliases(name: str, aliases: tuple[str, ...], default: str = "0") -> bool:
+    """Resolve a primary boolean env var with optional legacy aliases."""
+    if os.getenv(name) is not None:
+        return _env_bool(name, default)
+    for alias in aliases:
+        if os.getenv(alias) is not None:
+            return _env_bool(alias, default)
+    return _env_bool(name, default)
+
+
 @dataclass
 class ProviderSettings:
     """Settings for a specific provider type (LLM, STT, or TTS)"""
@@ -107,10 +117,18 @@ class Settings:
     # ==================== PHASE 28.6 PREREQUISITE HARDENING ====================
     # Multi-agent prerequisites stay feature-gated until readiness checks pass.
     multi_agent_features_enabled: bool = field(
-        default_factory=lambda: _env_bool("MULTI_AGENT_FEATURES_ENABLED", "0")
+        default_factory=lambda: _env_bool_with_aliases(
+            "MULTI_AGENT_FEATURES_ENABLED",
+            ("MAYA_SUBAGENTS",),
+            "0",
+        )
     )
     multi_agent_depth3_enabled: bool = field(
-        default_factory=lambda: _env_bool("MULTI_AGENT_DEPTH3_ENABLED", "0")
+        default_factory=lambda: _env_bool_with_aliases(
+            "MULTI_AGENT_DEPTH3_ENABLED",
+            ("MAYA_BACKGROUND",),
+            "0",
+        )
     )
     max_pending_handoffs_per_session: int = field(
         default_factory=lambda: int(os.getenv("MAX_PENDING_HANDOFFS_PER_SESSION", "10"))

@@ -606,20 +606,43 @@ async def open_app(context: RunContext, app_name: str) -> str:
     logger.info(f"🚀 Attempting to open: {normalized_name}")
 
     # Special-case: direct YouTube search intent.
-    # Example inputs: "youtube search for llm tutorial", "in youtube search for songs"
-    if "youtube" in normalized_name and ("search" in normalized_name or " for " in normalized_name):
-        query = normalized_name
-        query = query.replace("in youtube", "").replace("on youtube", "")
-        query = query.replace("youtube", "").replace("search for", "").replace("search", "").strip()
-        if query:
-            yt_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
-            try:
-                logger.info(f"🌐 Opening YouTube search URL: {yt_url}")
-                webbrowser.open(yt_url)
-                return f"Opened YouTube search for '{query}' in your browser"
-            except Exception as e:
-                logger.error(f"Failed to open YouTube search URL: {e}")
-                return f"Failed to open YouTube search: {e}"
+    # Example inputs: "youtube search for llm tutorial", "in youtube search for songs",
+    # "videos about coal prices in youtube", "songs by beatles on youtube"
+    if "youtube" in normalized_name:
+        # Check if this is a search intent (has additional context beyond just "youtube")
+        search_indicators = [
+            "search", " for ", "videos about", "video about", "songs by", "song by",
+            "playlist", "channel", "watch", "show me", "find", "look up", "videos of",
+            "about", "tutorial on", "how to", "music by", "tracks by"
+        ]
+        is_search_intent = any(indicator in normalized_name for indicator in search_indicators)
+
+        # Also check if the query has substantial content beyond "youtube"
+        youtube_removed = normalized_name.replace("youtube", "").strip()
+        has_substantial_query = len(youtube_removed) >= 3 and not youtube_removed.isdigit()
+
+        if is_search_intent or has_substantial_query:
+            query = normalized_name
+            # Remove location/context phrases
+            query = re.sub(r'\b(open|in|on|search|find|look up|show me|watch|play|for)\b', '', query)
+            # Remove content type indicators
+            query = re.sub(r'\b(videos?|clips?|songs?|music|tracks?|playlist|channel|tutorial)\s+(about|by|on|for|of)?\b', '', query)
+            # Remove "youtube" and clean up
+            query = query.replace("youtube", "").strip()
+            # Clean up extra whitespace
+            query = re.sub(r'\s+', ' ', query).strip()
+            # Remove leading/trailing punctuation
+            query = query.strip('.,!?;:-')
+
+            if query:
+                yt_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+                try:
+                    logger.info(f"🌐 Opening YouTube search URL: {yt_url}")
+                    webbrowser.open(yt_url)
+                    return f"Opened YouTube search for '{query}' in your browser"
+                except Exception as e:
+                    logger.error(f"Failed to open YouTube search URL: {e}")
+                    return f"Failed to open YouTube search: {e}"
     
     # 1. Strict local-first resolution (installed system apps win).
     command = _resolve_installed_command(normalized_name)

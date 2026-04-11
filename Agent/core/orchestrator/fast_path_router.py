@@ -32,68 +32,48 @@ class FastPathRouter:
         self._turn_state = turn_state
         self._parse_multi_app = parse_multi_app_fn
         self._is_recall_exclusion_intent = is_recall_exclusion_intent_fn
-        self._resolve_active_subject = resolve_active_subject_fn or (lambda: "")
+        self._resolve_active_subject = resolve_active_subject_fn
 
-    _YOUTUBE_ALIASES = {"youtube", "yt"}
-    _SEARCH_PRONOUN_TOKENS = {"it", "that", "this", "them", "they", "him", "her"}
-    _SEARCH_FILLER_TOKENS = {"about", "for", "on", "in", "using", "the", "a", "an"}
+    @staticmethod
+    def _clean_query(text: str) -> str:
+        return str(text or "").strip().strip("\"'").strip().strip(".,!?").strip()
 
-    def _extract_platform_search_request(self, normalized: str) -> Optional[Dict[str, Any]]:
-        text = str(normalized or "").strip().lower()
-        if not text:
-            return None
+    @staticmethod
+    def _is_pronoun_query(query: str) -> bool:
+        reduced = re.sub(r"^(about|on|for)\s+", "", str(query or "").strip().lower()).strip()
+        return reduced in {"it", "that", "this", "them"}
 
-        patterns = (
-            r"^(?:search|find|lookup|look up)\s+(?:on|in|using)\s+(youtube|yt)\s*(?:for|about)?\s*(.*)$",
-            r"^(?:search|find|lookup|look up)\s+(youtube|yt)\s+(?:for|about)\s+(.+)$",
-            r"^(?:youtube|yt)\s+search\s+(?:for|about)\s+(.+)$",
-            r"^(?:open|go to)\s+(?:the\s+)?(youtube|yt)\s+(?:and|then)?\s*(?:search|find|lookup|look up)\s*(?:for|about)?\s*(.*)$",
-            # New patterns for natural video/song search phrases
-            r"^(?:open|play|show)\s+(?:videos?|clips?|songs?|music|tracks?)\s+(?:about|on|of|by|for)\s+(.+?)\s+(?:in|on)\s+(youtube|yt)$",
-            r"^(?:open|play|show)\s+(?:videos?|clips?|songs?|music|tracks?)\s+(?:in|on)\s+(youtube|yt)\s+(?:about|on|of|by|for)\s+(.+)$",
-            r"^(?:videos?|clips?|songs?|music|tracks?)\s+(?:about|on|of|by|for)\s+(.+?)\s+(?:in|on)\s+(youtube|yt)$",
+    def _resolve_active_subject_query(self) -> str:
+        if callable(self._resolve_active_subject):
+            try:
+                subject = self._clean_query(self._resolve_active_subject() or "")
+                if subject:
+                    return subject
+            except Exception:
+                logger.debug("active_subject_resolution_failed", exc_info=True)
+        return self._clean_query(self._turn_state.get("last_search_query") or "")
+
+    def _youtube_search_intent_from_query(self, query: str) -> DirectToolIntent:
+        requested = self._clean_query(query)
+        if self._is_pronoun_query(requested):
+            resolved = self._resolve_active_subject_query()
+            if not resolved:
+                return DirectToolIntent(
+                    tool=None,
+                    args={},
+                    template="What topic should I search on YouTube?",
+                    group="youtube",
+                )
+            requested = resolved
+
+        self._turn_state["last_search_target"] = "youtube"
+        self._turn_state["last_search_query"] = requested
+        return DirectToolIntent(
+            "open_app",
+            {"app_name": f"youtube search for {requested}"},
+            f"Searching YouTube for {requested}.",
+            "youtube",
         )
-        for pattern in patterns:
-            match = re.match(pattern, text, re.IGNORECASE)
-            if not match:
-                continue
-            if len(match.groups()) == 1:
-                platform = "youtube"
-                query = str(match.group(1) or "").strip()
-            else:
-                # Determine which group is platform and which is query
-                g1 = str(match.group(1) or "").strip().lower()
-                g2 = str(match.group(2) or "").strip()
-                if g1 in self._YOUTUBE_ALIASES:
-                    platform = g1
-                    query = g2
-                elif g2 in self._YOUTUBE_ALIASES:
-                    platform = g2
-                    query = g1
-                else:
-                    # Default: assume group 1 is platform
-                    platform = g1
-                    query = g2
-            if platform not in self._YOUTUBE_ALIASES:
-                continue
-            if not query:
-                return {
-                    "platform": "youtube",
-                    "query": "",
-                    "query_is_pronoun_only": True,
-                }
-            query_tokens = re.findall(r"[a-z0-9']+", query.lower())
-            has_content_token = any(token not in self._SEARCH_FILLER_TOKENS for token in query_tokens)
-            pronoun_only = bool(query_tokens) and all(
-                token in (self._SEARCH_PRONOUN_TOKENS | self._SEARCH_FILLER_TOKENS)
-                for token in query_tokens
-            )
-            return {
-                "platform": "youtube",
-                "query": query,
-                "query_is_pronoun_only": pronoun_only or not has_content_token,
-            }
-        return None
 
     def detect_direct_tool_intent(
         self,
@@ -219,30 +199,26 @@ class FastPathRouter:
                 "media",
             )
 
-        platform_search = self._extract_platform_search_request(normalized)
-        if platform_search:
-            query = str(platform_search.get("query") or "").strip()
-            query_is_pronoun_only = bool(platform_search.get("query_is_pronoun_only"))
-            if query_is_pronoun_only:
-                resolved_subject = str(self._resolve_active_subject() or "").strip()
-                if resolved_subject:
-                    query = resolved_subject
-                else:
-                    return DirectToolIntent(
-                        None,
-                        {},
-                        "What topic should I search on YouTube?",
-                        "youtube",
-                    )
-            if query:
-                self._turn_state["last_search_target"] = "youtube"
-                self._turn_state["last_search_query"] = query
-                return DirectToolIntent(
-                    "open_app",
-                    {"app_name": f"youtube search for {query}"},
-                    f"Searching YouTube for {query}.",
-                    "youtube",
-                )
+        youtube_search_patterns = (
+            r"^\s*search\s+on\s+youtube\s+for\s+(.+?)\s*$",
+            r"^\s*search\s+youtube\s+for\s+(.+?)\s*$",
+            r"^\s*youtube\s+search\s+for\s+(.+?)\s*$",
+            r"^\s*(?:in|on)\s+youtube\s+search\s+for\s+(.+?)\s*$",
+            r"^\s*open\s+(?:the\s+)?youtube\s+and\s+search\s+for\s+(.+?)\s*$",
+            r"^\s*open\s+(?:the\s+)?youtube\s+and\s+search\s+about\s+(.+?)\s*$",
+            r"^\s*search\s+on\s+youtube\s+about\s+(.+?)\s*$",
+            r"^\s*open\s+videos?\s+about\s+(.+?)\s+in\s+(?:youtube|yt)\s*$",
+            r"^\s*show\s+videos?\s+on\s+(?:youtube|yt)\s+about\s+(.+?)\s*$",
+            r"^\s*videos?\s+about\s+(.+?)\s+in\s+(?:youtube|yt)\s*$",
+            r"^\s*play\s+songs?\s+(.+?)\s+on\s+(?:youtube|yt)\s*$",
+            r"^\s*music\s+(.+?)\s+on\s+(?:youtube|yt)\s*$",
+        )
+        for pat in youtube_search_patterns:
+            yt_search = re.match(pat, raw_message, re.IGNORECASE)
+            if yt_search:
+                query = self._clean_query(yt_search.group(1) or "")
+                if query:
+                    return self._youtube_search_intent_from_query(query)
         if re.match(r"^open youtube\s*$", normalized, re.IGNORECASE):
             self._turn_state["last_search_target"] = "youtube"
             return DirectToolIntent("open_app", {"app_name": "youtube"}, "Opening YouTube.", "youtube")

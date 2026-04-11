@@ -21,7 +21,7 @@ def _request(**overrides):
         "context_slice": "User asked for scheduling help.",
         "execution_mode": "inline",
         "delegation_depth": 0,
-        "max_depth": 2,
+        "max_depth": 1,
         "handoff_reason": "router_scheduling",
         "metadata": {"user_id": "u1"},
     }

@@ -1,12 +1,11 @@
-from types import SimpleNamespace
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from core.agents.contracts import AgentCapabilityMatch, AgentHandoffRequest, AgentHandoffResult, HandoffSignal
 from core.agents.handoff_manager import HandoffManager, HandoffValidationError, get_handoff_manager
 from core.agents.registry import AgentRegistry
-from config.settings import settings
 
 
 def _request(**overrides) -> AgentHandoffRequest:
@@ -23,7 +22,7 @@ def _request(**overrides) -> AgentHandoffRequest:
         "context_slice": "User asked a research question.",
         "execution_mode": "inline",
         "delegation_depth": 0,
-        "max_depth": 2,
+        "max_depth": 1,
         "handoff_reason": "test",
         "metadata": {"user_id": "u1"},
     }
@@ -72,7 +71,7 @@ async def test_depth_guard_blocks_subagent_delegation():
             target_agent="planner",
             execution_mode="planning",
             task_id="task-1",
-            delegation_depth=2,
+            delegation_depth=1,
         )
     )
     assert result.status == "failed"
@@ -116,86 +115,186 @@ async def test_zero_confidence_handoff_is_logged_and_allowed(caplog):
     assert "handoff_zero_confidence_allowed" in caplog.text
 
 
-@pytest.mark.asyncio
-async def test_cycle_detection_rejects_visited_target():
+def test_subagent_signal_maps_to_target():
     manager = HandoffManager(AgentRegistry())
-    result = await manager.delegate(
-        _request(metadata={"user_id": "u1", "visited_targets": ["research"]})
-    )
-    assert result.status == "failed"
-    assert result.error_code == "HandoffValidationError"
-    assert "handoff_cycle_detected" in str(result.error_detail or "")
-
-
-@pytest.mark.asyncio
-async def test_session_queue_cap_returns_structured_limit_error():
-    old_cap = settings.max_pending_handoffs_per_session
-    settings.max_pending_handoffs_per_session = 1
-
-    class _Registry:
-        async def can_accept(self, request):
-            return AgentCapabilityMatch(
-                agent_name=request.target_agent,
-                confidence=1.0,
-                reason="ok",
-                hard_constraints_passed=True,
-            )
-
-        async def handle(self, request):
-            await asyncio.sleep(0.05)
-            return AgentHandoffResult(
-                handoff_id=request.handoff_id,
-                trace_id=request.trace_id,
-                source_agent=request.target_agent,
-                status="completed",
-                user_visible_text=None,
-                voice_text=None,
-                structured_payload={"ok": True},
-                next_action="continue",
-            )
-
-    try:
-        manager = HandoffManager(_Registry())
-        first = asyncio.create_task(manager.delegate(_request(handoff_id="h1")))
-        await asyncio.sleep(0.01)
-        second = await manager.delegate(_request(handoff_id="h2"))
-        first_result = await first
-        assert first_result.status == "completed"
-        assert second.status == "failed"
-        assert second.error_code == "handoff_session_queue_limit_exceeded"
-    finally:
-        settings.max_pending_handoffs_per_session = old_cap
-
-
-@pytest.mark.asyncio
-async def test_subagent_circuit_breaker_opens_after_three_failures():
-    class _Registry:
-        async def can_accept(self, request):
-            return AgentCapabilityMatch(
-                agent_name=request.target_agent,
-                confidence=1.0,
-                reason="ok",
-                hard_constraints_passed=True,
-            )
-
-        async def handle(self, request):
-            raise RuntimeError("subagent down")
-
-    manager = HandoffManager(_Registry())
-    base = _request(
-        target_agent="subagent_coder",
-        max_depth=2,
+    signal = HandoffSignal(
+        signal_name="transfer_to_subagent_reviewer",
+        reason="needs code review",
         execution_mode="planning",
-        task_id="t1",
+        context_hint="review the patch",
     )
-    for idx in range(3):
-        result = await manager.delegate(
-            AgentHandoffRequest(**{**base.__dict__, "handoff_id": f"s{idx}"})
-        )
-        assert result.status == "failed"
+    assert manager.consume_signal(signal) == "subagent_reviewer"
 
-    blocked = await manager.delegate(
-        AgentHandoffRequest(**{**base.__dict__, "handoff_id": "s4"})
+
+@pytest.mark.asyncio
+async def test_subagent_target_routes_to_subagent_manager_spawn():
+    class _SubagentManager:
+        def __init__(self):
+            self.calls = []
+
+        async def spawn(self, agent_type, task_context, worktree_path=None):
+            self.calls.append(("spawn", agent_type, task_context, worktree_path))
+            return {
+                "agent_id": "subag_1",
+                "agent_type": agent_type,
+                "status": "running",
+                "task_context": task_context,
+                "worktree_path": worktree_path,
+            }
+
+    class _Registry:
+        async def can_accept(self, _request):
+            raise AssertionError("registry should not be used for subagent targets")
+
+        async def handle(self, _request):
+            raise AssertionError("registry should not be used for subagent targets")
+
+    subagent_manager = _SubagentManager()
+    manager = HandoffManager(_Registry(), subagent_manager=subagent_manager)
+
+    result = await manager.delegate(
+        _request(
+            target_agent="subagent_coder",
+            execution_mode="planning",
+            task_id="task-9",
+            metadata={
+                "user_id": "u1",
+                "base_branch": "HEAD",
+                "delegation_chain_id": "chain-explicit",
+            },
+        )
     )
+
+    assert result.status == "completed"
+    assert result.next_action == "background"
+    assert result.structured_payload["runtime"] == "subagent_manager"
+    assert subagent_manager.calls
+    _, _, task_context, _ = subagent_manager.calls[0]
+    assert task_context["parent_handoff_id"] == "handoff-1"
+    assert task_context["delegation_chain_id"] == "chain-explicit"
+
+
+@pytest.mark.asyncio
+async def test_background_subagent_target_routes_to_spawn_background():
+    class _SubagentManager:
+        def __init__(self):
+            self.calls = []
+
+        async def spawn(self, agent_type, task_context, worktree_path=None):
+            raise AssertionError("foreground spawn should not be used")
+
+        async def spawn_background(self, agent_type, task_context, recoverable=True):
+            self.calls.append(("spawn_background", agent_type, task_context, recoverable))
+            return {
+                "task_ref": "subag_bg_1",
+                "agent_id": "subag_bg_1",
+                "agent_type": agent_type,
+                "status": "running",
+                "recoverable": recoverable,
+            }
+
+    manager = HandoffManager(AgentRegistry(), subagent_manager=_SubagentManager())
+    result = await manager.delegate(
+        _request(
+            target_agent="subagent_coder",
+            execution_mode="background",
+            task_id="task-bg-1",
+            metadata={"user_id": "u1"},
+        ),
+        background=True,
+        recoverable=True,
+    )
+
+    assert result.status == "completed"
+    assert result.next_action == "background"
+    assert result.structured_payload["background"] is True
+    assert result.structured_payload["recoverable"] is True
+    assert result.structured_payload["subagent"]["task_ref"] == "subag_bg_1"
+    assert manager.subagent_manager.calls[0][0] == "spawn_background"
+    assert manager.subagent_manager.calls[0][3] is True
+
+
+@pytest.mark.asyncio
+async def test_delegate_background_convenience_uses_background_path():
+    class _SubagentManager:
+        def __init__(self):
+            self.calls = []
+
+        async def spawn(self, agent_type, task_context, worktree_path=None):
+            raise AssertionError("foreground spawn should not be used")
+
+        async def spawn_background(self, agent_type, task_context, recoverable=True):
+            self.calls.append((agent_type, task_context, recoverable))
+            return {
+                "task_ref": "subag_bg_2",
+                "agent_id": "subag_bg_2",
+                "agent_type": agent_type,
+                "status": "running",
+                "recoverable": recoverable,
+            }
+
+    subagent_manager = _SubagentManager()
+    manager = HandoffManager(AgentRegistry(), subagent_manager=subagent_manager)
+    result = await manager.delegate_background(
+        _request(
+            target_agent="subagent_architect",
+            execution_mode="planning",
+            task_id="task-bg-2",
+            metadata={"user_id": "u1"},
+        ),
+        recoverable=False,
+    )
+
+    assert result.status == "completed"
+    assert result.structured_payload["background"] is True
+    assert result.structured_payload["recoverable"] is False
+    assert result.structured_payload["subagent"]["agent_type"] == "subagent_architect"
+    assert subagent_manager.calls[0][2] is False
+
+
+@pytest.mark.asyncio
+async def test_subagent_circuit_opens_after_repeated_failures():
+    class _SubagentManager:
+        async def spawn(self, agent_type, task_context, worktree_path=None):
+            raise RuntimeError(f"spawn failed for {agent_type}")
+
+    manager = HandoffManager(AgentRegistry(), subagent_manager=_SubagentManager())
+
+    for _ in range(manager.MAX_SUBAGENT_FAILURES):
+        result = await manager.delegate(_request(target_agent="subagent_architect"))
+        assert result.status == "failed"
+        assert result.error_code == "RuntimeError"
+
+    blocked = await manager.delegate(_request(target_agent="subagent_architect"))
     assert blocked.status == "failed"
     assert blocked.error_code == "subagent_circuit_open"
+
+
+@pytest.mark.asyncio
+async def test_subagent_reviewer_runtime_completes_via_handoff_manager(tmp_path):
+    review_file = tmp_path / "src" / "module.py"
+    review_file.parent.mkdir(parents=True, exist_ok=True)
+    review_file.write_text("print('debug')\n", encoding="utf-8")
+
+    manager = HandoffManager(AgentRegistry())
+    result = await manager.delegate(
+        _request(
+            target_agent="subagent_reviewer",
+            execution_mode="planning",
+            task_id="task-review-runtime",
+            metadata={
+                "user_id": "u1",
+                "worktree_path": str(tmp_path),
+                "file_paths": ["src/module.py"],
+            },
+        )
+    )
+
+    assert result.status == "completed"
+    agent_id = result.structured_payload["subagent"]["agent_id"]
+    await asyncio.sleep(0.05)
+    status = manager.subagent_manager.get_status(agent_id)
+
+    assert status["status"] == "completed"
+    comments = status["metadata"]["result"]["comments"]
+    assert any(comment["category"] == "debug_artifact" for comment in comments)

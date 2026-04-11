@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
+from config.settings import settings
 from core.orchestrator.agent_orchestrator import AgentOrchestrator
 from core.tasks.task_models import TaskStep
 from core.response.agent_response import AgentResponse, ToolInvocation
@@ -1010,3 +1011,39 @@ async def test_lookup_profile_name_from_memory_prefers_metadata_value():
     )
 
     assert name == "Harsha"
+
+
+@pytest.mark.asyncio
+async def test_truthfulness_strict_mode_uses_uncertain_copy_without_strong_verification(monkeypatch):
+    monkeypatch.setattr(settings, "action_truthfulness_strict", True)
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    response = await orchestrator._build_direct_tool_response(
+        role_llm=None,
+        tool_output={
+            "app_name": "firefox",
+            "_tool_receipt": {
+                "verification": {"tier": "medium"},
+                "status": "succeeded",
+            },
+        },
+        tool_invocation=ToolInvocation(tool_name="open_app", status="success", latency_ms=1),
+    )
+    assert "couldn't verify" in response.display_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_truthfulness_strict_mode_allows_definitive_copy_on_strong_verification(monkeypatch):
+    monkeypatch.setattr(settings, "action_truthfulness_strict", True)
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    response = await orchestrator._build_direct_tool_response(
+        role_llm=None,
+        tool_output={
+            "app_name": "firefox",
+            "_tool_receipt": {
+                "verification": {"tier": "strong"},
+                "status": "succeeded",
+            },
+        },
+        tool_invocation=ToolInvocation(tool_name="open_app", status="success", latency_ms=1),
+    )
+    assert response.display_text == "Opened firefox."

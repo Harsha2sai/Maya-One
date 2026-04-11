@@ -1,7 +1,9 @@
 """Orchestration spine mixin for AgentOrchestrator."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Any
 
 from core.orchestrator.onboarding import (
@@ -45,6 +47,66 @@ class OrchestrationFlow:
         except Exception as onboarding_err:
             logger.warning("onboarding_check_failed error=%s", onboarding_err)
 
+    def _finalize_turn_response(
+        self,
+        *,
+        turn_ctx: TurnContext,
+        response: AgentResponse,
+        turn_start: float,
+        route_hint: str = "",
+    ) -> AgentResponse:
+        self._queue_outcome_log(
+            turn_ctx=turn_ctx,
+            response=response,
+            turn_start=turn_start,
+            route_hint=route_hint,
+        )
+        return response
+
+    def _queue_outcome_log(
+        self,
+        *,
+        turn_ctx: TurnContext,
+        response: AgentResponse,
+        turn_start: float,
+        route_hint: str = "",
+    ) -> None:
+        outcome_logger = getattr(self, "_outcome_logger", None)
+        if outcome_logger is None or response is None:
+            return
+
+        try:
+            from core.rl import TaskOutcome
+
+            route = str(
+                route_hint
+                or (response.structured_data or {}).get("_routing_mode_type")
+                or turn_ctx.route
+                or "chat"
+            ).strip().lower()
+            tool_calls = []
+            for invocation in getattr(response, "tool_invocations", None) or []:
+                tool_name = str(getattr(invocation, "tool_name", "")).strip()
+                if tool_name:
+                    tool_calls.append(tool_name)
+
+            latency_ms = max(0.0, (time.monotonic() - turn_start) * 1000.0)
+            outcome = TaskOutcome(
+                task_id=str(turn_ctx.turn_id or self.turn_state.get("current_turn_id") or ""),
+                agent_type=route or "chat",
+                prompt=str(turn_ctx.message or ""),
+                response=str(getattr(response, "display_text", "") or ""),
+                success=bool(str(getattr(response, "display_text", "") or "").strip()),
+                route=route or "chat",
+                latency_ms=latency_ms,
+                tool_calls=tool_calls,
+                session_id=str(turn_ctx.session_id or self._current_session_id or ""),
+                user_id=str(turn_ctx.user_id or ""),
+            )
+            asyncio.create_task(outcome_logger.log(outcome))
+        except Exception as exc:
+            logger.debug("outcome_log_queue_failed turn_id=%s error=%s", turn_ctx.turn_id, exc)
+
     async def handle_message(
         self,
         message: str,
@@ -68,6 +130,7 @@ class OrchestrationFlow:
             tool_context=tool_context,
             origin=normalized_origin,
         )
+        turn_started_at = time.monotonic()
         logger.debug(
             "turn_context_created turn_id=%s origin=%s session_id=%s",
             turn_ctx.turn_id,
@@ -89,12 +152,7 @@ class OrchestrationFlow:
         effective_message = self._augment_message_with_session_bootstrap(message, active_session_id)
         self._update_turn_identity(user_id=user_id, session_id=active_session_id)
         incoming_turn_id = getattr(tool_context, "turn_id", None) if tool_context is not None else None
-        turn_id = self._start_new_turn(message, turn_id=incoming_turn_id)
-        if getattr(self, "_action_state_carryover_enabled", False) and getattr(self, "_action_state_store", None):
-            try:
-                await self._action_state_store.mark_turn_start(active_session_id, turn_id, message)
-            except Exception as state_err:
-                logger.warning("action_state_turn_start_failed session_id=%s error=%s", active_session_id, state_err)
+        self._start_new_turn(message, turn_id=incoming_turn_id)
         trace_ctx = start_trace(session_id=session_id, user_id=user_id)
         logger.info(
             f"🔥 ORCHESTRATOR RECEIVED MESSAGE from {user_id} "
@@ -106,21 +164,38 @@ class OrchestrationFlow:
                 if self.context_guard.count_tokens(message) > 2000:
                     msg = "I'm sorry, that request is too long for me to process safely."
                     await self._announce(msg)
-                    return ResponseFormatter.build_response(msg, mode="safe")
+                    response = ResponseFormatter.build_response(msg, mode="safe")
+                    return self._finalize_turn_response(
+                        turn_ctx=turn_ctx,
+                        response=response,
+                        turn_start=turn_started_at,
+                        route_hint="guard",
+                    )
 
             if self._is_malformed_short_request(message):
-                return ResponseFormatter.build_response(
+                response = ResponseFormatter.build_response(
                     "I can help with tasks, reminders, notes, or calendar events. "
                     "Please rephrase your request in one simple sentence."
+                )
+                return self._finalize_turn_response(
+                    turn_ctx=turn_ctx,
+                    response=response,
+                    turn_start=turn_started_at,
+                    route_hint="guard",
                 )
 
             if not self.enable_task_pipeline:
                 await self._maybe_capture_onboarding_prefs(message, user_id)
-                return await self._handle_chat_response(
+                response = await self._handle_chat_response(
                     effective_message,
                     user_id,
                     tool_context=tool_context,
                     origin=origin,
+                )
+                return self._finalize_turn_response(
+                    turn_ctx=turn_ctx,
+                    response=response,
+                    turn_start=turn_started_at,
                 )
 
             active_tasks = await self._maybe_await(self.task_store.get_active_tasks(user_id))
@@ -130,9 +205,15 @@ class OrchestrationFlow:
                     first = active_tasks[0]
                     total_steps = max(len(first.steps), 1)
                     current_step_display = min(first.current_step_index + 1, total_steps)
-                    return ResponseFormatter.build_response(
+                    response = ResponseFormatter.build_response(
                         f"You have {len(active_tasks)} active task(s). "
                         f"Current: '{first.title}' step {current_step_display}/{total_steps}."
+                    )
+                    return self._finalize_turn_response(
+                        turn_ctx=turn_ctx,
+                        response=response,
+                        turn_start=turn_started_at,
+                        route_hint="task",
                     )
 
             message_lower = (message or "").lower()
@@ -219,7 +300,12 @@ class OrchestrationFlow:
                     response.display_text,
                     source=assistant_source,
                 )
-                return response
+                return self._finalize_turn_response(
+                    turn_ctx=turn_ctx,
+                    response=response,
+                    turn_start=turn_started_at,
+                    route_hint="task",
+                )
 
             await self._maybe_capture_onboarding_prefs(message, user_id)
             response = await self._handle_chat_response(
@@ -240,18 +326,18 @@ class OrchestrationFlow:
                 response.display_text,
                 source=assistant_source,
             )
-            return response
+            return self._finalize_turn_response(
+                turn_ctx=turn_ctx,
+                response=response,
+                turn_start=turn_started_at,
+            )
 
         except Exception as e:
             logger.error(f"❌ Error handling message: {e}")
-            return ResponseFormatter.build_response("Something went wrong processing your request.")
-        finally:
-            if getattr(self, "_action_state_carryover_enabled", False) and getattr(self, "_action_state_store", None):
-                try:
-                    await self._action_state_store.mark_turn_end(
-                        active_session_id,
-                        turn_id,
-                        str(self.turn_state.get("last_route") or ""),
-                    )
-                except Exception as state_err:
-                    logger.warning("action_state_turn_end_failed session_id=%s error=%s", active_session_id, state_err)
+            response = ResponseFormatter.build_response("Something went wrong processing your request.")
+            return self._finalize_turn_response(
+                turn_ctx=turn_ctx,
+                response=response,
+                turn_start=turn_started_at,
+                route_hint="error",
+            )

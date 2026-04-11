@@ -20,6 +20,7 @@ import logging
 import re
 import time
 import uuid
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
@@ -94,22 +95,6 @@ class ResearchHandler:
         "the",
         "a",
         "an",
-    }
-    _SUBJECT_FILLER_TOKENS = {
-        "the",
-        "a",
-        "an",
-        "recent",
-        "latest",
-        "ongoing",
-        "current",
-        "news",
-        "about",
-        "regarding",
-        "between",
-        "in",
-        "on",
-        "of",
     }
 
     def __init__(
@@ -277,6 +262,39 @@ class ResearchHandler:
 
         return ""
 
+    @staticmethod
+    def resolve_active_subject_for_fast_path(
+        research_context: Optional[Dict[str, Any]],
+        fallback_subject: str,
+    ) -> str:
+        context = research_context or {}
+        if context:
+            summary_sentence = str(context.get("summary_sentence") or "").strip()
+            if summary_sentence:
+                war_match = re.search(
+                    r"\b(?:the\s+)?([A-Za-z][A-Za-z\s]+?\s+war)\b",
+                    summary_sentence,
+                    flags=re.IGNORECASE,
+                )
+                if war_match:
+                    candidate = re.sub(r"\s+", " ", war_match.group(1)).strip()
+                    if candidate:
+                        return candidate
+
+            query = str(context.get("query") or "").strip()
+            between_match = re.search(
+                r"\bwar\s+between\s+([A-Za-z][A-Za-z\s]+?)\s+and\s+([A-Za-z][A-Za-z\s]+)\b",
+                query,
+                flags=re.IGNORECASE,
+            )
+            if between_match:
+                left = re.sub(r"\s+", " ", between_match.group(1)).strip()
+                right = re.sub(r"\s+", " ", between_match.group(2)).strip()
+                if left and right:
+                    return f"{left} and {right} war"
+
+        return str(fallback_subject or "").strip()
+
     # -------------------------------------------------------------------------
     # Subject Extraction
     # -------------------------------------------------------------------------
@@ -297,22 +315,6 @@ class ResearchHandler:
         if not text:
             return ""
 
-        # Conflict-topic extraction for follow-ups like:
-        # "war between iran and america", "iran america war", "US-Iran war".
-        conflict_patterns = (
-            r"\bwar\s+(?:between|in)\s+([a-z][a-z\s\-]{1,40}?)\s+(?:and|&)\s+([a-z][a-z\s\-]{1,40})(?:\b|$)",
-            r"\b([a-z]{2,24})\s*(?:-|/)\s*([a-z]{2,24})\s+war\b",
-            r"\b([a-z]{2,24})\s+([a-z]{2,24})\s+war\b",
-        )
-        for pattern in conflict_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if not match:
-                continue
-            side_a = self._clean_entity_phrase(str(match.group(1) or ""))
-            side_b = self._clean_entity_phrase(str(match.group(2) or ""))
-            if side_a and side_b and side_a.lower() != side_b.lower():
-                return f"{side_a} and {side_b} war"
-
         capture_patterns = (
             r"\bwho is (?:the )?(.+?)(?:\?|$)",
             r"\btell me about (.+?)(?:\?|$)",
@@ -321,13 +323,10 @@ class ResearchHandler:
             r"\b(?:is|was)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})\b",
         )
         for pattern in capture_patterns:
-            flags = re.IGNORECASE
-            if pattern.startswith(r"\b(?:is|was)\s+([A-Z]"):
-                flags = 0
-            match = re.search(pattern, text, flags=flags)
+            match = re.search(pattern, text, flags=re.IGNORECASE)
             if not match:
                 continue
-            candidate = self._clean_subject_candidate(str(match.group(1) or ""))
+            candidate = re.sub(r"\s+", " ", str(match.group(1) or "")).strip(" .?!,;:")
             if not candidate:
                 continue
             tokens = [token.lower() for token in re.findall(r"[A-Za-z']+", candidate)]
@@ -340,7 +339,7 @@ class ResearchHandler:
 
         named_candidates = re.findall(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b", text)
         for candidate in named_candidates:
-            cleaned = self._clean_subject_candidate(candidate)
+            cleaned = candidate.strip()
             if not cleaned:
                 continue
             if cleaned.lower() in self._RESEARCH_SUBJECT_STOPWORDS:
@@ -350,41 +349,6 @@ class ResearchHandler:
             return cleaned
 
         return ""
-
-    def _clean_entity_phrase(self, phrase: str) -> str:
-        tokens = [
-            token
-            for token in re.findall(r"[A-Za-z']+", str(phrase or "").lower())
-            if token not in self._SUBJECT_FILLER_TOKENS and token not in {"war", "going"}
-        ]
-        if not tokens:
-            return ""
-        compact = " ".join(tokens[:4]).strip()
-        if not compact:
-            return ""
-        return " ".join(part.capitalize() for part in compact.split())
-
-    def _clean_subject_candidate(self, candidate: str) -> str:
-        cleaned = re.sub(r"\s+", " ", str(candidate or "")).strip(" .?!,;:")
-        if not cleaned:
-            return ""
-        lowered = cleaned.lower()
-        if "war going in between" in lowered:
-            return ""
-        cleaned = re.sub(r"^(?:the|a|an|about|regarding)\s+", "", cleaned, flags=re.IGNORECASE).strip()
-        lowered = cleaned.lower()
-        if not cleaned or lowered in self._RESEARCH_SUBJECT_STOPWORDS:
-            return ""
-        if re.fullmatch(r"(it|that|this|them|they|him|her)", lowered):
-            return ""
-        if re.search(r"\b(going in between|something|anything)\b", lowered):
-            return ""
-        tokens = re.findall(r"[A-Za-z']+", cleaned)
-        if not tokens or len(tokens) > 12:
-            return ""
-        if cleaned.islower() and len(tokens) <= 5:
-            cleaned = " ".join(token.capitalize() for token in tokens)
-        return cleaned
 
     @staticmethod
     def _is_bad_subject(candidate: str) -> bool:
@@ -410,10 +374,6 @@ class ResearchHandler:
             return True
         if "/" in lowered or "\\" in lowered:
             return True
-        if "war going in between" in lowered:
-            return True
-        if lowered in {"it", "that", "this", "them", "they", "him", "her"}:
-            return True
         return False
 
     def _extract_summary_sentence(self, summary: str) -> str:
@@ -437,6 +397,104 @@ class ResearchHandler:
             return ""
         sentence = re.split(r"(?<=[.!?])\s+", text, maxsplit=1)[0].strip()
         return sentence.rstrip(" ,;:")
+
+    # -------------------------------------------------------------------------
+    # Task / Report Helpers
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def is_multi_step_task_request(message_lower: str) -> bool:
+        text = str(message_lower or "").strip()
+        if not text:
+            return False
+        if any(phrase in text for phrase in ("set a reminder", "set reminder", "reminder to")):
+            return True
+        sequential_markers = (" and then ", " then open ", " then launch ", " then start ")
+        action_markers = (
+            "open ",
+            "launch ",
+            "start ",
+            "close ",
+            "set ",
+            "check ",
+            "email ",
+            "remind ",
+        )
+        return any(marker in text for marker in sequential_markers) and any(
+            marker in text for marker in action_markers
+        )
+
+    def is_report_export_request(
+        self,
+        message: str,
+        *,
+        report_export_keywords: tuple[str, ...],
+        report_export_patterns: tuple[str, ...],
+    ) -> bool:
+        text = str(message or "").strip().lower()
+        if not text:
+            return False
+        if any(keyword in text for keyword in report_export_keywords):
+            return True
+        has_export_verb = bool(re.search(r"\b(save|export|download|write|store)\b", text))
+        has_file_target = bool(re.search(r"\b(downloads|file|docx|document)\b", text))
+        has_report_object = bool(re.search(r"\b(report|analysis)\b", text))
+        if has_export_verb and (has_file_target or has_report_object):
+            return True
+        return any(
+            re.search(pattern, text, flags=re.IGNORECASE)
+            for pattern in report_export_patterns
+        )
+
+    @staticmethod
+    def slugify_topic(text: str) -> str:
+        normalized = re.sub(r"[^a-z0-9]+", "-", str(text or "").strip().lower())
+        normalized = normalized.strip("-")
+        if not normalized:
+            return "research-report"
+        return normalized[:60]
+
+    def build_report_output_path(self, query: str) -> str:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M")
+        topic_slug = self.slugify_topic(query)
+        return f"~/Downloads/{topic_slug}-{stamp}.docx"
+
+    @staticmethod
+    def extract_report_focus_query(user_text: str) -> str:
+        text = str(user_text or "").strip()
+        if not text:
+            return ""
+        text = re.sub(
+            r"(?i)\b(and\s+)?(make|create|write|prepare)\s+(a\s+)?(full\s+)?(report|document|doc)\b",
+            " ",
+            text,
+        )
+        text = re.sub(
+            r"(?i)\b(and\s+)?(save|export)\s+(it|this|that|report|document)?\s*(to|in)?\s*(my\s+)?downloads\b",
+            " ",
+            text,
+        )
+        text = re.sub(r"\s+", " ", text).strip(" ,.")
+        return text or str(user_text or "").strip()
+
+    @staticmethod
+    def summarize_task_start(user_text: str, steps: List[Any]) -> str:
+        first_desc = ""
+        if steps:
+            first_desc = str(getattr(steps[0], "description", "") or "").strip()
+        first_desc = re.sub(r"^\s*understand and execute:\s*", "", first_desc, flags=re.IGNORECASE)
+        if "relevant past memories" in first_desc.lower():
+            first_desc = ""
+        first_desc = " ".join(first_desc.split())
+        summary = first_desc or " ".join((user_text or "").strip().split())
+        summary = summary[:180]
+        return f"I've started a task with {len(steps)} steps: {summary}..."
+
+    @staticmethod
+    def compose_report_markdown(query: str, summary: str, sources: list[Any]) -> str:
+        from core.orchestrator.task_runtime_service import TaskRuntimeService
+
+        return TaskRuntimeService.compose_report_markdown(query, summary, sources)
 
     # -------------------------------------------------------------------------
     # Context Key Helpers

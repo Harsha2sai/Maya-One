@@ -62,20 +62,6 @@ class PronounRewriter:
     BAD_SUBJECTS = {
         "downloads", "download", "desktop", "documents", "folder", "file", "pdf"
     }
-    SUBJECT_FILLER_TOKENS = {
-        "the",
-        "a",
-        "an",
-        "recent",
-        "latest",
-        "ongoing",
-        "current",
-        "about",
-        "regarding",
-        "between",
-        "in",
-        "on",
-    }
 
     # Patterns to extract subject from query text
     SUBJECT_CAPTURE_PATTERNS = (
@@ -241,57 +227,15 @@ class PronounRewriter:
         if not text:
             return ""
 
-        conflict_patterns = (
-            r"\bwar\s+(?:between|in)\s+([a-z][a-z\s\-]{1,40}?)\s+(?:and|&)\s+([a-z][a-z\s\-]{1,40})(?:\b|$)",
-            r"\b([a-z]{2,24})\s*(?:-|/)\s*([a-z]{2,24})\s+war\b",
-            r"\b([a-z]{2,24})\s+([a-z]{2,24})\s+war\b",
-        )
-        for pattern in conflict_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if not match:
-                continue
-            side_a = self._clean_entity_phrase(str(match.group(1) or ""))
-            side_b = self._clean_entity_phrase(str(match.group(2) or ""))
-            if side_a and side_b and side_a.lower() != side_b.lower():
-                return f"{side_a} and {side_b} war"
-
         for pattern in self.SUBJECT_CAPTURE_PATTERNS:
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if not match:
                 continue
-            candidate = self._clean_subject_candidate(match.group(1))
+            candidate = match.group(1).strip()
             if candidate and not self._is_bad_subject(candidate):
                 return candidate
 
         return ""
-
-    def _clean_entity_phrase(self, phrase: str) -> str:
-        tokens = [
-            token
-            for token in re.findall(r"[A-Za-z']+", str(phrase or "").lower())
-            if token not in self.SUBJECT_FILLER_TOKENS and token not in {"war", "going"}
-        ]
-        if not tokens:
-            return ""
-        compact = " ".join(tokens[:4]).strip()
-        if not compact:
-            return ""
-        return " ".join(part.capitalize() for part in compact.split())
-
-    def _clean_subject_candidate(self, candidate: str) -> str:
-        cleaned = re.sub(r"\s+", " ", str(candidate or "")).strip(" .?!,;:")
-        if not cleaned:
-            return ""
-        lowered = cleaned.lower()
-        if "war going in between" in lowered:
-            return ""
-        cleaned = re.sub(r"^(?:the|a|an|about|regarding)\s+", "", cleaned, flags=re.IGNORECASE).strip()
-        lowered = cleaned.lower()
-        if lowered in {"it", "that", "this", "them", "they", "him", "her"}:
-            return ""
-        if not cleaned:
-            return ""
-        return cleaned
 
     def _is_bad_subject(self, candidate: str) -> bool:
         """
@@ -313,12 +257,6 @@ class PronounRewriter:
         if lowered in self.BAD_SUBJECTS:
             return True
         if "/" in lowered or "\\" in lowered:
-            return True
-        if lowered in {"it", "that", "this", "them", "they", "him", "her"}:
-            return True
-        if "war going in between" in lowered:
-            return True
-        if re.search(r"\b(going in between|something|anything)\b", lowered):
             return True
         return False
 

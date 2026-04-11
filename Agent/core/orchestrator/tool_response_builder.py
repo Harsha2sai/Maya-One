@@ -17,51 +17,6 @@ class ToolResponseBuilder:
     def __init__(self, *, owner: Any):
         self._owner = owner
 
-    @staticmethod
-    def _truthfulness_strict_enabled() -> bool:
-        return bool(getattr(settings, "action_truthfulness_strict", False))
-
-    @staticmethod
-    def _extract_tool_receipt(structured_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        if not isinstance(structured_data, dict):
-            return {}
-        receipt = structured_data.get("_tool_receipt")
-        if isinstance(receipt, dict):
-            return receipt
-        return {}
-
-    def _receipt_verification_tier(self, structured_data: Optional[Dict[str, Any]]) -> str:
-        receipt = self._extract_tool_receipt(structured_data)
-        verification = receipt.get("verification")
-        if isinstance(verification, dict):
-            return str(verification.get("tier") or "").strip().lower()
-        return ""
-
-    def _receipt_status(self, structured_data: Optional[Dict[str, Any]]) -> str:
-        receipt = self._extract_tool_receipt(structured_data)
-        return str(receipt.get("status") or "").strip().lower()
-
-    def _should_force_uncertainty(self, tool_name: str, structured_data: Optional[Dict[str, Any]]) -> bool:
-        if not self._truthfulness_strict_enabled():
-            return False
-        if self.classify_tool_intent_type(tool_name) != "direct_action":
-            return False
-        tier = self._receipt_verification_tier(structured_data)
-        return tier != "strong"
-
-    @staticmethod
-    def _uncertain_direct_action_text(tool_name: str, structured_data: Optional[Dict[str, Any]]) -> str:
-        data = structured_data or {}
-        name = (tool_name or "").strip().lower()
-        target = str(data.get("app_name") or data.get("app") or data.get("folder_name") or "").strip(" .")
-        if name == "open_app":
-            return f"I tried to open {target}, but I couldn't verify it." if target else "I tried that action, but I couldn't verify it."
-        if name == "close_app":
-            return f"I tried to close {target}, but I couldn't verify it." if target else "I tried that action, but I couldn't verify it."
-        if name == "open_folder":
-            return f"I tried to open {target}, but I couldn't verify it." if target else "I tried opening the folder, but I couldn't verify it."
-        return "I attempted that action, but I couldn't verify the final state."
-
     def classify_tool_intent_type(self, tool_name: str) -> str:
         name = (tool_name or "").strip().lower()
         if name in {
@@ -96,6 +51,15 @@ class ToolResponseBuilder:
             }
 
         if isinstance(raw_result, dict):
+            receipt_status = str((raw_result.get("_tool_receipt") or {}).get("status") or "").strip().lower()
+            if receipt_status == "failed":
+                message = str(raw_result.get("message") or safe_message).strip() or safe_message
+                return {
+                    **raw_result,
+                    "success": False,
+                    "message": message,
+                    "error_code": raw_result.get("error_code") or "tool_failed",
+                }
             if raw_result.get("success") is False:
                 message = str(raw_result.get("message") or safe_message).strip() or safe_message
                 return {
@@ -110,15 +74,6 @@ class ToolResponseBuilder:
                     "success": False,
                     "message": safe_message,
                     "error_code": str(raw_result.get("error")),
-                }
-            receipt_status = self._receipt_status(raw_result)
-            if receipt_status in {"failed", "not_executed"}:
-                message = str(raw_result.get("message") or safe_message).strip() or safe_message
-                return {
-                    **raw_result,
-                    "success": False,
-                    "message": message,
-                    "error_code": str(raw_result.get("error_code") or "tool_failed"),
                 }
             return {
                 **raw_result,
@@ -150,12 +105,18 @@ class ToolResponseBuilder:
     ) -> Optional[str]:
         data = structured_data or {}
         name = (tool_name or "").strip().lower()
-        strict_uncertainty = self._should_force_uncertainty(name, data)
-        if strict_uncertainty and name in {"open_app", "close_app", "open_folder"}:
-            return self._uncertain_direct_action_text(name, data)
 
         if name in {"open_app", "close_app"}:
             app_name = str(data.get("app_name") or data.get("app") or "").strip(" .")
+            strict_mode = bool(getattr(settings, "action_truthfulness_strict", False))
+            verification_tier = str(
+                ((data.get("_tool_receipt") or {}).get("verification") or {}).get("tier") or ""
+            ).strip().lower()
+            if strict_mode and mode == "direct" and verification_tier and verification_tier != "strong":
+                action_word = "opened" if name == "open_app" else "closed"
+                if app_name:
+                    return f"I couldn't verify {app_name} was {action_word}."
+                return "I couldn't verify that action."
             if app_name:
                 verb = "Opened" if name == "open_app" else "Closed"
                 return f"{verb} {app_name}."
@@ -202,8 +163,6 @@ class ToolResponseBuilder:
             return "I checked the weather."
 
         if mode == "direct":
-            if strict_uncertainty:
-                return self._uncertain_direct_action_text(name, data)
             return "Done."
         return None
 
@@ -229,11 +188,7 @@ class ToolResponseBuilder:
             structured_data = tool_output
         elif tool_output is not None:
             structured_data = {"result": str(tool_output)}
-        receipt_status = self._receipt_status(structured_data)
-        if (
-            isinstance(structured_data, dict)
-            and (structured_data.get("success") is False or receipt_status in {"failed", "not_executed"})
-        ):
+        if isinstance(structured_data, dict) and structured_data.get("success") is False:
             safe_text = str(structured_data.get("message") or "I was unable to complete that.").strip()
             response = ResponseFormatter.build_response(
                 display_text=safe_text,
@@ -287,9 +242,7 @@ class ToolResponseBuilder:
             synthesis_status = "error"
 
         if not synthesis.strip():
-            display_candidate = None
-            if not self._should_force_uncertainty(tool_name, structured_data):
-                display_candidate = ResponseFormatter.extract_display_candidate(structured_data, tool_name)
+            display_candidate = ResponseFormatter.extract_display_candidate(structured_data, tool_name)
             if display_candidate:
                 synthesis = display_candidate
                 fallback_source = "display_candidate"
@@ -302,8 +255,6 @@ class ToolResponseBuilder:
                     synthesis = "I completed the action."
                     fallback_source = "generic_ack"
             synthesis_fallback_used = True
-        elif self._should_force_uncertainty(tool_name, structured_data):
-            synthesis = self.get_tool_response_template(tool_name, structured_data, mode=mode) or synthesis
 
         response = await self._owner._build_agent_response(
             role_llm,
@@ -334,8 +285,23 @@ class ToolResponseBuilder:
         tool_invocation: Any,
     ) -> Any:
         structured_data = tool_output if isinstance(tool_output, dict) else {"result": str(tool_output or "")}
+        strict_mode = bool(getattr(settings, "action_truthfulness_strict", False))
+        verification_tier = str(
+            ((structured_data.get("_tool_receipt") or {}).get("verification") or {}).get("tier") or ""
+        ).strip().lower()
         raw_text = ""
-        if not self._should_force_uncertainty(tool_invocation.tool_name, structured_data):
+        if (
+            strict_mode
+            and tool_invocation.tool_name in {"open_app", "close_app"}
+            and verification_tier
+            and verification_tier != "strong"
+        ):
+            raw_text = self.get_tool_response_template(
+                tool_invocation.tool_name,
+                structured_data,
+                mode="direct",
+            ) or ""
+        if not raw_text:
             raw_text = ResponseFormatter.extract_display_candidate(structured_data, tool_invocation.tool_name) or ""
         if not raw_text:
             raw_text = self.get_tool_response_template(

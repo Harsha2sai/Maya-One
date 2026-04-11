@@ -342,8 +342,6 @@ class TaskRuntimeService:
                 room=getattr(self._owner, "room", None),
                 event_notifier=self._owner._handle_task_worker_event,
             )
-            if hasattr(worker, "set_message_bus"):
-                worker.set_message_bus(getattr(self._owner, "_message_bus", None))
             await worker.start()
             self._owner._task_workers[user_id] = worker
             logger.info("👷 TaskWorker started for %s", user_id)

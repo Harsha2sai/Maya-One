@@ -2,15 +2,11 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from core.action.constants import RoutePrecedence
-from core.action.precedence import RouteCandidate, RoutePrecedenceResolver
-
 logger = logging.getLogger(__name__)
 
 
 class AgentRouter:
     ALLOWED_KEYS = {"identity", "media_play", "research", "system", "scheduling", "chat"}
-    _SAFE_INHERITED_ROUTES = {"identity", "media_play", "research", "scheduling", "chat"}
     _USER_MEMORY_PATTERNS = (
         r"\bdo you know my name\b",
         r"\bwhat do you know about me\b",
@@ -100,24 +96,25 @@ class AgentRouter:
         r"\bget (?:my )?tasks\b",
         r"\bmy tasks\b",
     )
-    _AMBIGUOUS_FRAGMENT_PATTERNS = (
-        r"^(why|how so|then what|what next)$",
-        r"^what(?:'s| is)? the reason$",
-        r"^(and then|and now|what about that|what about it)$",
-        r"^(explain|elaborate|continue|go on)$",
-    )
 
     def __init__(self, llm_client: Any):
         self._llm = llm_client
         self._depth: Dict[str, int] = {}
-        self._last_resolved_route: Dict[str, str] = {}
-        self._pending_clarification: Dict[str, str] = {}
-        self._precedence = RoutePrecedenceResolver()
         self.MAX_DEPTH = 3
+        self._last_route: Dict[str, str] = {}
+        self._pending_clarifications: Dict[str, str] = {}
 
     def consume_pending_clarification(self, user_id: str) -> str:
-        user_key = str(user_id or "anonymous")
-        return str(self._pending_clarification.pop(user_key, "") or "").strip()
+        key = str(user_id or "anonymous")
+        return str(self._pending_clarifications.pop(key, "") or "")
+
+    @staticmethod
+    def _is_ambiguous_followup_query(utterance_l: str) -> bool:
+        text = str(utterance_l or "").strip().lower()
+        return bool(
+            re.search(r"^\s*what(?:'s| is)\s+(?:the\s+)?reason\b", text)
+            or text in {"why", "why?", "what about that", "what about it"}
+        )
 
     @staticmethod
     def _message_role(message: Any) -> str:
@@ -213,35 +210,14 @@ class AgentRouter:
             return False
         return bool(re.search(r"\?\s*$", last_assistant.strip()))
 
-    def _is_ambiguous_followup(self, utterance_l: str) -> bool:
-        normalized = str(utterance_l or "").strip().lower()
-        if not normalized:
-            return False
-        word_count = len(re.findall(r"\b[\w'-]+\b", normalized))
-        short_hit = 0 < word_count <= 4
-        fragment_hit = any(re.search(pattern, normalized) for pattern in self._AMBIGUOUS_FRAGMENT_PATTERNS)
-        return short_hit or fragment_hit
-
-    def _finalize_route(
-        self,
-        user_key: str,
-        utterance: str,
-        route: str,
-        *,
-        context_label: str = "agent_router_decision",
-    ) -> str:
-        resolved = route if route in self.ALLOWED_KEYS else "chat"
-        self._last_resolved_route[user_key] = resolved
-        logger.info("%s: '%s' -> %s", context_label, str(utterance or "")[:50], resolved)
-        return resolved
-
     async def route(self, utterance: str, user_id: str, chat_ctx: List[Any] | None = None) -> str:
         user_key = str(user_id or "anonymous")
+        self._pending_clarifications.pop(user_key, None)
         current = self._depth.get(user_key, 0)
         if current >= self.MAX_DEPTH:
             logger.warning("agent_depth_exceeded: %s at depth %s", user_key, current)
             self._depth[user_key] = 0
-            return self._finalize_route(user_key, utterance, "chat")
+            return "chat"
 
         utterance_l = str(utterance or "").strip().lower()
         chat_ctx = list(chat_ctx or [])
@@ -250,91 +226,41 @@ class AgentRouter:
 
         # Memory patterns take highest priority
         if any(re.search(pattern, utterance_l) for pattern in self._USER_MEMORY_PATTERNS):
-            return self._finalize_route(user_key, utterance, "chat")
+            result = "chat"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         # Note operations should stay in chat tool path and never map to identity.
         if any(re.search(pattern, utterance_l) for pattern in self._NOTE_PATTERNS):
-            return self._finalize_route(user_key, utterance, "chat")
+            result = "chat"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         identity_hit = any(re.search(pattern, utterance_l) for pattern in self._IDENTITY_PATTERNS)
         research_intent_hit = any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_INTENT_PATTERNS)
         system_intent_hit = any(re.search(pattern, utterance_l) for pattern in self._SYSTEM_INTENT_PATTERNS)
-        media_play_hit = any(re.search(pattern, utterance_l) for pattern in self._MEDIA_PLAY_PATTERNS)
-        scheduling_hit = any(re.search(pattern, utterance_l) for pattern in self._SCHEDULING_PATTERNS)
-
-        candidates: List[RouteCandidate] = []
-        if identity_hit and not (research_intent_hit or system_intent_hit):
-            candidates.append(
-                RouteCandidate(
-                    route="identity",
-                    precedence=RoutePrecedence.FAST_PATH_EXPLICIT,
-                    target="identity",
-                )
-            )
-        if research_intent_hit:
-            candidates.append(
-                RouteCandidate(
-                    route="research",
-                    precedence=RoutePrecedence.FAST_PATH_EXPLICIT,
-                    target="research",
-                )
-            )
-        if system_intent_hit:
-            destructive = bool(re.search(r"\b(close|delete|remove|kill|stop)\b", utterance_l))
-            candidates.append(
-                RouteCandidate(
-                    route="system",
-                    precedence=RoutePrecedence.SYSTEM_PLANNER_EXPLICIT,
-                    target="system_action",
-                    destructive=destructive,
-                )
-            )
-        if media_play_hit:
-            candidates.append(
-                RouteCandidate(
-                    route="media_play",
-                    precedence=RoutePrecedence.LLM_TOOL_DETERMINISTIC,
-                    target="media",
-                )
-            )
-        if scheduling_hit:
-            candidates.append(
-                RouteCandidate(
-                    route="scheduling",
-                    precedence=RoutePrecedence.LLM_TOOL_DETERMINISTIC,
-                    target="scheduling",
-                )
-            )
-        if candidates:
-            resolved = self._precedence.resolve(candidates)
-            if resolved.ask_clarification:
-                self._pending_clarification[user_key] = (
-                    "I heard multiple possible actions. Which one should I do first?"
-                )
-                return self._finalize_route(
-                    user_key,
-                    utterance,
-                    "chat",
-                    context_label=f"agent_router_decision_conflict_{resolved.reason}",
-                )
-            if resolved.route in self.ALLOWED_KEYS:
-                return self._finalize_route(
-                    user_key,
-                    utterance,
-                    resolved.route,
-                    context_label=f"agent_router_decision_precedence_{resolved.reason}",
-                )
 
         # Identity patterns — second priority, unless explicit tool/system intent is present.
         if identity_hit and not (research_intent_hit or system_intent_hit):
-            return self._finalize_route(user_key, utterance, "identity")
+            result = "identity"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         # Deterministic explicit research/system intents to avoid identity misrouting.
         if research_intent_hit:
-            return self._finalize_route(user_key, utterance, "research")
+            result = "research"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         if system_intent_hit:
-            return self._finalize_route(user_key, utterance, "system")
+            result = "system"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         # Greeting/smalltalk patterns — third priority
         if (
@@ -343,42 +269,66 @@ class AgentRouter:
             or re.search(r"\b(thanks|thank you)\b", utterance_l)
             or "tell me a joke" in utterance_l
         ):
-            return self._finalize_route(user_key, utterance, "chat")
+            result = "chat"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
-        # Deterministic media controls
+        # Deterministic media/scheduling controls
+        media_play_hit = any(re.search(pattern, utterance_l) for pattern in self._MEDIA_PLAY_PATTERNS)
+        scheduling_hit = any(re.search(pattern, utterance_l) for pattern in self._SCHEDULING_PATTERNS)
+        if media_play_hit and scheduling_hit:
+            result = "chat"
+            self._pending_clarifications[user_key] = (
+                "I found multiple possible actions. Do you want media playback or scheduling?"
+            )
+            self._last_route[user_key] = result
+            logger.info("agent_router_pending_clarification_set user=%s", user_key)
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
         if media_play_hit:
-            return self._finalize_route(user_key, utterance, "media_play")
+            result = "media_play"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         task_list_hit = any(re.search(pattern, utterance_l) for pattern in self._TASK_LIST_PATTERNS)
         if task_list_hit:
-            return self._finalize_route(user_key, utterance, "chat")
+            result = "chat"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         if scheduling_hit:
-            return self._finalize_route(user_key, utterance, "scheduling")
+            result = "scheduling"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         # Deterministic freshness/current-events research.
         # These queries should not block on the router LLM in console certification flows.
         freshness_hit = any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_FRESHNESS_PATTERNS)
         if freshness_hit:
-            return self._finalize_route(user_key, utterance, "research")
+            result = "research"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
-        if self._is_ambiguous_followup(utterance_l):
-            previous_route = self._last_resolved_route.get(user_key)
-            if previous_route in self._SAFE_INHERITED_ROUTES:
-                return self._finalize_route(
-                    user_key,
-                    utterance,
-                    previous_route or "chat",
-                    context_label="agent_router_decision_inherited_followup",
-                )
+        previous_route = self._last_route.get(user_key)
+        if previous_route and self._is_ambiguous_followup_query(utterance_l):
+            self._last_route[user_key] = previous_route
+            logger.info(
+                "agent_router_decision_context_inherit: '%s' -> %s",
+                str(utterance or "")[:50],
+                previous_route,
+            )
+            return previous_route
 
         if self._context_suggests_chat_followup(utterance_l, chat_ctx):
-            return self._finalize_route(
-                user_key,
-                utterance,
-                "chat",
-                context_label="agent_router_decision_context_followup",
-            )
+            result = "chat"
+            self._last_route[user_key] = result
+            logger.info("agent_router_decision_context_followup: '%s' -> %s", str(utterance or "")[:50], result)
+            return result
 
         # 2. LLM handles everything else — research, system, media, ambiguous chat
         self._depth[user_key] = current + 1
@@ -420,4 +370,6 @@ Reply with ONLY one word: identity / media_play / research / system / scheduling
         finally:
             self._depth[user_key] = max(0, self._depth.get(user_key, 1) - 1)
 
-        return self._finalize_route(user_key, utterance, result)
+        logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
+        self._last_route[user_key] = result
+        return result

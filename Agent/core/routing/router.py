@@ -5,7 +5,6 @@ Handles tool execution, LLM responses, and clarification flows.
 """
 
 import logging
-import re
 from typing import Optional, Callable, Dict, Any, Awaitable
 from dataclasses import dataclass
 
@@ -70,76 +69,6 @@ class ExecutionRouter:
     def set_tool_executor(self, executor: Callable[[str, Dict], Awaitable[str]]) -> None:
         """Set the tool executor function"""
         self.tool_executor = executor
-
-    @staticmethod
-    def _extract_conversation_summary(context: Any) -> str:
-        if context is None:
-            return ""
-        if isinstance(context, dict):
-            for key in ("conversation_summary", "recent_summary", "context_summary", "summary"):
-                value = str(context.get(key) or "").strip()
-                if value:
-                    return value
-            return ""
-        for attr in ("conversation_summary", "recent_summary", "context_summary", "summary"):
-            value = str(getattr(context, attr, "") or "").strip()
-            if value:
-                return value
-        return ""
-
-    @staticmethod
-    def _knowledge_to_snippets(knowledge_context: str, max_items: int = 6) -> list[dict[str, str]]:
-        compact = str(knowledge_context or "").strip()
-        if not compact:
-            return []
-        lines = [
-            re.sub(r"^[\-\*\u2022\d\.\)\s]+", "", line).strip()
-            for line in compact.splitlines()
-            if str(line).strip()
-        ]
-        if len(lines) == 1:
-            lines = [part.strip() for part in re.split(r"(?<=[.!?])\s+", lines[0]) if part.strip()]
-        snippets: list[dict[str, str]] = []
-        for idx, line in enumerate(lines[:max_items], start=1):
-            snippets.append(
-                {
-                    "title": f"Context {idx}",
-                    "url": f"https://context.local/{idx}",
-                    "snippet": line,
-                    "provider": "rag_context",
-                }
-            )
-        return snippets
-
-    async def _synthesize_knowledge_response(
-        self,
-        *,
-        query: str,
-        knowledge_context: str,
-        assistant: Any = None,
-        fallback_intro: str,
-    ) -> str:
-        fallback_text = f"{fallback_intro}\n{knowledge_context}".strip()
-        snippets = self._knowledge_to_snippets(knowledge_context)
-        if not snippets:
-            return fallback_text
-        try:
-            from core.research.result_synthesizer import ResultSynthesizer
-            from core.llm.role_llm import RoleLLM
-
-            smart_llm = getattr(assistant, "smart_llm", None) if assistant is not None else None
-            role_llm = RoleLLM(smart_llm) if smart_llm is not None else None
-            synthesizer = ResultSynthesizer(role_llm=role_llm)
-            display, _voice = await synthesizer.synthesize(
-                query=query,
-                snippets=snippets,
-                voice_mode="brief",
-            )
-            if str(display or "").strip():
-                return str(display).strip()
-        except Exception as exc:
-            self.logger.info("knowledge_synthesis_fallback reason=%s", exc)
-        return fallback_text
     
     async def route(self, user_text: str, context: Any = None, assistant: Any = None) -> RouteResult:
         """
@@ -157,10 +86,12 @@ class ExecutionRouter:
         from telemetry.session_monitor import get_session_monitor
         monitor = get_session_monitor()
 
-        # Classify intent (with context only for ambiguous follow-up disambiguation)
-        conversation_summary = self._extract_conversation_summary(context)
-        if conversation_summary:
-            intent = self.classifier.classify_with_context(
+        # Classify intent (context-aware when summary is available).
+        context_payload = context if isinstance(context, dict) else {}
+        conversation_summary = str(context_payload.get("conversation_summary") or "").strip()
+        classify_with_context = getattr(self.classifier, "classify_with_context", None)
+        if conversation_summary and callable(classify_with_context):
+            intent = classify_with_context(
                 user_text,
                 conversation_summary=conversation_summary,
                 memory_context=self.memory_context,
@@ -193,15 +124,9 @@ class ExecutionRouter:
         elif intent.intent_type == IntentType.MEMORY_QUERY:
             result = self._handle_memory_query(user_text, intent)
             if not result.handled and knowledge_context:
-                synthesized = await self._synthesize_knowledge_response(
-                    query=user_text,
-                    knowledge_context=knowledge_context,
-                    assistant=assistant,
-                    fallback_intro="Based on what I know:",
-                )
                 return RouteResult(
                     handled=True,
-                    response=synthesized,
+                    response=f"Based on what I know:\n{knowledge_context}",
                     intent_type=intent.intent_type,
                     needs_llm=True
                 )
@@ -225,6 +150,40 @@ class ExecutionRouter:
                     needs_llm=True
                 )
             return self._handle_conversation(user_text, intent)
+
+    async def _synthesize_knowledge_response(
+        self,
+        *,
+        query: str,
+        knowledge_context: str,
+        assistant: Any = None,
+        fallback_intro: str = "Here is some information I found:",
+    ) -> str:
+        """
+        Build a user-facing response from retrieved knowledge snippets.
+
+        If assistant synthesis hooks are available, use them; otherwise return
+        deterministic fallback formatting.
+        """
+        del query
+        snippets = str(knowledge_context or "").strip()
+        if not snippets:
+            return fallback_intro
+
+        if assistant is not None:
+            synth_fn = getattr(assistant, "synthesize_knowledge_response", None)
+            if callable(synth_fn):
+                try:
+                    maybe_text = synth_fn(snippets)
+                    if hasattr(maybe_text, "__await__"):
+                        maybe_text = await maybe_text
+                    text = str(maybe_text or "").strip()
+                    if text:
+                        return text
+                except Exception as exc:
+                    self.logger.warning("knowledge_synthesis_failed: %s", exc)
+
+        return f"{fallback_intro}\n{snippets}"
     
     async def _handle_tool_action(self, user_text: str, intent: IntentResult, context: Any = None) -> RouteResult:
         """Handle a tool action intent"""

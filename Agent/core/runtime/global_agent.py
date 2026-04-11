@@ -25,16 +25,32 @@ class GlobalAgentContainer:
     _llm: Any = None             # Base LLM
     _smart_llm: Any = None       # SmartLLM (with tools)
     _orchestrator: Any = None    # ConsoleOrchestrator (created once)
+    _hook_registry: Any = None   # HookRegistry
+    _session_store: Any = None   # Memdir SessionStore
+    _user_preferences_store: Any = None  # Memdir UserPreferences
     _task_workers: dict[str, Any] = {}
     _sentinel: Any = None        # BehavioralSentinel
     provider_supervisor: Any = None
     _host_capability_profile: Any = None
     _memory_warmup_task: Optional[asyncio.Task[Any]] = None
     _app_cache_preload_task: Optional[asyncio.Task[Any]] = None
-    _message_bus: Any = None
-    _progress_stream: Any = None
-    _task_persistence: Any = None
-    _subagent_circuit_breaker: Any = None
+    _msg_hub: Any = None         # MayaMsgHub (P28 infrastructure)
+    _worktree_manager: Any = None  # P29 worktree isolation manager
+    _subagent_manager: Any = None  # P29 subagent lifecycle manager
+    _team_coordinator: Any = None  # P30 team mode coordinator
+    _ralph_executor: Any = None    # P30 $ralph executor
+    _buddy: Any = None             # P33 Buddy companion
+    _project_mode: Any = None      # P35 project mode orchestrator
+    _feature_flags: Any = None     # P36 feature flag system
+    _dream_cycle: Any = None       # P36 dream memory consolidator
+    _outcome_logger: Any = None    # P37 task outcome logger
+    _training_exporter: Any = None # P37 training set exporter
+    _evaluator: Any = None         # P37 benchmark evaluator
+    _command_registry: Any = None  # P34 slash command registry
+    _plugin_loader: Any = None     # P34 plugin loader
+    _monitor: Any = None         # MayaMonitor (P28 observability bridge)
+    _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
+    _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
 
     @classmethod
     async def initialize(cls):
@@ -58,16 +74,29 @@ class GlobalAgentContainer:
         from core.tools.tool_manager import ToolManager
         from providers.factory import ProviderFactory
         from core.tasks.task_store import SQLiteTaskStore
-        from core.tasks.task_persistence import TaskPersistence
+        from core.hooks.registry import HookRegistry
         from core.memory.hybrid_memory_manager import HybridMemoryManager
+        from core.memory.memdir import SessionStore, UserPreferences
         from core.memory.memory_ingestor import MemoryIngestor
         from core.memory.preference_manager import PreferenceManager
         from core.tasks.task_tools import get_task_tools
         from core.registry.tool_registry import get_registry
         from core.system.host_capability_profile import collect_host_capability_profile
-        from core.messaging.message_bus import MessageBus
-        from core.messaging.progress_stream import ProgressStream
-        from core.agents.subagent_circuit_breaker import SubagentCircuitBreaker
+        from core.memory.agentscope_store import MayaAgentScopeMemory
+        from core.observability import MayaMonitor
+        from core.a2a import MayaA2AServer
+        from core.agents.subagent import (
+            SubAgentManager as RuntimeSubAgentManager,
+            WorktreeManager as RuntimeWorktreeManager,
+        )
+        from core.agents.team import TeamCoordinator
+        from core.agents.coding import RalphExecutor
+        from core.buddy import BuddyCompanion
+        from core.project import ProjectModeOrchestrator
+        from core.features import FeatureFlagSystem
+        from core.commands import CommandRegistry
+        from core.plugins import PluginLoader
+        from core.rl import OutcomeLogger, TrainingExporter, MayaEvaluator
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -96,59 +125,57 @@ class GlobalAgentContainer:
         
         # 2. Initialize Task Store (Singleton)
         cls._task_store = SQLiteTaskStore("./dev_maya_one.db")
-        cls._task_persistence = TaskPersistence(store=cls._task_store)
-        cls._message_bus = MessageBus(
-            max_queue_depth=getattr(settings, "max_message_bus_queue_depth_global", 1000),
-        )
-        cls._subagent_circuit_breaker = SubagentCircuitBreaker(
-            failure_threshold=3,
-            half_open_cooldown_s=60.0,
-        )
+        cls._hook_registry = HookRegistry()
+        memdir_root = str(os.getenv("MAYA_MEMDIR_HOME", "")).strip() or None
+        cls._session_store = SessionStore(base_dir=memdir_root)
+        cls._user_preferences_store = UserPreferences(base_dir=memdir_root)
 
-        async def _emit_progress_to_log(payload: dict[str, Any]) -> None:
-            logger.info(
-                "progress_stream_event phase=%s agent=%s status=%s percent=%s trace_id=%s task_id=%s",
-                payload.get("phase"),
-                payload.get("agent"),
-                payload.get("status"),
-                payload.get("percent"),
-                payload.get("trace_id"),
-                payload.get("task_id"),
-            )
-            orchestrator = cls._orchestrator
-            room = getattr(orchestrator, "room", None) if orchestrator is not None else None
-            if room is not None:
-                try:
-                    from core.communication import publish_chat_event
-
-                    await publish_chat_event(
-                        room,
-                        {
-                            "type": "task_progress",
-                            "status": payload.get("status"),
-                            "percent": payload.get("percent"),
-                            "summary": payload.get("summary"),
-                            "task_id": payload.get("task_id"),
-                            "trace_id": payload.get("trace_id"),
-                            "timestamp": payload.get("timestamp"),
-                        },
-                    )
-                except Exception as progress_publish_err:
-                    logger.debug("progress_event_room_publish_failed error=%s", progress_publish_err)
-
-        cls._progress_stream = ProgressStream(
-            bus=cls._message_bus,
-            emitter=_emit_progress_to_log,
-            max_events_per_sec_per_session=getattr(
-                settings, "max_progress_events_per_sec_per_session", 10
-            ),
+        # P28: Initialize MsgHub (infrastructure only — not yet used)
+        from core.messaging import MayaMsgHub
+        cls._msg_hub = MayaMsgHub()
+        logger.info("📨 MayaMsgHub initialized (P28 infrastructure)")
+        cls._worktree_manager = RuntimeWorktreeManager()
+        cls._subagent_manager = RuntimeSubAgentManager(
+            msg_hub=cls._msg_hub,
+            worktree_manager=cls._worktree_manager,
         )
-        await cls._progress_stream.start()
-        try:
-            recoverable = await cls._task_persistence.load_recoverable_tasks()
-            logger.info("task_recovery_scan recoverable_count=%s", len(recoverable))
-        except Exception as recovery_err:
-            logger.warning("task_recovery_scan_failed error=%s", recovery_err)
+        logger.info("🤖 SubAgentManager initialized (P29)")
+        cls._team_coordinator = TeamCoordinator(
+            subagent_manager=cls._subagent_manager,
+            msg_hub=cls._msg_hub,
+        )
+        cls._ralph_executor = RalphExecutor(
+            subagent_manager=cls._subagent_manager,
+        )
+        logger.info("🤝 TeamCoordinator + RalphExecutor initialized (P30)")
+        cls._buddy = BuddyCompanion(
+            subagent_manager=cls._subagent_manager,
+            db_path=cls._task_store.db_path,
+        )
+        logger.info("BuddyCompanion initialized (P33)")
+        cls._command_registry = CommandRegistry()
+        cls._feature_flags = FeatureFlagSystem()
+        logger.info("FeatureFlagSystem initialized (P36)")
+        cls._outcome_logger = OutcomeLogger()
+        cls._training_exporter = TrainingExporter(cls._outcome_logger)
+        logger.info("OutcomeLogger + TrainingExporter initialized (P37)")
+        cls._project_mode = ProjectModeOrchestrator(
+            subagent_manager=cls._subagent_manager,
+            buddy=cls._buddy,
+            command_registry=cls._command_registry,
+        )
+        logger.info("ProjectModeOrchestrator initialized (P35)")
+        cls._register_builtin_commands()
+        plugin_dir = str(os.getenv("MAYA_PLUGIN_DIR", "plugins") or "plugins").strip()
+        cls._plugin_loader = PluginLoader(plugin_dir=plugin_dir)
+        loaded_plugins = cls._plugin_loader.load_all(cls._command_registry)
+        logger.info("P34 plugin_loader initialized loaded=%s", loaded_plugins)
+        cls._monitor = MayaMonitor()
+        logger.info("📈 MayaMonitor initialized (P28 observability)")
+        cls._a2a_server = MayaA2AServer(agent_name="maya")
+        logger.info("🔌 MayaA2AServer initialized available=%s", cls._a2a_server.available)
+        cls._agentscope_memory = MayaAgentScopeMemory(db_path=cls._task_store.db_path)
+        logger.info("🧠 MayaAgentScopeMemory initialized (parallel to HybridMemoryManager)")
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -252,6 +279,11 @@ class GlobalAgentContainer:
             create_pdf, create_docx,
         )
 
+        # P31: Tier 1 + Tier 2 tools
+        from core.tools.file_ops import file_read, file_write as p31_file_write, file_edit, file_glob, file_grep
+        from core.tools.execution import bash
+        from core.tools.agent_tools import spawn_subagent, check_agent_result, send_agent_message
+
         local_tools = get_task_tools() + [
             run_shell_command, file_write, open_app, close_app, set_volume, take_screenshot,
         list_directory, search_files,
@@ -263,7 +295,11 @@ class GlobalAgentContainer:
             send_email, set_alarm, list_alarms, delete_alarm,
             set_reminder, list_reminders, delete_reminder,
             create_note, list_notes, read_note, delete_note,
-            create_calendar_event, list_calendar_events, delete_calendar_event
+            create_calendar_event, list_calendar_events, delete_calendar_event,
+            # P31 Tier 1 — file ops + shell
+            file_read, p31_file_write, file_edit, file_glob, file_grep, bash,
+            # P31 Tier 2 — agent coordination
+            spawn_subagent, check_agent_result, send_agent_message,
         ]
 
         async def _preload_app_cache() -> None:
@@ -325,10 +361,15 @@ class GlobalAgentContainer:
             enable_chat_tools=max(1, int(getattr(settings, "architecture_phase", 1))) >= 3,
             enable_task_pipeline=max(1, int(getattr(settings, "architecture_phase", 1))) >= 4,
         )
-        setattr(cls._orchestrator, "_message_bus", cls._message_bus)
-        setattr(cls._orchestrator, "_task_persistence", cls._task_persistence)
-        setattr(cls._orchestrator, "_subagent_circuit_breaker", cls._subagent_circuit_breaker)
-        setattr(cls._orchestrator, "_progress_stream", cls._progress_stream)
+        cls._evaluator = MayaEvaluator(cls._orchestrator)
+        cls._orchestrator._outcome_logger = cls._outcome_logger
+        logger.info("MayaEvaluator initialized and outcome logger attached (P37)")
+        from core.memory.dream import DreamCycle
+        cls._dream_cycle = DreamCycle(
+            memory_manager=cls._memory,
+            llm=cls._smart_llm,
+        )
+        logger.info("DreamCycle initialized (P36)")
 
         cls._initialized = True
         logger.info(f"✅ Global agent ready with {len(cls._tools)} tools")
@@ -370,6 +411,169 @@ class GlobalAgentContainer:
     def get_orchestrator(cls) -> Any:
         """Return the shared AgentOrchestrator instance."""
         return cls._orchestrator
+
+    @classmethod
+    def get_hook_registry(cls) -> Any:
+        """Return the shared HookRegistry instance."""
+        return cls._hook_registry
+
+    @classmethod
+    def get_session_store(cls) -> Any:
+        """Return the shared memdir SessionStore instance."""
+        return cls._session_store
+
+    @classmethod
+    def get_user_preferences_store(cls) -> Any:
+        """Return the shared memdir UserPreferences store instance."""
+        return cls._user_preferences_store
+    
+    @classmethod
+    def get_msg_hub(cls) -> Any:
+        """Return the shared MayaMsgHub instance (P28+)."""
+        return cls._msg_hub
+
+    @classmethod
+    def get_subagent_manager(cls) -> Any:
+        """Return the shared P29 SubAgentManager instance."""
+        return cls._subagent_manager
+
+    @classmethod
+    def get_team_coordinator(cls) -> Any:
+        """Return the shared P30 TeamCoordinator instance."""
+        return cls._team_coordinator
+
+    @classmethod
+    def get_ralph_executor(cls) -> Any:
+        """Return the shared P30 RalphExecutor instance."""
+        return cls._ralph_executor
+
+    @classmethod
+    def get_buddy(cls) -> Any:
+        """Return the shared P33 BuddyCompanion instance."""
+        return cls._buddy
+
+    @classmethod
+    def get_command_registry(cls) -> Any:
+        """Return the shared P34 CommandRegistry instance."""
+        return cls._command_registry
+
+    @classmethod
+    def get_project_mode(cls) -> Any:
+        """Return the shared P35 ProjectModeOrchestrator instance."""
+        return cls._project_mode
+
+    @classmethod
+    def get_feature_flags(cls) -> Any:
+        """Return the shared P36 FeatureFlagSystem instance."""
+        return cls._feature_flags
+
+    @classmethod
+    def get_dream_cycle(cls) -> Any:
+        """Return the shared P36 DreamCycle instance."""
+        return cls._dream_cycle
+
+    @classmethod
+    def get_outcome_logger(cls) -> Any:
+        """Return the shared P37 OutcomeLogger instance."""
+        return cls._outcome_logger
+
+    @classmethod
+    def get_training_exporter(cls) -> Any:
+        """Return the shared P37 TrainingExporter instance."""
+        return cls._training_exporter
+
+    @classmethod
+    def get_evaluator(cls) -> Any:
+        """Return the shared P37 MayaEvaluator instance."""
+        return cls._evaluator
+
+    @classmethod
+    def get_plugin_loader(cls) -> Any:
+        """Return the shared P34 PluginLoader instance."""
+        return cls._plugin_loader
+
+    @classmethod
+    async def dispatch_command(cls, raw: str, context: Optional[dict] = None) -> Optional[str]:
+        """Dispatch slash commands through the shared command registry."""
+        if cls._command_registry is None:
+            return None
+        payload = cls._build_command_context()
+        payload.update(context or {})
+        payload["command_registry"] = cls._command_registry
+        return await cls._command_registry.dispatch(raw, payload)
+
+    @classmethod
+    def _build_command_context(cls) -> dict:
+        from core.governance.gate import ExecutionGate
+
+        return {
+            "subagent_manager": cls._subagent_manager,
+            "buddy": cls._buddy,
+            "execution_gate": ExecutionGate,
+            "command_registry": cls._command_registry,
+            "memory": cls._memory,
+            "project_mode": cls._project_mode,
+            "feature_flags": cls._feature_flags,
+            "dream_cycle": cls._dream_cycle,
+            "outcome_logger": cls._outcome_logger,
+            "training_exporter": cls._training_exporter,
+            "evaluator": cls._evaluator,
+        }
+
+    @classmethod
+    def _register_builtin_commands(cls) -> None:
+        from core.commands import SlashCommand
+        from core.commands.handlers.agent import handle_agents, handle_kill, handle_spawn
+        from core.commands.handlers.buddy import handle_buddy, handle_evolve, handle_xp
+        from core.commands.handlers.dream import handle_dream
+        from core.commands.handlers.flags import handle_flag
+        from core.commands.handlers.memory import handle_forget, handle_recall, handle_remember
+        from core.commands.handlers.mode import handle_lock, handle_mode, handle_unlock
+        from core.commands.handlers.project import handle_project
+        from core.commands.handlers.rl import handle_rl
+        from core.commands.handlers.system import handle_help, handle_reset, handle_status
+
+        if cls._command_registry is None:
+            return
+
+        builtins = [
+            SlashCommand("spawn", "Spawn a specialist subagent", "/spawn <type> <task>", handle_spawn),
+            SlashCommand("agents", "List active agents", "/agents", handle_agents),
+            SlashCommand("kill", "Terminate an agent", "/kill <agent_id>", handle_kill),
+            SlashCommand("buddy", "Show Buddy status", "/buddy", handle_buddy),
+            SlashCommand("xp", "Show Buddy XP details", "/xp", handle_xp),
+            SlashCommand("evolve", "Award Buddy XP event", "/evolve [event]", handle_evolve),
+            SlashCommand("mode", "Get or set permission mode", "/mode [mode_name]", handle_mode),
+            SlashCommand("lock", "Lock tool execution", "/lock", handle_lock),
+            SlashCommand("unlock", "Unlock to default mode", "/unlock", handle_unlock),
+            SlashCommand("remember", "Store lightweight command memory", "/remember <key> <value>", handle_remember),
+            SlashCommand("forget", "Forget lightweight command memory", "/forget <key>", handle_forget),
+            SlashCommand("recall", "Recall lightweight command memory", "/recall <key>", handle_recall),
+            SlashCommand("project", "Manage project mode workflow", "/project <subcommand>", handle_project),
+            SlashCommand("flag", "Manage runtime feature flags", "/flag [enable|disable|list|reset] [FLAG]", handle_flag),
+            SlashCommand("dream", "Consolidate memory for the session", "/dream [--preview]", handle_dream),
+            SlashCommand("rl", "Inspect/export RL outcomes", "/rl [stats|eval|export|rate]", handle_rl),
+            SlashCommand("help", "List available commands", "/help", handle_help),
+            SlashCommand("status", "Show system status", "/status", handle_status),
+            SlashCommand("reset", "Reset command-facing state", "/reset", handle_reset),
+        ]
+        for cmd in builtins:
+            cls._command_registry.register(cmd)
+
+    @classmethod
+    def get_monitor(cls) -> Any:
+        """Return the shared MayaMonitor instance (P28+)."""
+        return cls._monitor
+
+    @classmethod
+    def get_a2a_server(cls) -> Any:
+        """Return the shared MayaA2AServer foundation instance (P28+)."""
+        return cls._a2a_server
+
+    @classmethod
+    def get_agentscope_memory(cls) -> Any:
+        """Return the shared MayaAgentScopeMemory parallel store (P28+)."""
+        return cls._agentscope_memory
 
     @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
@@ -443,14 +647,6 @@ class GlobalAgentContainer:
     @classmethod
     async def shutdown_background_tasks(cls) -> None:
         """Stop long-lived background tasks owned by the global container."""
-        if cls._progress_stream is not None:
-            try:
-                await cls._progress_stream.stop()
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to stop progress stream: {e}")
-            finally:
-                cls._progress_stream = None
-
         if cls._sentinel is not None:
             try:
                 await cls._sentinel.stop()
@@ -472,3 +668,11 @@ class GlobalAgentContainer:
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to stop {task_attr}: {e}")
             setattr(cls, task_attr, None)
+
+        if cls._a2a_server is not None:
+            try:
+                await cls._a2a_server.stop()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop MayaA2AServer: {e}")
+            finally:
+                cls._a2a_server = None
