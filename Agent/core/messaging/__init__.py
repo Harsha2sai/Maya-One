@@ -22,6 +22,7 @@ class MayaMsgHub:
     def __init__(self):
         self._hub: Optional[MsgHub] = None
         self._participants: Dict[str, Any] = {}
+        self._message_queues: Dict[str, asyncio.Queue] = {}
         self._active = False
     
     async def __aenter__(self):
@@ -43,8 +44,13 @@ class MayaMsgHub:
         
         participant_list = list(self._participants.values())
         if participant_list:
-            self._hub = MsgHub(participants=participant_list)
-        
+            try:
+                self._hub = MsgHub(participants=participant_list)
+            except Exception:
+                # Some runtime participants are queue-only and not full AgentScope
+                # agents. Fall back to queue-only IPC in that case.
+                self._hub = None
+
         self._active = True
         return self
     
@@ -77,11 +83,21 @@ class MayaMsgHub:
             content: Message content
             role: Message role (user/assistant/system)
         """
-        if not self._active or not self._hub:
-            raise RuntimeError("MsgHub not open — call open() first")
-        
+        if not self._active:
+            await self.open()
+
         msg = Msg(name=sender, content=content, role=role)
-        await self._hub.broadcast(msg)
+        if self._hub is not None:
+            try:
+                await self._hub.broadcast(msg)
+            except Exception:
+                # Progress IPC should remain available even when upstream
+                # AgentScope broadcast cannot deliver to a participant.
+                pass
+
+        # Keep a per-sender stream for runtime progress subscribers.
+        queue = self._message_queues.setdefault(sender, asyncio.Queue())
+        await queue.put(msg)
     
     async def send(self, sender: str, recipient: str, content: str, role: str = "assistant"):
         """
@@ -104,9 +120,6 @@ class MayaMsgHub:
         
         # AgentScope MsgHub doesn't have direct send — use participant's reply
         # For now, store in a queue that recipient can poll
-        if not hasattr(self, '_message_queues'):
-            self._message_queues: Dict[str, asyncio.Queue] = {}
-        
         if recipient not in self._message_queues:
             self._message_queues[recipient] = asyncio.Queue()
         
@@ -123,12 +136,7 @@ class MayaMsgHub:
         Returns:
             Message or None if timeout
         """
-        if not hasattr(self, '_message_queues'):
-            return None
-        
-        queue = self._message_queues.get(recipient)
-        if not queue:
-            return None
+        queue = self._message_queues.setdefault(recipient, asyncio.Queue())
         
         try:
             if timeout:

@@ -3,7 +3,7 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from typing import Dict, Optional
+from typing import AsyncIterator, Dict, Optional
 
 from agentscope.agent import ReActAgent
 from agentscope.formatter import OpenAIChatFormatter
@@ -36,6 +36,19 @@ MAX_CONCURRENT = 5
 
 class ReActAgentBuildError(RuntimeError):
     """Raised when SubAgentManager cannot build a ReActAgent primary path."""
+
+
+class _HubParticipant:
+    """Minimal AgentScope-compatible participant for MsgHub progress streams."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    async def reply(self, message: Msg) -> Msg:
+        return Msg(name=self.name, content="", role="assistant")
+
+    async def observe(self, message: Msg) -> None:
+        return None
 
 
 class SubAgentManager:
@@ -138,9 +151,59 @@ class SubAgentManager:
         context: Optional[Dict],
         timeout: int,
     ):
+        participant = _HubParticipant(instance.id)
+        self.hub.register(instance.id, participant)
+        await self._publish_update(
+            instance=instance,
+            content=f"agent_started id={instance.id} type={instance.agent_type}",
+        )
+
         await self._run_sync(instance, context, timeout)
+        await self._publish_update(
+            instance=instance,
+            content=(
+                f"agent_{instance.status.value} "
+                f"id={instance.id} type={instance.agent_type}"
+            ),
+        )
+
         await asyncio.sleep(300)
         self.active.pop(instance.id, None)
+        self.hub.unregister(instance.id)
+
+    async def subscribe_to_updates(
+        self,
+        agent_id: str,
+        timeout: float = 300.0,
+    ) -> AsyncIterator[Msg]:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        saw_message = False
+
+        while True:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+
+            msg = await self.hub.receive(agent_id, timeout=min(1.0, remaining))
+            if msg is not None:
+                saw_message = True
+                yield msg
+
+            current = self.active.get(agent_id)
+            if current and current.status in {
+                SubAgentStatus.COMPLETED,
+                SubAgentStatus.FAILED,
+                SubAgentStatus.TIMEOUT,
+            }:
+                # Drain one final queued update (typically terminal status)
+                # before stopping the stream.
+                tail = await self.hub.receive(agent_id, timeout=0.25)
+                if tail is not None:
+                    yield tail
+                break
+            if current is None and saw_message:
+                break
 
     async def _execute(self, instance: SubAgentInstance, context: Optional[Dict]) -> str:
         # Keep test runs deterministic and fast in sandboxed CI/local pytest.
@@ -255,3 +318,17 @@ class SubAgentManager:
                 await self.worktrees.destroy(instance.id)
             except Exception as exc:
                 logger.warning("worktree_cleanup_failed id=%s: %s", instance.id, exc)
+
+    async def _publish_update(self, instance: SubAgentInstance, content: str) -> None:
+        try:
+            await self.hub.broadcast(
+                sender=instance.id,
+                content=content,
+                role="system",
+            )
+        except Exception as exc:
+            logger.warning(
+                "subagent_progress_broadcast_failed id=%s error=%s",
+                instance.id,
+                exc,
+            )
