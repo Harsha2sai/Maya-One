@@ -242,6 +242,11 @@ class GlobalAgentContainer:
             create_pdf, create_docx,
         )
 
+        # P31: Tier 1 + Tier 2 tools
+        from core.tools.file_ops import file_read, file_write as p31_file_write, file_edit, file_glob, file_grep
+        from core.tools.execution import bash
+        from core.tools.agent_tools import spawn_subagent, check_agent_result, send_agent_message
+
         local_tools = get_task_tools() + [
             run_shell_command, file_write, open_app, close_app, set_volume, take_screenshot,
         list_directory, search_files,
@@ -253,7 +258,11 @@ class GlobalAgentContainer:
             send_email, set_alarm, list_alarms, delete_alarm,
             set_reminder, list_reminders, delete_reminder,
             create_note, list_notes, read_note, delete_note,
-            create_calendar_event, list_calendar_events, delete_calendar_event
+            create_calendar_event, list_calendar_events, delete_calendar_event,
+            # P31 Tier 1 — file ops + shell
+            file_read, p31_file_write, file_edit, file_glob, file_grep, bash,
+            # P31 Tier 2 — agent coordination
+            spawn_subagent, check_agent_result, send_agent_message,
         ]
 
         async def _preload_app_cache() -> None:
