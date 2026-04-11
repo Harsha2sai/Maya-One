@@ -43,6 +43,9 @@ class GlobalAgentContainer:
     _project_mode: Any = None      # P35 project mode orchestrator
     _feature_flags: Any = None     # P36 feature flag system
     _dream_cycle: Any = None       # P36 dream memory consolidator
+    _outcome_logger: Any = None    # P37 task outcome logger
+    _training_exporter: Any = None # P37 training set exporter
+    _evaluator: Any = None         # P37 benchmark evaluator
     _command_registry: Any = None  # P34 slash command registry
     _plugin_loader: Any = None     # P34 plugin loader
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
@@ -93,6 +96,7 @@ class GlobalAgentContainer:
         from core.features import FeatureFlagSystem
         from core.commands import CommandRegistry
         from core.plugins import PluginLoader
+        from core.rl import OutcomeLogger, TrainingExporter, MayaEvaluator
 
         cls._host_capability_profile = collect_host_capability_profile(runtime_mode=runtime_mode)
         logger.info("host_capability_collected profile=%s", cls._host_capability_profile.to_dict())
@@ -152,6 +156,9 @@ class GlobalAgentContainer:
         cls._command_registry = CommandRegistry()
         cls._feature_flags = FeatureFlagSystem()
         logger.info("FeatureFlagSystem initialized (P36)")
+        cls._outcome_logger = OutcomeLogger()
+        cls._training_exporter = TrainingExporter(cls._outcome_logger)
+        logger.info("OutcomeLogger + TrainingExporter initialized (P37)")
         cls._project_mode = ProjectModeOrchestrator(
             subagent_manager=cls._subagent_manager,
             buddy=cls._buddy,
@@ -354,6 +361,9 @@ class GlobalAgentContainer:
             enable_chat_tools=max(1, int(getattr(settings, "architecture_phase", 1))) >= 3,
             enable_task_pipeline=max(1, int(getattr(settings, "architecture_phase", 1))) >= 4,
         )
+        cls._evaluator = MayaEvaluator(cls._orchestrator)
+        cls._orchestrator._outcome_logger = cls._outcome_logger
+        logger.info("MayaEvaluator initialized and outcome logger attached (P37)")
         from core.memory.dream import DreamCycle
         cls._dream_cycle = DreamCycle(
             memory_manager=cls._memory,
@@ -463,6 +473,21 @@ class GlobalAgentContainer:
         return cls._dream_cycle
 
     @classmethod
+    def get_outcome_logger(cls) -> Any:
+        """Return the shared P37 OutcomeLogger instance."""
+        return cls._outcome_logger
+
+    @classmethod
+    def get_training_exporter(cls) -> Any:
+        """Return the shared P37 TrainingExporter instance."""
+        return cls._training_exporter
+
+    @classmethod
+    def get_evaluator(cls) -> Any:
+        """Return the shared P37 MayaEvaluator instance."""
+        return cls._evaluator
+
+    @classmethod
     def get_plugin_loader(cls) -> Any:
         """Return the shared P34 PluginLoader instance."""
         return cls._plugin_loader
@@ -490,6 +515,9 @@ class GlobalAgentContainer:
             "project_mode": cls._project_mode,
             "feature_flags": cls._feature_flags,
             "dream_cycle": cls._dream_cycle,
+            "outcome_logger": cls._outcome_logger,
+            "training_exporter": cls._training_exporter,
+            "evaluator": cls._evaluator,
         }
 
     @classmethod
@@ -502,6 +530,7 @@ class GlobalAgentContainer:
         from core.commands.handlers.memory import handle_forget, handle_recall, handle_remember
         from core.commands.handlers.mode import handle_lock, handle_mode, handle_unlock
         from core.commands.handlers.project import handle_project
+        from core.commands.handlers.rl import handle_rl
         from core.commands.handlers.system import handle_help, handle_reset, handle_status
 
         if cls._command_registry is None:
@@ -523,6 +552,7 @@ class GlobalAgentContainer:
             SlashCommand("project", "Manage project mode workflow", "/project <subcommand>", handle_project),
             SlashCommand("flag", "Manage runtime feature flags", "/flag [enable|disable|list|reset] [FLAG]", handle_flag),
             SlashCommand("dream", "Consolidate memory for the session", "/dream [--preview]", handle_dream),
+            SlashCommand("rl", "Inspect/export RL outcomes", "/rl [stats|eval|export|rate]", handle_rl),
             SlashCommand("help", "List available commands", "/help", handle_help),
             SlashCommand("status", "Show system status", "/status", handle_status),
             SlashCommand("reset", "Reset command-facing state", "/reset", handle_reset),

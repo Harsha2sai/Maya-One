@@ -322,6 +322,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._router = AgentRouter(_RouterLLMAdapter(agent))
         self._agent_registry = get_agent_registry()
         self._handoff_manager = get_handoff_manager(self._agent_registry)
+        self._outcome_logger: Any = None
         self._deterministic_tools = {
             "open_app",
             "close_app",
