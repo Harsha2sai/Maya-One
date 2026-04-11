@@ -40,6 +40,7 @@ class GlobalAgentContainer:
     _team_coordinator: Any = None  # P30 team mode coordinator
     _ralph_executor: Any = None    # P30 $ralph executor
     _buddy: Any = None             # P33 Buddy companion
+    _project_mode: Any = None      # P35 project mode orchestrator
     _command_registry: Any = None  # P34 slash command registry
     _plugin_loader: Any = None     # P34 plugin loader
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
@@ -86,6 +87,7 @@ class GlobalAgentContainer:
         from core.agents.team import TeamCoordinator
         from core.agents.coding import RalphExecutor
         from core.buddy import BuddyCompanion
+        from core.project import ProjectModeOrchestrator
         from core.commands import CommandRegistry
         from core.plugins import PluginLoader
 
@@ -145,6 +147,12 @@ class GlobalAgentContainer:
         )
         logger.info("BuddyCompanion initialized (P33)")
         cls._command_registry = CommandRegistry()
+        cls._project_mode = ProjectModeOrchestrator(
+            subagent_manager=cls._subagent_manager,
+            buddy=cls._buddy,
+            command_registry=cls._command_registry,
+        )
+        logger.info("ProjectModeOrchestrator initialized (P35)")
         cls._register_builtin_commands()
         plugin_dir = str(os.getenv("MAYA_PLUGIN_DIR", "plugins") or "plugins").strip()
         cls._plugin_loader = PluginLoader(plugin_dir=plugin_dir)
@@ -429,6 +437,11 @@ class GlobalAgentContainer:
         return cls._command_registry
 
     @classmethod
+    def get_project_mode(cls) -> Any:
+        """Return the shared P35 ProjectModeOrchestrator instance."""
+        return cls._project_mode
+
+    @classmethod
     def get_plugin_loader(cls) -> Any:
         """Return the shared P34 PluginLoader instance."""
         return cls._plugin_loader
@@ -453,6 +466,7 @@ class GlobalAgentContainer:
             "execution_gate": ExecutionGate,
             "command_registry": cls._command_registry,
             "memory": cls._memory,
+            "project_mode": cls._project_mode,
         }
 
     @classmethod
@@ -462,6 +476,7 @@ class GlobalAgentContainer:
         from core.commands.handlers.buddy import handle_buddy, handle_evolve, handle_xp
         from core.commands.handlers.memory import handle_forget, handle_recall, handle_remember
         from core.commands.handlers.mode import handle_lock, handle_mode, handle_unlock
+        from core.commands.handlers.project import handle_project
         from core.commands.handlers.system import handle_help, handle_reset, handle_status
 
         if cls._command_registry is None:
@@ -480,6 +495,7 @@ class GlobalAgentContainer:
             SlashCommand("remember", "Store lightweight command memory", "/remember <key> <value>", handle_remember),
             SlashCommand("forget", "Forget lightweight command memory", "/forget <key>", handle_forget),
             SlashCommand("recall", "Recall lightweight command memory", "/recall <key>", handle_recall),
+            SlashCommand("project", "Manage project mode workflow", "/project <subcommand>", handle_project),
             SlashCommand("help", "List available commands", "/help", handle_help),
             SlashCommand("status", "Show system status", "/status", handle_status),
             SlashCommand("reset", "Reset command-facing state", "/reset", handle_reset),
