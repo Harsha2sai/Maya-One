@@ -387,6 +387,18 @@ class ChatProvider extends BaseProvider {
   }
 
   void _playSearchCueForTurn(String turnId) {
+    _playCueForTurn(
+      turnId,
+      state: CueState.searching,
+      eventLabel: 'searching',
+    );
+  }
+
+  void _playCueForTurn(
+    String turnId, {
+    required CueState state,
+    required String eventLabel,
+  }) {
     final cueService = _searchCueService;
     if (cueService == null) {
       return;
@@ -394,22 +406,29 @@ class ChatProvider extends BaseProvider {
     final cueLatency = Stopwatch()..start();
     unawaited(() async {
       try {
-        final played = await cueService.playCue(
+        final played = await cueService.playStateCue(
           turnId,
+          state: state,
           soundEnabled: _soundEffectsEnabled,
         );
         final latencyMs = cueLatency.elapsedMilliseconds;
         if (played) {
-          log('search_cue_played turn_id=$turnId cue_latency_ms=$latencyMs');
+          log(
+            'cue_played turn_id=$turnId cue_state=$eventLabel cue_latency_ms=$latencyMs',
+          );
           return;
         }
         if (!_soundEffectsEnabled) {
-          log('search_cue_skipped_sound_disabled turn_id=$turnId cue_latency_ms=$latencyMs');
+          log(
+            'cue_skipped_disabled turn_id=$turnId cue_state=$eventLabel cue_latency_ms=$latencyMs',
+          );
           return;
         }
-        log('search_cue_skipped_duplicate turn_id=$turnId cue_latency_ms=$latencyMs');
+        log(
+          'cue_skipped_duplicate turn_id=$turnId cue_state=$eventLabel cue_latency_ms=$latencyMs',
+        );
       } catch (error) {
-        log('search_cue_error turn_id=$turnId error=$error');
+        log('cue_error turn_id=$turnId cue_state=$eventLabel error=$error');
       }
     }());
   }
@@ -910,6 +929,11 @@ class ChatProvider extends BaseProvider {
             'conversationId': event['conversation_id']?.toString(),
             'startedAt': _eventTimestamp(event).toIso8601String(),
           };
+          _playCueForTurn(
+            turnId,
+            state: CueState.toolCalling,
+            eventLabel: 'tool_calling',
+          );
           updateAgentState(AgentState.callingTools, tool: tool);
         } else {
           _activeToolExecutions.remove(
@@ -937,6 +961,11 @@ class ChatProvider extends BaseProvider {
         break;
 
       case 'turn_complete':
+        _playCueForTurn(
+          turnId,
+          state: CueState.completed,
+          eventLabel: 'turn_complete',
+        );
         _searchCueService?.onTurnComplete(turnId);
         updateAgentState(AgentState.idle);
         break;

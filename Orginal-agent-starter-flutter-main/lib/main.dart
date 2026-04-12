@@ -34,10 +34,7 @@ import 'app.dart';
 bool _isTruthyEnv(String? raw, {bool defaultValue = false}) {
   if (raw == null) return defaultValue;
   final normalized = raw.trim().toLowerCase();
-  return normalized == '1' ||
-      normalized == 'true' ||
-      normalized == 'yes' ||
-      normalized == 'on';
+  return normalized == '1' || normalized == 'true' || normalized == 'yes' || normalized == 'on';
 }
 
 void main() async {
@@ -71,9 +68,7 @@ void main() async {
     dotenv.env['FLUTTER_AUTO_START_AGENT'],
     defaultValue: false,
   );
-  if (!kIsWeb &&
-      (Platform.isLinux || Platform.isMacOS || Platform.isWindows) &&
-      autoStartLocalAgent) {
+  if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows) && autoStartLocalAgent) {
     final agentManager = AgentProcessManager();
     final started = await agentManager.startAgent();
     if (started) {
@@ -91,7 +86,7 @@ void main() async {
           create: (_) {
             final service = SearchCueService();
             unawaited(service.preload().catchError((error) {
-              debugPrint('Search cue preload failed: $error');
+              debugPrint('Audio cue preload failed: $error');
             }));
             return service;
           },

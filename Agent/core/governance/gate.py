@@ -1,28 +1,28 @@
 from .types import UserRole, RiskLevel
 from .policy import ToolRiskPolicy
+from core.permissions.contracts import PermissionChecker, PermissionMode
 
 class ExecutionGate:
     """
     Decides whether a tool execution request should be allowed or denied.
     """
+    _permission_checker = PermissionChecker()
 
     @staticmethod
     def check_access(tool_name: str, user_role: UserRole) -> bool:
         """
         Check if the user has sufficient permissions to execute the tool.
         """
-        # 1. Get Risk Level of the tool
-        tool_risk = ToolRiskPolicy.get_risk(tool_name)
-        
-        # 2. Get Max Allowed Risk for the user
-        user_max_risk = user_role.max_risk
-        
-        # 3. Compare
-        # If the tool's risk is greater than what the user is allowed, deny.
-        if tool_risk > user_max_risk:
-            return False
-            
-        return True
+        result = ExecutionGate._permission_checker.check(
+            tool_name,
+            user_role,
+            {
+                # Keep legacy runtime behavior unless explicit mode policy is requested.
+                "mode": PermissionMode.DEFAULT,
+                "respect_mode_policy": False,
+            },
+        )
+        return bool(result.allowed)
 
     @staticmethod
     def get_denial_reason(tool_name: str, user_role: UserRole) -> str:

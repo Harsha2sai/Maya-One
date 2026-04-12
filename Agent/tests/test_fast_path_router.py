@@ -3,7 +3,7 @@ from typing import List
 from core.orchestrator.fast_path_router import FastPathRouter
 
 
-def _build_router(*, recall_exclusion: bool = False):
+def _build_router(*, recall_exclusion: bool = False, active_subject: str = ""):
     turn_state = {}
 
     def parse_multi_app(app_phrase: str) -> List[str]:
@@ -14,10 +14,14 @@ def _build_router(*, recall_exclusion: bool = False):
     def is_recall_exclusion_intent(_text: str) -> bool:
         return recall_exclusion
 
+    def resolve_active_subject() -> str:
+        return active_subject
+
     router = FastPathRouter(
         turn_state=turn_state,
         parse_multi_app_fn=parse_multi_app,
         is_recall_exclusion_intent_fn=is_recall_exclusion_intent,
+        resolve_active_subject_fn=resolve_active_subject,
     )
     return router, turn_state
 
@@ -106,6 +110,41 @@ def test_youtube_open_and_search_preserve_turn_state():
     assert turn_state["last_search_query"] == "llm updates"
 
 
+def test_platform_search_variants_target_youtube_with_query():
+    router, _ = _build_router()
+    samples = (
+        "search on youtube for iran war latest",
+        "search youtube for iran war latest",
+        "youtube search for iran war latest",
+        "open youtube and search for iran war latest",
+        "open the youtube and search about iran war latest",
+    )
+    for sample in samples:
+        intent = router.detect_direct_tool_intent(sample)
+        assert intent is not None
+        assert intent.tool == "open_app"
+        assert intent.group == "youtube"
+        assert intent.args["app_name"] == "youtube search for iran war latest"
+
+
+def test_platform_search_pronoun_query_uses_active_subject():
+    router, turn_state = _build_router(active_subject="Iran and America war")
+    intent = router.detect_direct_tool_intent("open the youtube and search about it")
+    assert intent is not None
+    assert intent.tool == "open_app"
+    assert intent.args["app_name"] == "youtube search for Iran and America war"
+    assert turn_state["last_search_query"] == "Iran and America war"
+
+
+def test_platform_search_pronoun_query_without_subject_requests_clarification():
+    router, _ = _build_router(active_subject="")
+    intent = router.detect_direct_tool_intent("search on youtube for it")
+    assert intent is not None
+    assert intent.tool is None
+    assert intent.group == "youtube"
+    assert "What topic should I search on YouTube?" in intent.template
+
+
 def test_folder_open_returns_xdg_open_command():
     router, _ = _build_router()
     intent = router.detect_direct_tool_intent("open downloads folder")
@@ -150,3 +189,24 @@ def test_factual_non_time_query_does_not_match_time():
     router, _ = _build_router()
     intent = router.detect_direct_tool_intent("who is the CEO of OpenAI", origin="voice")
     assert intent is None or intent.tool != "get_time"
+
+
+def test_youtube_videos_about_pattern():
+    """Test natural language patterns like 'open videos about X in YouTube'."""
+    router, turn_state = _build_router(active_subject="coal price drop")
+    
+    # Test various natural phrasings
+    test_cases = [
+        ("open videos about coal prices in YouTube", "coal prices"),
+        ("play songs by Beatles on youtube", "by Beatles"),
+        ("show videos on youtube about Avengers", "about Avengers"),
+        ("videos about Iran war in youtube", "about Iran war"),
+        ("music by Queen on yt", "by Queen"),
+    ]
+    
+    for query, expected_in_query in test_cases:
+        intent = router.detect_direct_tool_intent(query)
+        assert intent is not None, f"Failed for: {query}"
+        assert intent.tool == "open_app", f"Wrong tool for: {query}"
+        assert intent.group == "youtube", f"Wrong group for: {query}"
+        assert "youtube" in intent.args.get("app_name", "").lower(), f"Missing youtube in: {query}"

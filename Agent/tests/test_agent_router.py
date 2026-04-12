@@ -148,6 +148,41 @@ async def test_agent_router_context_followup_does_not_override_explicit_system_i
 
 
 @pytest.mark.asyncio
+async def test_agent_router_ambiguous_followup_inherits_previous_route() -> None:
+    router = AgentRouter(
+        _MappingLLM(
+            {
+                "tell me about nvidia's latest earnings": "research",
+                "what's the reason": "chat",
+            }
+        )
+    )
+
+    first = await router.route("tell me about nvidia's latest earnings", "u1")
+    followup = await router.route("what's the reason", "u1")
+
+    assert first == "research"
+    assert followup == "research"
+
+
+@pytest.mark.asyncio
+async def test_agent_router_ambiguous_followup_does_not_override_explicit_direct_action() -> None:
+    router = AgentRouter(
+        _MappingLLM(
+            {
+                "tell me about cpu trends": "research",
+                "next track": "chat",
+            }
+        )
+    )
+    await router.route("tell me about cpu trends", "u1")
+
+    followup = await router.route("next track", "u1")
+
+    assert followup == "media_play"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "utterance",
     [

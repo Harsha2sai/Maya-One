@@ -94,6 +94,8 @@ flutter:
     - assets/connectors/google_calendar.png
     - assets/connectors/notion.png
     - assets/audio/search_start_chime.wav
+    - assets/audio/tool_call_chime.wav
+    - assets/audio/turn_complete_chime.wav
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

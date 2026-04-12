@@ -6,7 +6,7 @@ import 'package:voice_assistant/state/providers/chat_provider.dart';
 class _FakeSearchCueService extends SearchCueService {
   _FakeSearchCueService() : super(playOverride: (_) async {});
 
-  final List<String> playedTurnIds = <String>[];
+  final List<String> playedCueKeys = <String>[];
   int playAttempts = 0;
 
   @override
@@ -14,7 +14,25 @@ class _FakeSearchCueService extends SearchCueService {
     playAttempts += 1;
     final played = await super.playCue(turnId, soundEnabled: soundEnabled);
     if (played) {
-      playedTurnIds.add(turnId);
+      playedCueKeys.add('$turnId::${CueState.searching.name}');
+    }
+    return played;
+  }
+
+  @override
+  Future<bool> playStateCue(
+    String turnId, {
+    required CueState state,
+    required bool soundEnabled,
+  }) async {
+    playAttempts += 1;
+    final played = await super.playStateCue(
+      turnId,
+      state: state,
+      soundEnabled: soundEnabled,
+    );
+    if (played) {
+      playedCueKeys.add('$turnId::${state.name}');
     }
     return played;
   }
@@ -312,7 +330,10 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(cueService.playedTurnIds.where((id) => id == 'search-turn'), hasLength(1));
+      expect(
+        cueService.playedCueKeys.where((key) => key == 'search-turn::searching'),
+        hasLength(1),
+      );
     });
 
     test('search cue does not play for non-searching thinking states', () async {
@@ -339,7 +360,7 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(cueService.playedTurnIds, isEmpty);
+      expect(cueService.playedCueKeys, isEmpty);
     });
 
     test('search cue is skipped when sound effects are disabled', () async {
@@ -359,7 +380,69 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(cueService.playedTurnIds, isEmpty);
+      expect(cueService.playedCueKeys, isEmpty);
+    });
+
+    test('tool_execution started triggers tool-calling cue once per turn burst', () async {
+      final cueService = _FakeSearchCueService();
+      provider = ChatProvider(
+        searchCueService: cueService,
+        soundEffectsEnabled: true,
+      );
+      provider.bindOverlayController(overlayController);
+
+      provider.handleChatEvent({
+        'type': 'tool_execution',
+        'schema_version': '1.0',
+        'turn_id': 'tool-turn',
+        'tool_name': 'web_search',
+        'status': 'started',
+        'timestamp': 22,
+      });
+      provider.handleChatEvent({
+        'type': 'tool_execution',
+        'schema_version': '1.0',
+        'turn_id': 'tool-turn',
+        'tool_name': 'web_search',
+        'status': 'started',
+        'timestamp': 23,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(
+        cueService.playedCueKeys.where((key) => key == 'tool-turn::toolCalling'),
+        hasLength(1),
+      );
+    });
+
+    test('turn_complete triggers completion cue and allows replay on later turn', () async {
+      final cueService = _FakeSearchCueService();
+      provider = ChatProvider(
+        searchCueService: cueService,
+        soundEffectsEnabled: true,
+      );
+      provider.bindOverlayController(overlayController);
+
+      provider.handleChatEvent({
+        'type': 'turn_complete',
+        'schema_version': '1.0',
+        'turn_id': 'complete-turn',
+        'timestamp': 24,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      provider.handleChatEvent({
+        'type': 'turn_complete',
+        'schema_version': '1.0',
+        'turn_id': 'complete-turn',
+        'timestamp': 25,
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+
+      expect(
+        cueService.playedCueKeys.where((key) => key == 'complete-turn::completed'),
+        hasLength(2),
+      );
     });
 
     test('turn_complete clears cue state so same turn can play again', () async {
@@ -401,7 +484,10 @@ void main() {
       });
       await Future<void>.delayed(const Duration(milliseconds: 10));
 
-      expect(cueService.playedTurnIds.where((id) => id == 'repeat-turn'), hasLength(2));
+      expect(
+        cueService.playedCueKeys.where((key) => key == 'repeat-turn::searching'),
+        hasLength(2),
+      );
     });
   });
 }

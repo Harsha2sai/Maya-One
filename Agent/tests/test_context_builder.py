@@ -44,6 +44,7 @@ def _make_history(turns: int):
 @pytest.mark.asyncio
 async def test_build_for_voice_limits_history_to_5_turns(monkeypatch):
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "12000")
+    monkeypatch.setenv("CONTEXT_RECENT_HISTORY_LIMIT", "5")
     builder = _make_builder()
     retriever = DummyRetriever()
 
@@ -63,6 +64,26 @@ async def test_build_for_voice_limits_history_to_5_turns(monkeypatch):
         "[Earlier conversation summary]" in str(msg.content[0])
         for msg in non_system
     )
+
+
+@pytest.mark.asyncio
+async def test_build_for_voice_uses_env_recent_history_limit(monkeypatch):
+    monkeypatch.setenv("MAX_CONTEXT_TOKENS", "12000")
+    monkeypatch.setenv("CONTEXT_RECENT_HISTORY_LIMIT", "8")
+    builder = _make_builder()
+    retriever = DummyRetriever()
+
+    messages = await builder.build_for_voice(
+        user_message="latest question",
+        user_id="u1",
+        session_id="s1",
+        conversation_history=_make_history(20),
+        system_prompt="system",
+        retriever=retriever,
+    )
+
+    non_system = [m for m in messages if m.role != "system"]
+    assert len(non_system) <= 11  # protected + summary + 8 recent + current user
 
 
 @pytest.mark.asyncio
@@ -90,9 +111,10 @@ async def test_build_for_voice_uses_voice_memory_budget(monkeypatch):
 async def test_build_for_chat_uses_summary_for_older_history(monkeypatch):
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "12000")
     monkeypatch.setenv("MAX_HISTORY_TOKENS", "12000")
+    monkeypatch.setenv("CONTEXT_RECENT_HISTORY_LIMIT", "8")
     builder = _make_builder()
     retriever = DummyRetriever()
-    history = _make_history(8)
+    history = _make_history(14)
 
     messages = await builder.build_for_chat(
         user_message="chat message",
