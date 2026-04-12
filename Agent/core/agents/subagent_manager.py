@@ -9,7 +9,9 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, Optional
 
+from config.settings import settings
 from core.agents.subagent_persistence_bridge import RecoveryPolicy, SubagentPersistenceBridge
+from core.messaging.progress_stream import ProgressStream
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +112,7 @@ class SubAgentManager:
         worktree_manager: Any = None,
         persistence: Any = None,
         message_bus: Any = None,
+        progress_stream: Optional[ProgressStream] = None,
         failure_hook: Optional[SubAgentFailureHook] = None,
         persistence_bridge: Optional[SubagentPersistenceBridge] = None,
         allowed_agent_types: Optional[set[str]] = None,
@@ -118,6 +121,14 @@ class SubAgentManager:
         self._worktree_manager = worktree_manager
         self._persistence = persistence
         self._message_bus = message_bus
+        self._progress_stream = progress_stream or (
+            ProgressStream(
+                message_bus=message_bus,
+                max_events_per_sec=int(getattr(settings, "max_progress_events_per_sec_per_session", 10)),
+            )
+            if message_bus is not None
+            else None
+        )
         self._failure_hook = failure_hook
         self._allowed_agent_types = set(allowed_agent_types or DEFAULT_SUBAGENT_TYPES)
         self._states: Dict[str, SubAgentRuntimeState] = {}
@@ -565,27 +576,21 @@ class SubAgentManager:
         summary: str,
         percent: int,
     ) -> None:
-        if self._message_bus is None:
+        progress_stream = self._progress_stream
+        if progress_stream is None:
             return
-        publish = getattr(self._message_bus, "publish", None)
-        if not callable(publish):
-            return
-        maybe = publish(
-            "agent.progress",
-            {
-                "phase": phase,
-                "agent": state.agent_type,
-                "status": status,
-                "percent": percent,
-                "summary": summary,
-                "session_id": state.conversation_id,
-                "conversation_id": state.conversation_id,
-                "parent_handoff_id": state.parent_handoff_id,
-                "delegation_chain_id": state.delegation_chain_id,
-            },
-            trace_id=state.trace_id,
-            handoff_id=state.parent_handoff_id,
+        maybe = progress_stream.emit_progress(
             task_id=state.task_id,
+            session_id=state.conversation_id,
+            conversation_id=state.conversation_id,
+            parent_handoff_id=state.parent_handoff_id,
+            delegation_chain_id=state.delegation_chain_id,
+            phase=phase,
+            agent=state.agent_type,
+            status=status,
+            percent=percent,
+            summary=summary,
+            trace_id=state.trace_id,
             metadata={"agent_id": state.agent_id},
         )
         if asyncio.iscoroutine(maybe):
