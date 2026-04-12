@@ -122,14 +122,15 @@ async def test_msg_hub_unregister():
 
 @pytest.mark.asyncio
 async def test_msg_hub_error_when_not_open():
-    """Test that operations fail when hub not open."""
+    """Broadcast auto-opens, send still requires open."""
     hub = MayaMsgHub()
     agent = MockAgent("agent")
     hub.register("agent", agent)
-    
-    with pytest.raises(RuntimeError, match="MsgHub not open"):
-        await hub.broadcast("sender", "content")
-    
+
+    await hub.broadcast("sender", "content")
+    assert hub.is_active
+
+    await hub.close()
     with pytest.raises(RuntimeError, match="MsgHub not open"):
         await hub.send("sender", "agent", "content")
 
