@@ -18,7 +18,7 @@ class FeatureFlag(str, Enum):
     AGENT_PETS = "AGENT_PETS"
 
 
-_LOCKED_FLAGS = {FeatureFlag.AGENT_PETS}
+_LOCKED_FLAGS: set[FeatureFlag] = set()
 
 _DEFAULT_STATE: Dict[FeatureFlag, bool] = {
     FeatureFlag.PROACTIVE: False,
