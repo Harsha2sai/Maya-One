@@ -366,6 +366,63 @@ class IntentClassifier:
         
         return params
 
+    def _is_ambiguous_followup(self, user_text: str) -> bool:
+        """Check if the message is a short ambiguous followup like 'what's the reason'."""
+        text = user_text.strip().lower()
+        words_raw = text.split()
+        if len(words_raw) > 5:
+            return False
+        # Normalize words by stripping punctuation for better matching
+        words = set()
+        for w in words_raw:
+            # Handle contractions like "what's" -> "what"
+            if "'" in w:
+                words.add(w.split("'")[0])
+            words.add(w.strip("'.,!?;:"))
+        ambiguous_prereqs = {"what", "why", "how", "when", "where", "which"}
+        pronouns = {"it", "that", "this", "one", "reason", "time", "place"}
+        return bool(words & ambiguous_prereqs) and bool(words & pronouns)
+
+    def _promote_with_summary(self, user_text: str, summary: str) -> IntentResult:
+        """Re-classify with context from conversation summary to disambiguate."""
+        enriched_context = f"Previous context: {summary}"
+        result = self.classify(user_text, memory_context=enriched_context)
+        if result.intent_type == IntentType.CONVERSATION:
+            summary_lower = summary.lower()
+            tool_keywords = {
+                "reminder", "alarm", "note", "calendar", "schedule",
+                "music", "song", "track", "play", "weather", "email"
+            }
+            if any(kw in summary_lower for kw in tool_keywords):
+                return IntentResult(
+                    intent_type=IntentType.TOOL_ACTION,
+                    confidence=0.8,
+                    matched_tool=result.matched_tool,
+                    reason="Promoted ambiguous followup using conversation summary"
+                )
+        return result
+
+    def classify_with_context(
+        self,
+        user_text: str,
+        conversation_summary: str = "",
+        memory_context: str = ""
+    ) -> IntentResult:
+        """
+        Classify user intent with conversation context for disambiguation.
+
+        Args:
+            user_text: The user's input text
+            conversation_summary: Summary of the conversation so far
+            memory_context: Available memory context
+
+        Returns:
+            IntentResult with classification, possibly promoted using context
+        """
+        if conversation_summary and self._is_ambiguous_followup(user_text):
+            return self._promote_with_summary(user_text, conversation_summary)
+        return self.classify(user_text, memory_context)
+
 
 # Global classifier instance (thread-safe)
 _classifier: Optional[IntentClassifier] = None

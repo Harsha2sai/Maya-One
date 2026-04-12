@@ -14,6 +14,15 @@ audit_logger.setLevel(logging.INFO)
 # For now, we rely on the root logger configuration or add a specific handler if needed.
 # In a production setup, this would write to a separate file or service.
 
+
+def _get_monitor():
+    try:
+        from core.runtime.global_agent import GlobalAgentContainer
+
+        return GlobalAgentContainer.get_monitor()
+    except Exception:
+        return None
+
 class AuditLogger:
     """
     Logs all tool execution attempts, decisions, and results for auditing.
@@ -47,6 +56,12 @@ class AuditLogger:
             "params": params
         }
         audit_logger.info(json.dumps(entry))
+        monitor = _get_monitor()
+        if monitor is not None:
+            try:
+                monitor.log_tool(tool_name, 0.0, trace_id=trace_id)
+            except Exception:
+                pass
         return trace_id
 
     @staticmethod
@@ -66,6 +81,12 @@ class AuditLogger:
             "reason": reason
         }
         audit_logger.warning(json.dumps(entry))
+        monitor = _get_monitor()
+        if monitor is not None:
+            try:
+                monitor.log_handoff(target=f"tool:{tool_name}", success=False, trace_id=trace_id)
+            except Exception:
+                pass
 
     @staticmethod
     def log_result(
@@ -102,3 +123,9 @@ class AuditLogger:
             audit_logger.info(json.dumps(entry))
         else:
             audit_logger.error(json.dumps(entry))
+        monitor = _get_monitor()
+        if monitor is not None:
+            try:
+                monitor.log_tool(tool_name, float(latency_ms or 0.0), trace_id=trace_id)
+            except Exception:
+                pass

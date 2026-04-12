@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from core.response.response_formatter import ResponseFormatter
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,16 @@ class ToolResponseBuilder:
         error_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         safe_message = "I was unable to complete that."
+        # Check for _tool_receipt.status == "failed" override
+        if isinstance(raw_result, dict):
+            receipt = raw_result.get("_tool_receipt") or {}
+            if receipt.get("status") == "failed":
+                return {
+                    "success": False,
+                    "message": safe_message,
+                    "error_code": "tool_failed",
+                    "result": "",
+                }
         if error_code:
             return {
                 "success": False,
@@ -95,6 +106,14 @@ class ToolResponseBuilder:
     ) -> Optional[str]:
         data = structured_data or {}
         name = (tool_name or "").strip().lower()
+
+        # Strict mode: use uncertain wording when verification tier is not "strong"
+        if getattr(settings, "action_truthfulness_strict", False):
+            receipt = data.get("_tool_receipt") or {}
+            verification = receipt.get("verification") or {}
+            tier = verification.get("tier", "")
+            if tier != "strong":
+                return "I couldn't verify that action was completed."
 
         if name in {"open_app", "close_app"}:
             app_name = str(data.get("app_name") or data.get("app") or "").strip(" .")
@@ -273,6 +292,15 @@ class ToolResponseBuilder:
                 structured_data,
                 mode="direct",
             ) or "I completed the action."
+
+        # Strict mode override when verification tier is not "strong"
+        if getattr(settings, "action_truthfulness_strict", False):
+            receipt = structured_data.get("_tool_receipt") or {}
+            verification = receipt.get("verification") or {}
+            tier = verification.get("tier", "")
+            if tier != "strong":
+                raw_text = "I couldn't verify that action was completed."
+
         response = await self._owner._build_agent_response(
             role_llm,
             raw_text,

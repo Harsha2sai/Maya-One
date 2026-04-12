@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -179,13 +180,31 @@ async def test_subagent_architect_runtime_delegates_to_coder_via_handoff_manager
 
     assert result.status == "completed"
     architect_id = result.structured_payload["subagent"]["agent_id"]
-    await asyncio.sleep(0.1)
-    architect_status = manager.subagent_manager.get_status(architect_id)
+    architect_status = None
+    architect_deadline = time.monotonic() + 5.0
+    while time.monotonic() < architect_deadline:
+        await asyncio.sleep(0.05)
+        current_architect = manager.subagent_manager.get_status(architect_id)
+        if current_architect and current_architect.get("status") == "completed":
+            architect_status = current_architect
+            break
+        architect_status = current_architect
+
+    assert architect_status is not None
+    assert architect_status["status"] == "completed"
     delegated = architect_status["metadata"]["result"]["delegated_subagent"]
     coder_id = delegated["agent_id"]
-    coder_status = manager.subagent_manager.get_status(coder_id)
+    coder_status = None
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.05)
+        current = manager.subagent_manager.get_status(coder_id)
+        if current and current.get("status") == "completed":
+            coder_status = current
+            break
+        coder_status = current
 
-    assert architect_status["status"] == "completed"
+    assert coder_status is not None
     assert coder_status["status"] == "completed"
     assert (tmp_path / "docs" / "architecture.md").exists()
     assert (tmp_path / "src" / "generated.py").exists()
