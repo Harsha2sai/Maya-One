@@ -29,17 +29,17 @@ def test_disable(flags: FeatureFlagSystem):
     assert flags.is_enabled(FeatureFlag.TEAM_MODE) is False
 
 
-def test_agent_pets_locked(flags: FeatureFlagSystem):
-    with pytest.raises(FeatureLocked):
-        flags.enable(FeatureFlag.AGENT_PETS)
+def test_agent_pets_unlocked(flags: FeatureFlagSystem):
+    """AGENT_PETS is unlocked in P39 and can be enabled."""
+    flags.enable(FeatureFlag.AGENT_PETS)
+    assert flags.is_enabled(FeatureFlag.AGENT_PETS) is True
 
 
-def test_agent_pets_stays_off(flags: FeatureFlagSystem):
-    try:
-        flags.enable(FeatureFlag.AGENT_PETS)
-    except FeatureLocked:
-        pass
+def test_agent_pets_default_off(flags: FeatureFlagSystem):
+    """AGENT_PETS defaults to off but can be enabled."""
     assert flags.is_enabled(FeatureFlag.AGENT_PETS) is False
+    flags.enable(FeatureFlag.AGENT_PETS)
+    assert flags.is_enabled(FeatureFlag.AGENT_PETS) is True
 
 
 def test_reset_to_defaults(flags: FeatureFlagSystem):
