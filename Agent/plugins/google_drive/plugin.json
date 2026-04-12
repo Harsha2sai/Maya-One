@@ -1,0 +1,7 @@
+{
+    "name": "google_drive",
+    "category": "google_workspace",
+    "mode": "local-native",
+    "command": "python3",
+    "args": ["{{PLUGIN_PATH}}/drive_server.py"]
+}
