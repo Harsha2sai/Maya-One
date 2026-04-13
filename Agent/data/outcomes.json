@@ -801,5 +801,38 @@
     },
     "result": null,
     "error": null
+  },
+  {
+    "timestamp": "2026-04-13T08:28:31.094757",
+    "action": "test_action",
+    "tool_name": "test_tool",
+    "success": true,
+    "context": {
+      "test": "data"
+    },
+    "result": null,
+    "error": null
+  },
+  {
+    "timestamp": "2026-04-13T11:24:36.997386",
+    "action": "test_action",
+    "tool_name": "test_tool",
+    "success": true,
+    "context": {
+      "test": "data"
+    },
+    "result": null,
+    "error": null
+  },
+  {
+    "timestamp": "2026-04-13T11:49:21.056320",
+    "action": "test_action",
+    "tool_name": "test_tool",
+    "success": true,
+    "context": {
+      "test": "data"
+    },
+    "result": null,
+    "error": null
   }
 ]

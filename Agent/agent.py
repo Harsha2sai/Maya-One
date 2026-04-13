@@ -1085,6 +1085,13 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
             phase3_orchestrator.enable_chat_tools = True
             phase3_orchestrator.enable_task_pipeline = arch_phase >= 4
 
+            # VoiceProjectBridge wiring
+            from core.livekit.voice_project_bridge import VoiceProjectBridge
+            _voice_bridge = VoiceProjectBridge(
+                project_orchestrator=GlobalAgentContainer.get_project_mode(),
+                buddy=GlobalAgentContainer.get_buddy(),
+            )
+
             default_tools = GlobalAgentContainer.get_tools() or []
             logger.info(
                 f"✅ [Phase 3] Shared orchestrator attached with tool pipeline "
