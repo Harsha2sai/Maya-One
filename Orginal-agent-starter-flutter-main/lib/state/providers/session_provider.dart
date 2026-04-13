@@ -963,6 +963,25 @@ class SessionProvider extends BaseProvider {
       })
       ..on<lk.TranscriptionEvent>((event) {
         _chatProvider?.addTranscription(event);
+
+        // Route final transcripts to Python VoiceProjectBridge
+        if (event.segments.any((s) => s.isFinal)) {
+          final finalText = event.segments
+              .where((s) => s.isFinal)
+              .map((s) => s.text)
+              .join(' ')
+              .trim();
+          if (finalText.isNotEmpty) {
+            final payload = jsonEncode({
+              'text': finalText,
+              'is_final': true,
+            });
+            _room?.localParticipant?.publishData(
+              Uint8List.fromList(utf8.encode(payload)),
+              topic: 'voice_transcript',
+            );
+          }
+        }
       });
   }
 
