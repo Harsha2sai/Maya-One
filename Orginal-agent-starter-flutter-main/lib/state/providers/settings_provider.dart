@@ -384,6 +384,7 @@ class SettingsProvider extends BaseProvider {
       'ttsProvider',
       'ttsModel',
       'ttsVoice',
+      'assistantPersonality',
     ].contains(key);
   }
 

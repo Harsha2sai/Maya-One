@@ -2152,6 +2152,28 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                 )
             return
 
+    if action == "update_personality":
+        personality = str(payload.get("personality") or "professional").strip().lower()
+        valid_personalities = {"professional", "friendly", "sassy", "formal"}
+        if personality not in valid_personalities:
+            logger.warning("Invalid personality value: %s", personality)
+            return
+        try:
+            from core.prompts.maya_primary import get_prompt_for_personality
+            from config.settings import reload_settings
+            import os
+            new_prompt = get_prompt_for_personality(personality)
+            os.environ["AGENT_PERSONALITY"] = personality
+            reload_settings()
+            logger.info("personality_updated value=%s", personality)
+            await _publish_topic_event(
+                "maya/system/personality/ack",
+                {"personality": personality, "applied": True},
+            )
+        except Exception as personality_err:
+            logger.warning("personality_update_failed error=%s", personality_err)
+        return
+
         logger.info("ℹ️ [Phase %s] unsupported_system_command action=%s", arch_phase, action)
 
     async def _handle_confirmation_response_message(payload_text: str) -> None:

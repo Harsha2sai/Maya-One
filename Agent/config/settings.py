@@ -62,6 +62,7 @@ class Settings:
     llm_provider: str = field(default_factory=lambda: os.getenv("LLM_PROVIDER", "groq"))
     llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "llama-3.1-8b-instant"))
     llm_temperature: float = field(default_factory=lambda: float(os.getenv("LLM_TEMPERATURE", "0.7")))
+    agent_personality: str = field(default_factory=lambda: os.getenv("AGENT_PERSONALITY", "professional"))
     
     # ==================== STT SETTINGS ====================
     stt_provider: str = field(default_factory=lambda: os.getenv("STT_PROVIDER", "deepgram"))
