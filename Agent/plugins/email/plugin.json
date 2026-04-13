@@ -1,0 +1,8 @@
+{
+    "name": "email",
+    "category": "utilities",
+    "mode": "mcp",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-email"],
+    "env": {"EMAIL_USER": "", "EMAIL_PASSWORD": ""}
+}

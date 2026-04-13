@@ -1,0 +1,4 @@
+{
+  "confirmation_required": ["turn_on", "turn_off", "lock_door", "open_garage"],
+  "rate_limit": 20
+}
