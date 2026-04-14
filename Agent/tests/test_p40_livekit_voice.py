@@ -1,5 +1,7 @@
-"""Tests for LiveKit voice project bridge (P40)."""
+"""Tests for LiveKit voice project bridge behavior (P40)."""
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -7,188 +9,114 @@ from core.livekit import VoiceProjectBridge
 
 
 class MockProjectOrchestrator:
-    """Mock project orchestrator for testing."""
+    """Project mode mock that mirrors current ProjectModeOrchestrator API."""
 
     def __init__(self):
-        self.sessions = {}
-        self.session_counter = 0
+        self._active = None
+        self.requirements = []
+        self.advance_calls = 0
+        self.cancel_calls = 0
 
-    async def start(self, name: str, mode: str = "text"):
-        """Start a new project session."""
-        self.session_counter += 1
-        session_id = f"session_{self.session_counter}"
-        session = MockSession(session_id=session_id, name=name, mode=mode)
-        self.sessions[session_id] = session
-        return session
+    def is_active(self):
+        return self._active is not None
 
-    async def handle_input(self, session_id: str, user_input: str):
-        """Handle user input for a session."""
-        session = self.sessions.get(session_id)
-        if session:
-            session.inputs.append(user_input)
-            return f"Processed: {user_input}"
-        return None
+    async def start(self, project_name: str, description: str = ""):
+        self._active = SimpleNamespace(name=project_name, description=description, prd=None)
+        self.requirements = []
+        return f"Project '{project_name}' started."
 
-    async def get_session(self, session_id: str):
-        """Get a session by ID."""
-        return self.sessions.get(session_id)
+    async def add_requirement(self, requirement: str):
+        if not self._active:
+            return "No active project. Use /project start <name>."
+        self.requirements.append(requirement)
+        return f"Requirement {len(self.requirements)} recorded. Add more or say 'done'."
 
-    async def cancel(self, session_id: str = None):
-        """Cancel a session."""
-        if session_id and session_id in self.sessions:
-            del self.sessions[session_id]
-            return f"Session {session_id} cancelled"
-        return "No session to cancel"
+    async def advance(self):
+        self.advance_calls += 1
+        return "Advanced project phase."
 
+    async def status(self):
+        if not self._active:
+            return "No active project."
+        return f"Project: {self._active.name}"
 
-class MockSession:
-    """Mock session for testing."""
-
-    def __init__(self, session_id: str, name: str, mode: str):
-        self.session_id = session_id
-        self.name = name
-        self.mode = mode
-        self.inputs = []
-        self.prd = None
-
-    def to_markdown(self) -> str:
-        """Convert PRD to markdown."""
-        if self.prd:
-            return f"# {self.name}\n\n{self.prd}"
-        return ""
-
-
-class MockPRD:
-    """Mock PRD for testing."""
-
-    def __init__(self, content: str):
-        self.content = content
-
-    def to_markdown(self) -> str:
-        """Convert PRD to markdown."""
-        return self.content
+    async def cancel(self):
+        if not self._active:
+            return "No active project to cancel."
+        name = self._active.name
+        self._active = None
+        self.cancel_calls += 1
+        return f"Project '{name}' cancelled."
 
 
 class MockBuddy:
-    """Mock buddy for testing."""
-
-    async def on_task_complete(self, success: bool):
-        """Handle task completion."""
-        pass
+    """Mock buddy for bridge constructor compatibility."""
 
 
 @pytest.mark.asyncio
-async def test_voice_bridge_creates_session_on_first_final_transcript():
-    """Voice bridge creates session on first final transcript."""
-    orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    # First final transcript should create session
-    response = await bridge.on_transcript("Build a web app", is_final=True)
-
-    assert response is not None
-    assert response.session_id == "session_1"
-    assert bridge.is_active is True
-
-
-@pytest.mark.asyncio
-async def test_voice_bridge_ignores_interim_transcripts():
-    """Voice bridge ignores interim transcripts."""
-    orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    # Interim transcript should be ignored
-    response = await bridge.on_transcript("Build a", is_final=False)
+async def test_voice_bridge_ignores_non_project_when_inactive():
+    bridge = VoiceProjectBridge(MockProjectOrchestrator(), MockBuddy())
+    response = await bridge.on_transcript("what's the weather", is_final=True)
     assert response is None
     assert bridge.is_active is False
 
 
 @pytest.mark.asyncio
-async def test_voice_bridge_handles_subsequent_transcripts():
-    """Voice bridge handles subsequent transcripts after session created."""
+async def test_voice_bridge_starts_project_from_voice_alias():
     orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    # Create session
-    await bridge.on_transcript("Build a web app", is_final=True)
-
-    # Subsequent transcript should be handled
-    response = await bridge.on_transcript("With React", is_final=True)
-    assert response == "Processed: With React"
-
-
-@pytest.mark.asyncio
-async def test_voice_bridge_get_prd_returns_none_when_no_session():
-    """get_prd returns None when no active session."""
-    orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    prd = await bridge.get_prd()
-    assert prd is None
-
-
-@pytest.mark.asyncio
-async def test_voice_bridge_get_prd_returns_markdown_when_session_has_prd():
-    """get_prd returns markdown when session has PRD."""
-    orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    # Create session
-    await bridge.on_transcript("Build a web app", is_final=True)
-
-    # Add PRD to session
-    session = await orchestrator.get_session("session_1")
-    session.prd = MockPRD("This is a PRD")
-
-    prd = await bridge.get_prd()
-    assert prd is not None
-    assert "This is a PRD" in prd
-
-
-@pytest.mark.asyncio
-async def test_voice_bridge_end_session_cancels_active_session():
-    """end_session cancels the active session."""
-    orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    # Create session
-    await bridge.on_transcript("Build a web app", is_final=True)
+    bridge = VoiceProjectBridge(orchestrator, MockBuddy())
+    response = await bridge.on_transcript("start project Voice Demo", is_final=True)
+    assert "started" in response.lower()
     assert bridge.is_active is True
 
-    # End session
-    response = await bridge.end_session()
-    assert response == "Session session_1 cancelled"
-    assert bridge.is_active is False
+
+@pytest.mark.asyncio
+async def test_voice_bridge_routes_active_text_as_requirement():
+    orchestrator = MockProjectOrchestrator()
+    bridge = VoiceProjectBridge(orchestrator, MockBuddy())
+    await bridge.on_transcript("project start Website", is_final=True)
+    response = await bridge.on_transcript("Use React and FastAPI", is_final=True)
+    assert "requirement 1" in response.lower()
+    assert orchestrator.requirements == ["Use React and FastAPI"]
 
 
 @pytest.mark.asyncio
-async def test_voice_bridge_end_session_returns_none_when_no_session():
-    """end_session returns None when no active session."""
+async def test_voice_bridge_maps_done_to_next_when_active():
     orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
-
-    response = await bridge.end_session()
-    assert response is None
+    bridge = VoiceProjectBridge(orchestrator, MockBuddy())
+    await bridge.on_transcript("project start Website", is_final=True)
+    response = await bridge.on_transcript("done", is_final=True)
+    assert response == "Advanced project phase."
+    assert orchestrator.advance_calls == 1
 
 
 @pytest.mark.asyncio
-async def test_voice_bridge_is_active_returns_correct_state():
-    """is_active returns correct state based on session."""
+async def test_voice_bridge_get_prd_returns_none_when_missing():
+    bridge = VoiceProjectBridge(MockProjectOrchestrator(), MockBuddy())
+    assert await bridge.get_prd() is None
+
+
+@pytest.mark.asyncio
+async def test_voice_bridge_get_prd_returns_text_when_available():
     orchestrator = MockProjectOrchestrator()
-    buddy = MockBuddy()
-    bridge = VoiceProjectBridge(orchestrator, buddy)
+    bridge = VoiceProjectBridge(orchestrator, MockBuddy())
+    await bridge.on_transcript("project start Website", is_final=True)
+    orchestrator._active.prd = "PRD body"
+    assert await bridge.get_prd() == "PRD body"
 
+
+@pytest.mark.asyncio
+async def test_voice_bridge_end_session_cancels_active_project():
+    orchestrator = MockProjectOrchestrator()
+    bridge = VoiceProjectBridge(orchestrator, MockBuddy())
+    await bridge.on_transcript("project start Website", is_final=True)
+    response = await bridge.end_session()
+    assert "cancelled" in response.lower()
     assert bridge.is_active is False
+    assert orchestrator.cancel_calls == 1
 
-    await bridge.on_transcript("Build a web app", is_final=True)
-    assert bridge.is_active is True
 
-    await bridge.end_session()
-    assert bridge.is_active is False
+@pytest.mark.asyncio
+async def test_voice_bridge_end_session_returns_none_when_inactive():
+    bridge = VoiceProjectBridge(MockProjectOrchestrator(), MockBuddy())
+    assert await bridge.end_session() is None

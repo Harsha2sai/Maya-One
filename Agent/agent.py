@@ -1066,6 +1066,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
         if task and not task.done():
             task.cancel()
 
+    _voice_bridge = None
     if arch_phase >= 3:
         try:
             from core.runtime.global_agent import GlobalAgentContainer
@@ -1377,6 +1378,19 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                     return {"publish_ms": 0.0, "tts_ms": 0.0}
                 safe_text = response.display_text or fallback_response
                 speak_text = response.voice_text or fallback_response
+                buddy_stage_match = re.search(
+                    r"BUDDY EVOLVED\s*->\s*([^!\n]+)!",
+                    f"{safe_text}\n{speak_text}",
+                    flags=re.IGNORECASE,
+                )
+                if buddy_stage_match:
+                    stage_name = buddy_stage_match.group(1).strip()
+                    speak_text = re.sub(
+                        r"\n?={5,}[\s\S]*?={5,}\n?",
+                        "\n",
+                        speak_text,
+                    ).strip()
+                    speak_text = f"{speak_text}\nBuddy evolved to {stage_name}."
                 tool_ctx_conversation_id = (
                     getattr(tool_ctx, "conversation_id", None)
                     or str(
@@ -1649,6 +1663,57 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                 if ctx.room:
                     await publish_user_message(ctx.room, turn_id, text)
                     await publish_agent_thinking(ctx.room, turn_id, "thinking")
+
+                command_text = str(text or "").strip()
+                if command_text.startswith("/"):
+                    try:
+                        from core.runtime.global_agent import GlobalAgentContainer
+
+                        command_started = time.monotonic()
+                        command_response = await GlobalAgentContainer.dispatch_command(
+                            command_text,
+                            {
+                                "session_id": _current_runtime_session_id(),
+                                "user_id": effective_user_id,
+                            },
+                        )
+                        if command_response is not None:
+                            logger.info(
+                                "slash_command_dispatched origin=%s sender=%s command=%s",
+                                origin,
+                                sender,
+                                command_text.split(maxsplit=1)[0],
+                            )
+                            orchestration_ms = max(
+                                0.0, (time.monotonic() - command_started) * 1000.0
+                            )
+                            timing = await _publish_and_speak(str(command_response))
+                            publish_ms = timing.get("publish_ms", 0.0)
+                            tts_ms = timing.get("tts_ms", 0.0)
+                            success = True
+                            return
+                    except Exception as cmd_err:
+                        logger.warning("slash_command_dispatch_failed error=%s", cmd_err)
+
+                if origin == "voice" and _voice_bridge is not None:
+                    try:
+                        bridge_started = time.monotonic()
+                        bridge_response = await _voice_bridge.on_transcript(
+                            command_text,
+                            is_final=True,
+                        )
+                        if bridge_response is not None:
+                            logger.info("voice_project_bridge_handled sender=%s", sender)
+                            orchestration_ms = max(
+                                0.0, (time.monotonic() - bridge_started) * 1000.0
+                            )
+                            timing = await _publish_and_speak(str(bridge_response))
+                            publish_ms = timing.get("publish_ms", 0.0)
+                            tts_ms = timing.get("tts_ms", 0.0)
+                            success = True
+                            return
+                    except Exception as bridge_err:
+                        logger.warning("voice_project_bridge_failed error=%s", bridge_err)
 
                 if arch_phase >= 3 and phase3_orchestrator is not None:
                     orchestrator_started = time.monotonic()
@@ -2669,9 +2734,28 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     # Proactive greeting
     try:
         await asyncio.sleep(0.5)
+        greeting_text = "Hi, I'm Maya. How can I help you today?"
+        try:
+            from core.runtime.global_agent import GlobalAgentContainer
+
+            buddy = GlobalAgentContainer.get_buddy()
+            if buddy is not None and hasattr(buddy, "status"):
+                buddy_status = str(buddy.status() or "")
+                match = re.search(
+                    r"Stage\s+(\d+)\s+Lvl\s+(\d+).*?(\d+)\s+XP",
+                    buddy_status,
+                    flags=re.IGNORECASE,
+                )
+                if match:
+                    stage, level, xp = match.groups()
+                    greeting_text += (
+                        f" Buddy check-in: stage {stage}, level {level}, {xp} XP."
+                    )
+        except Exception as buddy_err:
+            logger.debug("buddy_greeting_unavailable error=%s", buddy_err)
         await _speak_greeting_with_failover(
             session=session,
-            greeting_text="Hi, I'm Maya. How can I help you today?",
+            greeting_text=greeting_text,
             timeout_s=voice_session_say_timeout_s,
             get_active_tts_provider=_get_active_tts_provider,
             failover_handler=_attempt_runtime_tts_failover,
@@ -2722,6 +2806,51 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
         task.cancel()
     if pending_text_tasks:
         await asyncio.gather(*pending_text_tasks, return_exceptions=True)
+
+    # Optional P36: auto-trigger dream consolidation on voice session end.
+    try:
+        from core.features.flags import FeatureFlag
+        from core.runtime.global_agent import GlobalAgentContainer
+
+        dream_cycle = GlobalAgentContainer.get_dream_cycle()
+        feature_flags = GlobalAgentContainer.get_feature_flags()
+        dream_enabled = bool(
+            feature_flags is not None
+            and hasattr(feature_flags, "is_enabled")
+            and feature_flags.is_enabled(FeatureFlag.DREAM_CYCLE)
+        )
+
+        if dream_cycle is not None and dream_enabled:
+            participant = None
+            participants_map = getattr(ctx.room, "remote_participants", None) or {}
+            if participants_map:
+                participant = next(iter(participants_map.values()), None)
+
+            dream_user_id = ""
+            if participant is not None:
+                metadata = _parse_participant_metadata(participant)
+                participant_identity = str(getattr(participant, "identity", "") or "").strip()
+                dream_user_id = str(
+                    metadata.get("user_id")
+                    or (f"livekit:{participant_identity}" if participant_identity else "")
+                ).strip()
+            if not dream_user_id:
+                dream_user_id = "livekit:unknown"
+
+            dream_session_id = _current_runtime_session_id()
+            dream_result = await dream_cycle.run(
+                session_id=dream_session_id,
+                user_id=dream_user_id,
+            )
+            logger.info(
+                "dream_cycle_auto_triggered session=%s user=%s skipped=%s compressed=%s",
+                dream_session_id,
+                dream_user_id,
+                dream_result.skipped,
+                dream_result.compressed_count,
+            )
+    except Exception as dream_err:
+        logger.warning("dream_cycle_auto_trigger_failed error=%s", dream_err)
 
     # Stop any phase-4 task workers started via orchestrator.
     try:
