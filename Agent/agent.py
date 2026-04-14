@@ -657,10 +657,11 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
         logger.info(f"🧠 [Phase {arch_phase}] Using raw base LLM: {runtime.llm.__class__.__name__}")
 
     # Single agent — pure voice conversation, no tools
-    from core.prompts import get_maya_voice_bootstrap_prompt
+    from core.prompts import get_maya_voice_bootstrap_prompt, get_bootstrap_prompt_with_personality
+    from config.settings import settings
 
     voice_agent = agents.Agent(
-        instructions=get_maya_voice_bootstrap_prompt(),
+        instructions=get_bootstrap_prompt_with_personality(personality=settings.agent_personality),
         llm=voice_llm,
         stt=runtime.stt,
         tts=runtime.tts,

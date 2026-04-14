@@ -2,6 +2,8 @@ import logging
 import re
 from typing import Any, Dict, List
 
+from core.orchestrator.fact_classifier import FactClassifier
+
 logger = logging.getLogger(__name__)
 
 
@@ -43,13 +45,14 @@ class AgentRouter:
         r"\b(latest|recent|today|right now|this week)\b",
         r"\bnews\b",
     )
+
     _RESEARCH_INTENT_PATTERNS = (
         r"\bweb\s*search\b",
         r"\bsearch (?:the )?web\b",
         r"\bsearch for\b",
         r"\blook up\b",
         r"\bfind (?:information|news|details)\b",
-        r"\bgoogle\b",
+        r"\bgoogle (?:for|this|that|it|search|look up)\b",
         r"\bwhat(?:'s| is)\s+happening\b",
     )
     _SYSTEM_INTENT_PATTERNS = (
@@ -99,6 +102,7 @@ class AgentRouter:
 
     def __init__(self, llm_client: Any):
         self._llm = llm_client
+        self._fact_classifier = FactClassifier(llm_client)
         self._depth: Dict[str, int] = {}
         self.MAX_DEPTH = 3
         self._last_route: Dict[str, str] = {}
@@ -307,9 +311,12 @@ class AgentRouter:
 
         # Deterministic freshness/current-events research.
         # These queries should not block on the router LLM in console certification flows.
+        # If route is research, run fact check to potentially down-route to chat.
         freshness_hit = any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_FRESHNESS_PATTERNS)
         if freshness_hit:
             result = "research"
+            if await self._fact_classifier.is_simple_fact(utterance_l):
+                result = "chat"
             self._last_route[user_key] = result
             logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
             return result
@@ -365,6 +372,9 @@ Reply with ONLY one word: identity / media_play / research / system / scheduling
                 and any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_FRESHNESS_PATTERNS)
             ):
                 result = "research"
+            if result == "research":
+                if await self._fact_classifier.is_simple_fact(utterance_l):
+                    result = "chat"
         except Exception:
             result = "chat"
         finally:
