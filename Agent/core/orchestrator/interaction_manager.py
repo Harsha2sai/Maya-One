@@ -185,7 +185,7 @@ class InteractionManager:
         elif re.search(r"\bintroduce yourself\b", utterance_l):
             responses = introduce_yourself
         elif re.search(
-            r"\bwho are you\b|\bwhat are you\b|\bwhat is your name\b|\byour name\b|\bare you an ai\b|\bare you a bot\b",
+            r"\bwho are you\b|\bwhat are you\b|\bwhat is your name\b|\byour name\b|\bare you an ai\b|\bare you a bot\b|\btell me about yourself\b",
             utterance_l,
         ):
             responses = who_are_you

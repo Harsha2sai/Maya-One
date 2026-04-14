@@ -24,6 +24,46 @@ class _MappingLLM:
 
     async def chat(self, prompt: str, max_tokens: int = 10, temperature: float = 0.0) -> str:
         del max_tokens, temperature
+
+        # Handle FactClassifier prompt path.
+        if "Answer:" in prompt and "USER MESSAGE:" not in prompt:
+            fact_match = re.search(r"Question:\s*(.+?)(?:\nAnswer:)", prompt, re.IGNORECASE | re.DOTALL)
+            if fact_match:
+                utterance = fact_match.group(1).strip().lower()
+                if any(k in utterance for k in ("current", "latest", "recent", "news")):
+                    return "research"
+                if any(
+                    k in utterance
+                    for k in (
+                        "retrieval augmented generation",
+                        "who made ",
+                        "how does ",
+                        "explain ",
+                        "what are ",
+                    )
+                ):
+                    return "research"
+                if any(
+                    k in utterance
+                    for k in (
+                        "prime minister",
+                        "pm of",
+                        "president of",
+                        "ceo of",
+                        "capital of",
+                        "currency of",
+                        "population of",
+                        "how old is",
+                        "how tall is",
+                        "who founded",
+                        "who runs",
+                    )
+                ):
+                    return "fact"
+                if utterance.startswith("what is "):
+                    return "fact"
+                return "research"
+
         match = re.search(r'USER MESSAGE: "(.*)"\n\nReply with ONLY one word:', prompt, re.DOTALL)
         utterance = match.group(1) if match else ""
         return self._mapping.get(utterance, self._default)
@@ -635,9 +675,16 @@ async def test_small_talk_does_not_trigger_fast_path_intent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_role_status_queries_force_research_routing() -> None:
-    router = AgentRouter(_MappingLLM({"who is the CEO of OpenAI": "chat"}))
-    assert await router.route("who is the CEO of OpenAI", "u1") == "research"
+async def test_role_status_queries_use_chat_fast_path() -> None:
+    router = AgentRouter(
+        _MappingLLM(
+            {
+                "who is the CEO of OpenAI": "chat",
+                "who is the current prime minister of Japan": "research",
+            }
+        )
+    )
+    assert await router.route("who is the CEO of OpenAI", "u1") == "chat"  # Simple facts now fast-path
     assert await router.route("who is the current prime minister of Japan", "u1") == "research"
 
 

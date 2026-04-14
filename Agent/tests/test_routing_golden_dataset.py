@@ -14,14 +14,15 @@ ROUTING_GOLDEN = [
     ("what time is it", "get_time", None),
     ("can you tell me the time", "get_time", None),
     ("current time", "get_time", None),
-    ("who is the prime minister of india", "research", "get_time"),
-    ("who is the pm of india", "research", "get_time"),
-    ("who is the ceo of openai", "research", "get_time"),
-    ("what is quantum computing", "research", "get_time"),
-    ("latest news about AI", "research", "media_play"),
-    ("who founded microsoft", "research", "get_time"),
-    ("what is the current GDP of India", "research", None),
-    ("who runs google", "research", None),
+    # Simple factual queries now fast-path to chat (no research subagent delay)
+    ("who is the prime minister of india", "chat", "get_time"),
+    ("who is the pm of india", "chat", "get_time"),
+    ("who is the ceo of openai", "chat", "get_time"),
+    ("what is quantum computing", "chat", "get_time"),
+    ("latest news about AI", "research", "media_play"),  # "latest" triggers research
+    ("who founded microsoft", "chat", "get_time"),
+    ("what is the current GDP of India", "research", None),  # "current" triggers research
+    ("who runs google", "chat", None),
     ("play some music", "media_play", "research"),
     ("play the recent movie songs in youtube", "media_play", "research"),
     ("next track", "media_play", "identity"),
@@ -50,8 +51,47 @@ BOOTSTRAP_WITH_TIME = (
 class _GoldenRouterLLM:
     async def chat(self, prompt: str, **kwargs) -> str:
         del kwargs
-        match = re.search(r'USER MESSAGE:\s*"(.*)"', prompt, re.IGNORECASE | re.DOTALL)
-        utterance = (match.group(1) if match else prompt).strip().lower()
+        fact_match = re.search(r"Question:\s*(.+?)(?:\nAnswer:|\??\s*$)", prompt, re.IGNORECASE | re.DOTALL)
+        router_match = re.search(r'USER MESSAGE:\s*"(.*)"', prompt, re.IGNORECASE | re.DOTALL)
+
+        if fact_match and "Answer:" in prompt and "USER MESSAGE:" not in prompt:
+            # FactClassifier call path
+            utterance = fact_match.group(1).strip().lower()
+            if any(k in utterance for k in ("current", "latest", "recent", "news")):
+                return "research"
+            if any(
+                k in utterance
+                for k in (
+                    "retrieval augmented generation",
+                    "who made ",
+                    "how does ",
+                    "explain ",
+                    "what are ",
+                )
+            ):
+                return "research"
+            if any(
+                k in utterance
+                for k in (
+                    "prime minister",
+                    "pm of",
+                    "president of",
+                    "ceo of",
+                    "capital of",
+                    "currency of",
+                    "population of",
+                    "how old is",
+                    "how tall is",
+                    "who founded",
+                    "who runs",
+                )
+            ):
+                return "fact"
+            if utterance.startswith("what is "):
+                return "fact"
+            return "research"
+
+        utterance = (router_match.group(1) if router_match else prompt).strip().lower()
 
         if any(k in utterance for k in ("open ", "close ", "screenshot", "window", "file manager")):
             return "system"
