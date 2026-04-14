@@ -1,6 +1,6 @@
 """Canonical prompt authority for Maya runtime roles and specialists."""
 
-from .maya_primary import get_maya_primary_prompt, get_maya_voice_bootstrap_prompt
+from .maya_primary import get_maya_primary_prompt, get_maya_voice_bootstrap_prompt, get_bootstrap_prompt_with_personality
 from .media_agent_prompt import get_media_agent_prompt
 from .planner_prompt import get_planner_prompt
 from .research_agent_prompt import get_research_agent_prompt
@@ -17,6 +17,7 @@ from .worker_system_prompt import get_worker_system_prompt
 __all__ = [
     "get_maya_primary_prompt",
     "get_maya_voice_bootstrap_prompt",
+    "get_bootstrap_prompt_with_personality",
     "get_media_agent_prompt",
     "get_planner_prompt",
     "get_research_agent_prompt",

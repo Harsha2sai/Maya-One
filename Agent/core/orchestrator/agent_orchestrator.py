@@ -302,6 +302,10 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._scheduling_handler = SchedulingHandler(owner=self)
         self._session_lifecycle = SessionLifecycle(owner=self)
         self._context_assembler = ContextAssembler(owner=self)
+        # Load personality from settings for use in fast-path handlers
+        from config.settings import settings as _settings
+        self._personality = getattr(_settings, "agent_personality", "professional")
+
         self._interaction_manager = InteractionManager(owner=self)
         self._voice_coordinator = VoiceCoordinator(owner=self)
         self._enable_research_llm_planner = self._is_truthy_env(

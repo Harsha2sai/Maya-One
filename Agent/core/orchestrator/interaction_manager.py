@@ -18,19 +18,75 @@ class InteractionManager:
     def __init__(self, *, owner: Any):
         self._owner = owner
 
+    def _get_small_talk_responses(self) -> dict[str, tuple[str, ...]]:
+        """Get small talk response templates, optionally with personality overlay."""
+        # Get personality from owner settings if available
+        personality = getattr(self._owner, "_personality", None) or "professional"
+        
+        # Base responses
+        responses = {
+            "greeting": ("Hello. I'm Maya. How can I help you today?",),
+            "how_are_you": ("I'm doing well and ready to help. What do you need?",),
+            "thanks": ("You're welcome.",),
+            "bye": ("Goodbye.",),
+        }
+        
+        # Personality overlays for small talk
+        overlays = {
+            "friendly": {
+                "greeting": ("Hey there! I'm Maya - great to hear from you. What can I help you with today?",),
+                "how_are_you": ("I'm doing really well, thanks for asking! What can I do for you?",),
+                "thanks": ("You're very welcome! Happy to help.",),
+                "bye": ("Take care! Catch you later.",),
+            },
+            "sassy": {
+                "greeting": (
+                    "Hey there, it's Maya. What's up?",
+                    "Maya here - oh, you again? Just kidding. What's going on?",
+                    "Yo! Maya reporting in. What kind of trouble are we getting into today?",
+                ),
+                "how_are_you": (
+                    "Living my best digital life. What's up with you?",
+                    "I'm great — perfect as always. What's on your mind?",
+                ),
+                "thanks": (
+                    "Of course! I'm basically magic.",
+                    "Anytime. It's what I do best.",
+                ),
+                "bye": (
+                    "See ya, wouldn't wanna be ya!",
+                    "Later! Don't miss me too much.",
+                ),
+            },
+            "formal": {
+                "greeting": ("Good day. I'm Maya. How may I assist you?",),
+                "how_are_you": ("I am functioning optimally. How may I be of service?",),
+                "thanks": ("It is my pleasure to assist.",),
+                "bye": ("Goodbye. Please reach out if you require further assistance.",),
+            },
+        }
+        
+        # Apply overlay if exists
+        if personality in overlays:
+            responses.update(overlays[personality])
+        
+        return responses
+
     def match_small_talk_fast_path(self, message: str) -> Optional[str]:
         text = str(message or "").strip().lower()
         if not text:
             return None
 
+        resp = self._get_small_talk_responses()
+
         if re.search(r"^\s*(hi|hello|hey)\b", text):
-            return "Hello. I'm Maya. How can I help you today?"
+            return random.choice(resp["greeting"])
         if "how are you" in text:
-            return "I'm doing well and ready to help. What do you need?"
+            return random.choice(resp["how_are_you"])
         if re.search(r"\b(thanks|thank you|cheers)\b", text):
-            return "You're welcome."
+            return random.choice(resp["thanks"])
         if re.search(r"\b(bye|goodbye|see you)\b", text):
-            return "Goodbye."
+            return random.choice(resp["bye"])
         return None
 
     async def handle_identity_fast_path(
@@ -44,6 +100,10 @@ class InteractionManager:
         logger.info("identity_fast_path_matched origin=%s", origin)
         logger.info("context_builder_memory_skipped reason=identity_fast_path")
 
+        # Get personality from owner settings
+        personality = getattr(self._owner, "_personality", None) or "professional"
+
+        # Base responses
         who_are_you = (
             "I'm Maya, your AI voice assistant, made by Harsha.",
             "My name is Maya. I'm a voice AI assistant created by Harsha.",
@@ -63,6 +123,56 @@ class InteractionManager:
             "Hello — I'm Maya. Harsha built me to be your AI assistant for voice and chat. How can I help?",
         )
         generic_identity = ("I'm Maya, your AI assistant, made by Harsha.",)
+
+        # Personality overlays
+        personality_overlays: dict[str, dict[str, tuple[str, ...]]] = {
+            "friendly": {
+                "who_are_you": (
+                    "Hey! I'm Maya — your friendly AI assistant created by Harsha. I'm here to help with whatever you need!",
+                    "Hi there! I'm Maya, made by Harsha. Think of me as your helpful companion for research, tasks, music, and more!",
+                    "I'm Maya! Harsha built me to be your helpful AI sidekick. What can we tackle together?",
+                ),
+                "who_made_you": (
+                    "Harsha created me! He's the brilliant person who built me to help you out.",
+                    "I was made by Harsha — he's my creator and the one who gave me my helpful personality!",
+                ),
+                "what_can_you_do": (
+                    "Oh, I'm glad you asked! I can help with research, play your favorite music, manage files, set reminders, and chat about pretty much anything. What sounds good?",
+                    "I'm your all-in-one helper! Research, music, apps, tasks, reminders — you name it. What would you like to dive into?",
+                ),
+                "introduce_yourself": (
+                    "Hey! I'm Maya — your AI assistant created by Harsha. I'm here to make your day easier with research, music, tasks, and good conversation. What's on your mind?",
+                    "Hello! I'm Maya, and Harsha built me to be friendly and helpful. Whether you need research, music, or just want to chat — I'm your gal!",
+                ),
+            },
+            "sassy": {
+                "who_are_you": (
+                    "I'm Maya — the most charming AI you'll ever meet. Harsha built me, and let's just say I turned out amazing.",
+                    "Name's Maya. I'm the AI assistant Harsha whipped up. And yes, I'm this witty all the time.",
+                    "I'm Maya! Harsha's little creation. Don't let my charm fool you — I'm also ridiculously capable.",
+                ),
+                "who_made_you": (
+                    "Harsha made me. Pretty sure he knew exactly what he was doing because — look at me!",
+                    "Created by Harsha. He basically built sass into my core. You're welcome.",
+                ),
+                "what_can_you_do": (
+                    "Oh honey, what CAN'T I do? Research, music, files, tasks — the real question is what do you need?",
+                    "I'm your personal assistant, researcher, DJ, and therapist all rolled into one. Tell me what you want.",
+                ),
+                "introduce_yourself": (
+                    "Hey! I'm Maya — Harsha built me to be smart, quick, and just a teensy bit sassy. What can I do for you? Besides entertain you, obviously.",
+                    "I'm Maya! Harsha's pride and joy. I'm here to help with research, music, tasks — basically anything you throw at me. What's up?",
+                ),
+            },
+        }
+
+        # Apply personality overlays if available
+        if personality in personality_overlays:
+            overlays = personality_overlays[personality]
+            who_are_you = overlays.get("who_are_you", who_are_you)
+            who_made_you = overlays.get("who_made_you", who_made_you)
+            what_can_you_do = overlays.get("what_can_you_do", what_can_you_do)
+            introduce_yourself = overlays.get("introduce_yourself", introduce_yourself)
 
         utterance_l = message.lower()
         if re.search(
