@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../state/providers/auth_provider.dart';
 import '../theme/app_theme.dart';
 import '../../widgets/common/zoya_button.dart';
+import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -33,6 +36,22 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _isLoading = false;
         _error = 'Invalid email or password';
+      });
+    }
+  }
+
+  Future<void> _handleGoogleSignIn() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    final auth = context.read<AuthProvider>();
+    final success = await auth.signInWithGoogle();
+    if (!success && mounted) {
+      setState(() {
+        _isLoading = false;
+        _error = 'Google sign-in failed. Please try again.';
       });
     }
   }
@@ -100,7 +119,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       const Text('Don\'t have an account? ', style: TextStyle(color: ZoyaTheme.textMuted)),
                       GestureDetector(
                         onTap: () {
-                          // Navigate to signup
+                          unawaited(Navigator.push(
+                            context,
+                            MaterialPageRoute(builder: (_) => const SignupScreen()),
+                          ));
                         },
                         child: const Text('Sign up', style: TextStyle(color: ZoyaTheme.accent)),
                       ),
@@ -135,12 +157,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: _handleLogin,
                     isProgressing: _isLoading,
                   ),
+                  const SizedBox(height: 16),
+                  _GoogleAuthButton(
+                    text: _isLoading ? 'PLEASE WAIT...' : 'CONTINUE WITH GOOGLE',
+                    onPressed: _isLoading ? null : _handleGoogleSignIn,
+                  ),
                   const SizedBox(height: 24),
                   Center(
                     child: TextButton(
                       onPressed: () {
                         // Guest mode logic - maybe just continue to home if permitted
-                        Navigator.pushReplacementNamed(context, '/home');
+                        unawaited(Navigator.pushReplacementNamed(context, '/home'));
                       },
                       child: const Text('Continue as Guest', style: TextStyle(color: ZoyaTheme.textMuted)),
                     ),
@@ -176,6 +203,41 @@ class _LoginScreenState extends State<LoginScreen> {
         fillColor: Colors.white.withValues(alpha: 0.05),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      ),
+    );
+  }
+}
+
+class _GoogleAuthButton extends StatelessWidget {
+  final String text;
+  final VoidCallback? onPressed;
+
+  const _GoogleAuthButton({
+    required this.text,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: const Icon(Icons.g_mobiledata, size: 28, color: ZoyaTheme.textMain),
+        label: Text(
+          text,
+          style: ZoyaTheme.fontBody.copyWith(
+            color: ZoyaTheme.textMain,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.6,
+          ),
+        ),
+        style: OutlinedButton.styleFrom(
+          side: BorderSide(color: Colors.white.withValues(alpha: 0.22)),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          backgroundColor: Colors.white.withValues(alpha: 0.04),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
       ),
     );
   }
