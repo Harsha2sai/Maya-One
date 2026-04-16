@@ -44,9 +44,11 @@ class AccountPanel extends StatelessWidget {
           ),
           const SizedBox(height: 30),
           ElevatedButton.icon(
-            onPressed: () {
-              auth.signOut();
-              Navigator.pop(context);
+            onPressed: () async {
+              await auth.signOut();
+              if (context.mounted) {
+                Navigator.pop(context);
+              }
             },
             icon: const Icon(Icons.logout),
             label: const Text('SIGN OUT'),

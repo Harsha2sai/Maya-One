@@ -25,6 +25,7 @@ class AuthProvider extends BaseProvider {
   Session? get session => _session;
   bool get isAuthenticated => _user != null;
   bool get isInitialized => _initialized;
+  bool get isGuestSession => _user?.id == _guestUser.id;
 
   void _init() {
     if (!_supabaseService.isAvailable) {
@@ -85,13 +86,27 @@ class AuthProvider extends BaseProvider {
         false;
   }
 
+  void continueAsGuest() {
+    _user = _guestUser;
+    _session = null;
+    _initialized = true;
+    log('Guest session enabled');
+    notifyListeners();
+  }
+
   Future<void> signOut() async {
     if (!_supabaseService.isAvailable) {
-      log('Supabase unavailable; sign-out skipped in optional mode');
+      _user = null;
+      _session = null;
+      log('Supabase unavailable; cleared guest/optional auth session');
+      notifyListeners();
       return;
     }
     await safeExecute(() async {
       await _supabaseService.signOut();
     });
+    _user = null;
+    _session = null;
+    notifyListeners();
   }
 }

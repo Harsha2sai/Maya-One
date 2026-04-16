@@ -166,8 +166,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   Center(
                     child: TextButton(
                       onPressed: () {
-                        // Guest mode logic - maybe just continue to home if permitted
-                        unawaited(Navigator.pushReplacementNamed(context, '/home'));
+                        final auth = context.read<AuthProvider>();
+                        auth.continueAsGuest();
                       },
                       child: const Text('Continue as Guest', style: TextStyle(color: ZoyaTheme.textMuted)),
                     ),
