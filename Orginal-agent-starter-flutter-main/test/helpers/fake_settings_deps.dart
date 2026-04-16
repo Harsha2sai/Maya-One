@@ -119,6 +119,12 @@ class FakeSupabaseService implements SupabaseService {
   SupabaseClient get client => throw UnimplementedError('client not used in tests');
 
   @override
+  bool get isAvailable => true;
+
+  @override
+  bool get isInitialized => true;
+
+  @override
   User? get currentUser => _user;
 
   @override

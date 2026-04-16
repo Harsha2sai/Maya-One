@@ -602,6 +602,7 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
     # Use retry logic for transient signal path timeouts.
     await _connect_with_retry(ctx, max_retries=3, base_delay=1.0)
 
+    from config.settings import settings
     from livekit.agents import AgentSession
     from core.runtime.worker_bootstrap import build_phase1_runtime
     from utils.schema_fixer import apply_schema_patch
@@ -658,7 +659,6 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
 
     # Single agent — pure voice conversation, no tools
     from core.prompts import get_maya_voice_bootstrap_prompt, get_bootstrap_prompt_with_personality
-    from config.settings import settings
 
     voice_agent = agents.Agent(
         instructions=get_bootstrap_prompt_with_personality(personality=settings.agent_personality),
@@ -2218,27 +2218,27 @@ async def _handle_worker_session_impl(ctx: agents.JobContext):
                 )
             return
 
-    if action == "update_personality":
-        personality = str(payload.get("personality") or "professional").strip().lower()
-        valid_personalities = {"professional", "friendly", "sassy", "formal"}
-        if personality not in valid_personalities:
-            logger.warning("Invalid personality value: %s", personality)
+        if action == "update_personality":
+            personality = str(payload.get("personality") or "professional").strip().lower()
+            valid_personalities = {"professional", "friendly", "sassy", "formal"}
+            if personality not in valid_personalities:
+                logger.warning("Invalid personality value: %s", personality)
+                return
+            try:
+                from core.prompts.maya_primary import get_prompt_for_personality
+                from config.settings import reload_settings
+
+                get_prompt_for_personality(personality)
+                os.environ["AGENT_PERSONALITY"] = personality
+                reload_settings()
+                logger.info("personality_updated value=%s", personality)
+                await _publish_topic_event(
+                    "maya/system/personality/ack",
+                    {"personality": personality, "applied": True},
+                )
+            except Exception as personality_err:
+                logger.warning("personality_update_failed error=%s", personality_err)
             return
-        try:
-            from core.prompts.maya_primary import get_prompt_for_personality
-            from config.settings import reload_settings
-            import os
-            new_prompt = get_prompt_for_personality(personality)
-            os.environ["AGENT_PERSONALITY"] = personality
-            reload_settings()
-            logger.info("personality_updated value=%s", personality)
-            await _publish_topic_event(
-                "maya/system/personality/ack",
-                {"personality": personality, "applied": True},
-            )
-        except Exception as personality_err:
-            logger.warning("personality_update_failed error=%s", personality_err)
-        return
 
         logger.info("ℹ️ [Phase %s] unsupported_system_command action=%s", arch_phase, action)
 

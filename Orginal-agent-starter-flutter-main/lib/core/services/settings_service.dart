@@ -25,6 +25,11 @@ class SettingsService {
 
   /// Sync settings with Supabase user_profiles table
   Future<Map<String, dynamic>?> fetchUserSettings(String userId) async {
+    if (!_supabaseService.isAvailable) {
+      _logger.info('Supabase unavailable; skipping remote user settings fetch');
+      return null;
+    }
+
     try {
       final response = await _supabaseService.client
           .from('user_profiles')
@@ -45,6 +50,11 @@ class SettingsService {
   }
 
   Future<void> updateUserSettings(String userId, Map<String, dynamic> settings) async {
+    if (!_supabaseService.isAvailable) {
+      _logger.info('Supabase unavailable; skipping remote user settings update');
+      return;
+    }
+
     try {
       await _supabaseService.client.from('user_profiles').upsert({
         'id': userId,
