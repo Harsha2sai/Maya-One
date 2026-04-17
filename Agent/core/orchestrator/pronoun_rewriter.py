@@ -66,6 +66,7 @@ class PronounRewriter:
     # Patterns to extract subject from query text
     SUBJECT_CAPTURE_PATTERNS = (
         r"\bwho is (?:the )?(.+?)(?:\?|$)",
+        r"\b(?:do you know|can you tell me)\s+about\s+(.+?)(?:\?|$)",
         r"\btell me about (.+?)(?:\?|$)",
         r"\bwhat about (.+?)(?:\?|$)",
         r"\bi asked you about (.+?)(?:\?|$)",

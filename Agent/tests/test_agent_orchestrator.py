@@ -737,6 +737,32 @@ def test_pronoun_followup_falls_back_to_same_session_history_when_research_tags_
     assert "narendra modi" in rewritten.lower()
 
 
+def test_pronoun_followup_resolves_do_you_know_about_pattern():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._update_turn_identity(user_id="u1", session_id="session-pronoun-pattern")
+    orchestrator._start_new_turn("Do you know about the Prime Minister of India?", turn_id="turn-1")
+    orchestrator._append_conversation_history(
+        "user",
+        "Do you know about the Prime Minister of India?",
+        source="history",
+    )
+    orchestrator._append_conversation_history(
+        "assistant",
+        "The Prime Minister of India is Narendra Modi.",
+        source="history",
+    )
+
+    rewritten, changed, ambiguous = orchestrator._rewrite_pronoun_followup_pre_router(
+        "tell me more about him",
+        tool_context=SimpleNamespace(session_id="session-pronoun-pattern"),
+    )
+
+    assert changed is True
+    assert ambiguous is False
+    assert "him" not in rewritten.lower()
+    assert "prime minister of india" in rewritten.lower() or "narendra modi" in rewritten.lower()
+
+
 @pytest.mark.asyncio
 async def test_voice_fragment_state_blocks_router_and_research():
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
