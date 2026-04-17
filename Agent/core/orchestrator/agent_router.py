@@ -1,4 +1,6 @@
 import logging
+import json
+import os
 import re
 from typing import Any, Dict, List
 
@@ -107,6 +109,12 @@ class AgentRouter:
         self.MAX_DEPTH = 3
         self._last_route: Dict[str, str] = {}
         self._pending_clarifications: Dict[str, str] = {}
+        self._llm_router_shadow = str(
+            os.getenv("LLM_ROUTER_SHADOW", "true")
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._llm_router_active = str(
+            os.getenv("LLM_ROUTER_ACTIVE", "false")
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
     def consume_pending_clarification(self, user_id: str) -> str:
         key = str(user_id or "anonymous")
@@ -214,33 +222,139 @@ class AgentRouter:
             return False
         return bool(re.search(r"\?\s*$", last_assistant.strip()))
 
+    @staticmethod
+    def _legacy_route_action(route: str) -> Dict[str, Any]:
+        route_key = str(route or "chat").strip().lower() or "chat"
+        return {
+            "type": route_key,
+            "target": route_key,
+            "tool": None,
+            "arguments": {},
+            "confidence": 0.5,
+            "reason": "legacy_router_baseline",
+        }
+
+    async def _compute_shadow_action(
+        self,
+        *,
+        utterance: str,
+        chat_ctx: List[Any],
+        legacy_route: str,
+    ) -> tuple[Dict[str, Any], str]:
+        prompt = (
+            "You are Maya's routing shadow evaluator.\n"
+            "Return exactly one JSON object with keys:\n"
+            "type, target, tool, arguments, confidence, reason.\n"
+            "Rules:\n"
+            "- type must be one of identity, media_play, research, system, scheduling, chat\n"
+            "- target must equal type\n"
+            "- tool must be null unless type=system and a direct tool is explicit\n"
+            "- arguments must be an object\n"
+            "- confidence must be a float between 0 and 1\n"
+            "- reason must be short\n"
+            f"User message: {utterance}\n"
+            f"Last assistant context: {self._last_assistant_message_text(chat_ctx)[:120]}\n"
+            "JSON:"
+        )
+        try:
+            response = await self._llm.chat(prompt, max_tokens=180, temperature=0.0)
+            parsed = json.loads(str(response or "").strip())
+            if not isinstance(parsed, dict):
+                raise ValueError("shadow_not_object")
+            action_type = str(parsed.get("type") or "").strip().lower()
+            if action_type not in self.ALLOWED_KEYS:
+                raise ValueError("shadow_type_invalid")
+            confidence = float(parsed.get("confidence", 0.0))
+            parsed["confidence"] = max(0.0, min(1.0, confidence))
+            parsed["type"] = action_type
+            parsed["target"] = str(parsed.get("target") or action_type).strip().lower()
+            if parsed["target"] not in self.ALLOWED_KEYS:
+                parsed["target"] = action_type
+            parsed["arguments"] = dict(parsed.get("arguments") or {})
+            parsed["tool"] = parsed.get("tool")
+            parsed["reason"] = str(parsed.get("reason") or "shadow_llm")
+            return parsed, "valid"
+        except Exception as exc:
+            logger.debug("agent_router_shadow_invalid error=%s", exc)
+            return self._legacy_route_action(legacy_route), "shadow-invalid"
+
+    async def _log_shadow_action(
+        self,
+        *,
+        utterance: str,
+        chat_ctx: List[Any],
+        legacy_route: str,
+    ) -> str:
+        action, state = await self._compute_shadow_action(
+            utterance=utterance,
+            chat_ctx=chat_ctx,
+            legacy_route=legacy_route,
+        )
+        logger.info(
+            "agent_router_shadow legacy=%s state=%s action=%s",
+            legacy_route,
+            state,
+            json.dumps(action, ensure_ascii=False),
+        )
+        if self._llm_router_active and state == "valid":
+            return str(action.get("type") or legacy_route).strip().lower() or legacy_route
+        return legacy_route
+
+    async def _finalize_route(
+        self,
+        *,
+        utterance: str,
+        user_key: str,
+        route: str,
+        chat_ctx: List[Any],
+    ) -> str:
+        chosen_route = str(route or "chat").strip().lower() or "chat"
+        if self._llm_router_shadow:
+            chosen_route = await self._log_shadow_action(
+                utterance=utterance,
+                chat_ctx=chat_ctx,
+                legacy_route=chosen_route,
+            )
+        logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], chosen_route)
+        self._last_route[user_key] = chosen_route
+        return chosen_route
+
     async def route(self, utterance: str, user_id: str, chat_ctx: List[Any] | None = None) -> str:
         user_key = str(user_id or "anonymous")
         self._pending_clarifications.pop(user_key, None)
         current = self._depth.get(user_key, 0)
+        chat_ctx = list(chat_ctx or [])
         if current >= self.MAX_DEPTH:
             logger.warning("agent_depth_exceeded: %s at depth %s", user_key, current)
             self._depth[user_key] = 0
-            return "chat"
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
 
         utterance_l = str(utterance or "").strip().lower()
-        chat_ctx = list(chat_ctx or [])
 
         # 1. Deterministic overrides — run BEFORE LLM, no exceptions possible
 
         # Memory patterns take highest priority
         if any(re.search(pattern, utterance_l) for pattern in self._USER_MEMORY_PATTERNS):
-            result = "chat"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
 
         # Note operations should stay in chat tool path and never map to identity.
         if any(re.search(pattern, utterance_l) for pattern in self._NOTE_PATTERNS):
-            result = "chat"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
 
         identity_hit = any(re.search(pattern, utterance_l) for pattern in self._IDENTITY_PATTERNS)
         research_intent_hit = any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_INTENT_PATTERNS)
@@ -248,23 +362,29 @@ class AgentRouter:
 
         # Identity patterns — second priority, unless explicit tool/system intent is present.
         if identity_hit and not (research_intent_hit or system_intent_hit):
-            result = "identity"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="identity",
+                chat_ctx=chat_ctx,
+            )
 
         # Deterministic explicit research/system intents to avoid identity misrouting.
         if research_intent_hit:
-            result = "research"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="research",
+                chat_ctx=chat_ctx,
+            )
 
         if system_intent_hit:
-            result = "system"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="system",
+                chat_ctx=chat_ctx,
+            )
 
         # Greeting/smalltalk patterns — third priority
         if (
@@ -273,41 +393,51 @@ class AgentRouter:
             or re.search(r"\b(thanks|thank you)\b", utterance_l)
             or "tell me a joke" in utterance_l
         ):
-            result = "chat"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
 
         # Deterministic media/scheduling controls
         media_play_hit = any(re.search(pattern, utterance_l) for pattern in self._MEDIA_PLAY_PATTERNS)
         scheduling_hit = any(re.search(pattern, utterance_l) for pattern in self._SCHEDULING_PATTERNS)
         if media_play_hit and scheduling_hit:
-            result = "chat"
             self._pending_clarifications[user_key] = (
                 "I found multiple possible actions. Do you want media playback or scheduling?"
             )
-            self._last_route[user_key] = result
             logger.info("agent_router_pending_clarification_set user=%s", user_key)
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
         if media_play_hit:
-            result = "media_play"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="media_play",
+                chat_ctx=chat_ctx,
+            )
 
         task_list_hit = any(re.search(pattern, utterance_l) for pattern in self._TASK_LIST_PATTERNS)
         if task_list_hit:
-            result = "chat"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
 
         if scheduling_hit:
-            result = "scheduling"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="scheduling",
+                chat_ctx=chat_ctx,
+            )
 
         # Deterministic freshness/current-events research.
         # These queries should not block on the router LLM in console certification flows.
@@ -317,25 +447,35 @@ class AgentRouter:
             result = "research"
             if await self._fact_classifier.is_simple_fact(utterance_l):
                 result = "chat"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route=result,
+                chat_ctx=chat_ctx,
+            )
 
         previous_route = self._last_route.get(user_key)
         if previous_route and self._is_ambiguous_followup_query(utterance_l):
-            self._last_route[user_key] = previous_route
             logger.info(
                 "agent_router_decision_context_inherit: '%s' -> %s",
                 str(utterance or "")[:50],
                 previous_route,
             )
-            return previous_route
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route=previous_route,
+                chat_ctx=chat_ctx,
+            )
 
         if self._context_suggests_chat_followup(utterance_l, chat_ctx):
-            result = "chat"
-            self._last_route[user_key] = result
-            logger.info("agent_router_decision_context_followup: '%s' -> %s", str(utterance or "")[:50], result)
-            return result
+            logger.info("agent_router_decision_context_followup: '%s' -> chat", str(utterance or "")[:50])
+            return await self._finalize_route(
+                utterance=utterance,
+                user_key=user_key,
+                route="chat",
+                chat_ctx=chat_ctx,
+            )
 
         # 2. LLM handles everything else — research, system, media, ambiguous chat
         self._depth[user_key] = current + 1
@@ -380,6 +520,9 @@ Reply with ONLY one word: identity / media_play / research / system / scheduling
         finally:
             self._depth[user_key] = max(0, self._depth.get(user_key, 1) - 1)
 
-        logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], result)
-        self._last_route[user_key] = result
-        return result
+        return await self._finalize_route(
+            utterance=utterance,
+            user_key=user_key,
+            route=result,
+            chat_ctx=chat_ctx,
+        )

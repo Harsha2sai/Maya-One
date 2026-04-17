@@ -44,7 +44,7 @@ def _make_history(turns: int):
 @pytest.mark.asyncio
 async def test_build_for_voice_limits_history_to_5_turns(monkeypatch):
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "12000")
-    monkeypatch.setenv("CONTEXT_RECENT_HISTORY_LIMIT", "5")
+    monkeypatch.setenv("CONTEXT_RECENT_TURNS_TARGET", "5")
     builder = _make_builder()
     retriever = DummyRetriever()
 
@@ -52,13 +52,13 @@ async def test_build_for_voice_limits_history_to_5_turns(monkeypatch):
         user_message="latest question",
         user_id="u1",
         session_id="s1",
-        conversation_history=_make_history(10),
+        conversation_history=_make_history(14),
         system_prompt="system",
         retriever=retriever,
     )
 
     non_system = [m for m in messages if m.role != "system"]
-    assert len(non_system) <= 8  # protected + summary + 5 recent + current user
+    assert len(non_system) <= 12  # summary + 10 recent msgs (5 turns) + current user
     assert str(non_system[-1].content[0]) == "latest question"
     assert any(
         "[Earlier conversation summary]" in str(msg.content[0])
@@ -69,7 +69,7 @@ async def test_build_for_voice_limits_history_to_5_turns(monkeypatch):
 @pytest.mark.asyncio
 async def test_build_for_voice_uses_env_recent_history_limit(monkeypatch):
     monkeypatch.setenv("MAX_CONTEXT_TOKENS", "12000")
-    monkeypatch.setenv("CONTEXT_RECENT_HISTORY_LIMIT", "8")
+    monkeypatch.setenv("CONTEXT_RECENT_TURNS_TARGET", "6")
     builder = _make_builder()
     retriever = DummyRetriever()
 
@@ -83,7 +83,44 @@ async def test_build_for_voice_uses_env_recent_history_limit(monkeypatch):
     )
 
     non_system = [m for m in messages if m.role != "system"]
-    assert len(non_system) <= 11  # protected + summary + 8 recent + current user
+    assert len(non_system) <= 14  # summary + 12 recent msgs (6 turns) + current user
+
+
+def test_recent_turn_target_adapts_to_budget(monkeypatch):
+    monkeypatch.delenv("CONTEXT_RECENT_TURNS_TARGET", raising=False)
+    monkeypatch.delenv("CONTEXT_RECENT_HISTORY_LIMIT", raising=False)
+
+    low = _make_builder(guard=ContextGuard(token_limit=3000))
+    mid = _make_builder(guard=ContextGuard(token_limit=7000))
+    high = _make_builder(guard=ContextGuard(token_limit=12000))
+
+    assert low._resolve_recent_turn_target(origin="voice") == 4
+    assert mid._resolve_recent_turn_target(origin="chat") == 5
+    assert high._resolve_recent_turn_target(origin="chat") == 6
+
+
+@pytest.mark.asyncio
+async def test_context_builder_keeps_recent_turn_band_and_summary(monkeypatch):
+    monkeypatch.delenv("CONTEXT_RECENT_TURNS_TARGET", raising=False)
+    monkeypatch.delenv("CONTEXT_RECENT_HISTORY_LIMIT", raising=False)
+    builder = _make_builder(guard=ContextGuard(token_limit=7000))
+    retriever = DummyRetriever()
+    history = _make_history(24)
+
+    messages = await builder.build_for_chat(
+        user_message="latest question",
+        user_id="u1",
+        session_id="s1",
+        conversation_history=history,
+        system_prompt="system",
+        retriever=retriever,
+        origin="chat",
+    )
+
+    non_system_texts = [str(m.content[0]) for m in messages if m.role != "system"]
+    assert any("[Earlier conversation summary]" in text for text in non_system_texts)
+    assert non_system_texts[-1] == "latest question"
+    assert len(non_system_texts) <= 12  # 5-turn band + summary + current user
 
 
 @pytest.mark.asyncio

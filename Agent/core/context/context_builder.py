@@ -24,6 +24,8 @@ FAREWELL_PATTERNS = (
 )
 VOICE_MEMORY_TOP_K_DEFAULT = 2
 CHAT_MEMORY_TOP_K_DEFAULT = 4
+RECENT_TURNS_TARGET_DEFAULT = 5
+AGENT_INSTRUCTION = "You are Maya, a helpful AI assistant."
 
 
 class ContextBuilder:
@@ -191,13 +193,35 @@ CRITICAL TOOL USAGE:
             return None
         if isinstance(msg, dict):
             role = str(msg.get("role", "user"))
-            content = cls._normalize_content(msg.get("content", ""))
+            content = cls._normalize_content(msg.get("content", msg.get("text", "")))
             source = str(msg.get("source", "history") or "history")
-            return {"role": role, "content": content, "source": source}
+            return {
+                "role": role,
+                "content": content,
+                "source": source,
+                "route": str(msg.get("route", "chat") or "chat"),
+                "intent": str(msg.get("intent", "") or ""),
+                "entities": list(msg.get("entities") or []),
+                "topic": str(msg.get("topic", "") or ""),
+                "session_id": str(msg.get("session_id", "") or ""),
+                "turn_id": str(msg.get("turn_id", "") or ""),
+                "timestamp": str(msg.get("timestamp", "") or ""),
+            }
         role = str(getattr(msg, "role", "user"))
         content = cls._normalize_content(getattr(msg, "content", ""))
         source = str(getattr(msg, "source", "history") or "history")
-        return {"role": role, "content": content, "source": source}
+        return {
+            "role": role,
+            "content": content,
+            "source": source,
+            "route": str(getattr(msg, "route", "chat") or "chat"),
+            "intent": str(getattr(msg, "intent", "") or ""),
+            "entities": list(getattr(msg, "entities", []) or []),
+            "topic": str(getattr(msg, "topic", "") or ""),
+            "session_id": str(getattr(msg, "session_id", "") or ""),
+            "turn_id": str(getattr(msg, "turn_id", "") or ""),
+            "timestamp": str(getattr(msg, "timestamp", "") or ""),
+        }
 
     @staticmethod
     def _memory_to_text(memory_results: list[Any]) -> str:
@@ -288,7 +312,7 @@ CRITICAL TOOL USAGE:
     @staticmethod
     def _partition_history(
         history: list[Any],
-        recent_limit: int,
+        recent_turn_limit: int,
     ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
         protected: list[dict] = []
         continuity: list[dict] = []
@@ -309,13 +333,43 @@ CRITICAL TOOL USAGE:
                 normalized["source"] = "history"
                 regular.append(normalized)
 
-        if recent_limit <= 0:
+        if recent_turn_limit <= 0:
             return protected, regular, continuity, []
 
+        recent_limit = max(2, int(recent_turn_limit) * 2)
         split_index = max(0, len(regular) - recent_limit)
         older = regular[:split_index]
         recent = regular[split_index:]
         return protected, older, continuity, recent
+
+    def _resolve_recent_turn_target(self, *, origin: str) -> int:
+        explicit_raw = os.getenv("CONTEXT_RECENT_TURNS_TARGET")
+        legacy_raw = os.getenv("CONTEXT_RECENT_HISTORY_LIMIT")
+        token_limit = int(getattr(self.guard, "token_limit", 12000))
+
+        if explicit_raw is not None:
+            try:
+                value = int(explicit_raw)
+            except ValueError:
+                value = RECENT_TURNS_TARGET_DEFAULT
+            return max(4, min(6, value))
+
+        if legacy_raw is not None:
+            try:
+                legacy_value = max(1, int(legacy_raw))
+            except ValueError:
+                legacy_value = 5
+            # Legacy setting was message-based; convert to approximate turns.
+            value = max(1, (legacy_value + 1) // 2)
+            return max(4, min(6, value))
+
+        if token_limit <= 4500:
+            return 4
+        if token_limit >= 11000:
+            return 6
+        if str(origin or "").strip().lower() == "voice" and token_limit <= 7000:
+            return 4
+        return RECENT_TURNS_TARGET_DEFAULT
 
     def _build_raw(
         self,
@@ -323,7 +377,7 @@ CRITICAL TOOL USAGE:
         memory_results: list[Any],
         history: list[Any],
         user_message: str,
-        history_limit: int,
+        recent_turn_limit: int,
     ) -> list[dict]:
         raw: list[dict] = [
             {
@@ -335,10 +389,14 @@ CRITICAL TOOL USAGE:
 
         protected_history, older_history, continuity_messages, recent_history = self._partition_history(
             history,
-            history_limit,
+            recent_turn_limit,
         )
 
         raw.extend(protected_history)
+
+        # Keep session continuity pinned at the front of Tier 2 recent context.
+        raw.extend(continuity_messages)
+        raw.extend(recent_history)
 
         summary_text = self._summarize_older_history(older_history)
         if summary_text:
@@ -349,10 +407,6 @@ CRITICAL TOOL USAGE:
                     "source": "history_summary",
                 }
             )
-
-        # Keep session continuity pinned at the front of Tier 2 recent context.
-        raw.extend(continuity_messages)
-        raw.extend(recent_history)
 
         memory_text = self._memory_to_text(memory_results)
         if memory_text:
@@ -384,14 +438,14 @@ CRITICAL TOOL USAGE:
         history: list[Any],
         user_message: str,
         origin: str,
-        history_limit: int,
+        recent_turn_limit: int,
     ) -> List[ChatMessage]:
         raw_context = self._build_raw(
             system_prompt,
             memory_results,
             history,
             user_message,
-            history_limit=history_limit,
+            recent_turn_limit=recent_turn_limit,
         )
         guarded_context = self.guard.enforce(raw_context, origin=origin)
         messages: List[ChatMessage] = []
@@ -421,6 +475,7 @@ CRITICAL TOOL USAGE:
         system_prompt: str,
         retriever: Any,
     ) -> List[ChatMessage]:
+        recent_turn_limit = self._resolve_recent_turn_target(origin="voice")
         voice_k = max(1, int(os.getenv("VOICE_RETRIEVER_K", str(VOICE_MEMORY_TOP_K_DEFAULT))))
         memory_results: list[dict] = []
         skip_memory = self._should_skip_memory_for_query(user_message)
@@ -476,7 +531,7 @@ CRITICAL TOOL USAGE:
             history=conversation_history,
             user_message=user_message,
             origin="voice",
-            history_limit=5,
+            recent_turn_limit=recent_turn_limit,
         )
 
     async def build_for_chat(
@@ -489,6 +544,7 @@ CRITICAL TOOL USAGE:
         retriever: Any,
         origin: str = "chat",
     ) -> List[ChatMessage]:
+        recent_turn_limit = self._resolve_recent_turn_target(origin=origin)
         chat_k = max(1, int(os.getenv("CHAT_RETRIEVER_K", str(CHAT_MEMORY_TOP_K_DEFAULT))))
         memory_results: list[dict] = []
         skip_memory = self._should_skip_memory_for_query(user_message)
@@ -549,5 +605,5 @@ CRITICAL TOOL USAGE:
             history=conversation_history,
             user_message=user_message,
             origin=origin,
-            history_limit=5,
+            recent_turn_limit=recent_turn_limit,
         )

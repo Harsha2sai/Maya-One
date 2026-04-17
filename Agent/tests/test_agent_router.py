@@ -1,6 +1,7 @@
 import asyncio
 import ast
 import inspect
+import json
 import re
 import textwrap
 from types import SimpleNamespace
@@ -67,6 +68,27 @@ class _MappingLLM:
         match = re.search(r'USER MESSAGE: "(.*)"\n\nReply with ONLY one word:', prompt, re.DOTALL)
         utterance = match.group(1) if match else ""
         return self._mapping.get(utterance, self._default)
+
+
+class _ShadowLLM:
+    def __init__(self):
+        self.prompts: list[str] = []
+
+    async def chat(self, prompt: str, max_tokens: int = 10, temperature: float = 0.0) -> str:
+        del max_tokens, temperature
+        self.prompts.append(prompt)
+        if "routing shadow evaluator" in prompt:
+            return json.dumps(
+                {
+                    "type": "chat",
+                    "target": "chat",
+                    "tool": None,
+                    "arguments": {},
+                    "confidence": 0.82,
+                    "reason": "small_talk",
+                }
+            )
+        return "chat"
 
 
 @pytest.mark.asyncio
@@ -732,3 +754,16 @@ async def test_windows_open_query_does_not_use_fast_path() -> None:
     orchestrator._router.route.assert_awaited_once()
     system_agent.run.assert_awaited_once()
     assert "system route handled" in response.display_text.lower()
+
+
+@pytest.mark.asyncio
+async def test_router_shadow_envelope_logs_without_changing_legacy_route(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_ROUTER_SHADOW", "true")
+    monkeypatch.setenv("LLM_ROUTER_ACTIVE", "false")
+    llm = _ShadowLLM()
+    router = AgentRouter(llm)
+
+    route = await router.route("hello there", "u1")
+
+    assert route == "chat"
+    assert any("routing shadow evaluator" in prompt for prompt in llm.prompts)

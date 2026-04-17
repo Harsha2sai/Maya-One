@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 import uuid
@@ -248,13 +249,16 @@ class ChatResponseMixin:
 
         routing_text = self._extract_user_message_segment(message) or message
         chat_ctx_messages = self._chat_ctx_messages(getattr(self.agent, "chat_ctx", None))
-        if self._is_voice_continuation_fragment(
+        utterance_state = self._voice_utterance_state(
             routing_text=routing_text,
             origin=origin,
             chat_ctx_messages=chat_ctx_messages,
-        ):
+        )
+        if utterance_state in {"fragment", "continuation"}:
+            block_reason = "continuation_fragment" if utterance_state == "continuation" else "fragment"
             logger.info(
-                "short_turn_blocked reason=continuation_fragment origin=%s text=%s",
+                "short_turn_blocked reason=%s origin=%s text=%s",
+                block_reason,
                 origin,
                 str(routing_text or "")[:120],
             )
@@ -517,15 +521,20 @@ class ChatResponseMixin:
                     "direct_action",
                 )
 
-        history = list(self._conversation_history)
-        if agent_key == "chat":
-            history = self._filter_chat_history_for_fallthrough(history)
         memory_session_id = (
             getattr(tool_context, "session_id", None)
             or self._current_session_id
             or getattr(getattr(self, "room", None), "name", None)
             or "console_session"
         )
+        history = self._get_conversation_tape_history(
+            session_id=memory_session_id,
+            limit=max(40, int(os.getenv("CONTEXT_TAPE_HISTORY_LIMIT", "120"))),
+        )
+        if not history:
+            history = list(self._conversation_history)
+        if agent_key == "chat":
+            history = self._filter_chat_history_for_fallthrough(history)
 
         if not self._is_phase6_context_builder_active():
             logger.warning(

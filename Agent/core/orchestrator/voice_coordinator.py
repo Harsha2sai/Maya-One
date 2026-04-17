@@ -55,32 +55,56 @@ class VoiceCoordinator:
         continuation_markers: set[str],
         action_second_token_allowlist: set[str],
     ) -> bool:
+        return self.classify_utterance_state(
+            routing_text=routing_text,
+            origin=origin,
+            chat_ctx_messages=chat_ctx_messages,
+            short_command_allowlist=short_command_allowlist,
+            continuation_markers=continuation_markers,
+            action_second_token_allowlist=action_second_token_allowlist,
+        ) == "continuation"
+
+    def classify_utterance_state(
+        self,
+        *,
+        routing_text: str,
+        origin: str,
+        chat_ctx_messages: List[Any],
+        short_command_allowlist: set[str],
+        continuation_markers: set[str],
+        action_second_token_allowlist: set[str],
+    ) -> str:
         if str(origin or "").strip().lower() != "voice":
-            return False
-        if not chat_ctx_messages:
-            return False
+            return "complete"
         normalized = str(routing_text or "").strip().lower()
         if not normalized:
-            return False
+            return "fragment"
         if normalized in short_command_allowlist:
-            return False
+            return "complete"
 
         tokens = re.findall(r"\b[\w'-]+\b", normalized)
         if not tokens or len(tokens) > 6:
-            return False
+            return "complete"
         if len(tokens) == 1 and tokens[0] in short_command_allowlist:
-            return False
+            return "complete"
+        if len(tokens) <= 2 and tokens[0] not in short_command_allowlist and not re.search(r"[.?!]$", normalized):
+            # Partial STT chunk (e.g., "and then", "about him") should not route.
+            if tokens[0] in continuation_markers:
+                return "continuation"
+            return "fragment"
         if tokens[0] not in continuation_markers:
-            return False
+            return "complete"
         if len(tokens) > 1 and tokens[1] in action_second_token_allowlist:
-            return False
+            return "complete"
+        if not chat_ctx_messages:
+            return "fragment"
 
         for message in reversed(chat_ctx_messages):
             if self._owner._message_role_value(message) != "assistant":
                 continue
             if self._owner._message_content_to_text(message):
-                return True
-        return False
+                return "continuation"
+        return "fragment"
 
     def parse_legacy_function_call(self, text: str) -> Optional[tuple[str, Dict[str, Any]]]:
         if not text:

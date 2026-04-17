@@ -237,6 +237,16 @@ class ResearchHandler:
             if candidate and not self._is_bad_subject(candidate):
                 return candidate
 
+        # Route-agnostic fallback for same-session continuity.
+        for item in reversed(history):
+            if str(item.get("source") or "history") != "history":
+                continue
+            if str(item.get("role") or "").strip().lower() != "user":
+                continue
+            candidate = self._extract_subject_from_text(str(item.get("content") or ""))
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
+
         for item in reversed(history):
             if str(item.get("source") or "") != "session_continuity":
                 continue

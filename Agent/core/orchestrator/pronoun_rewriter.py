@@ -193,22 +193,78 @@ class PronounRewriter:
                 if candidate and not self._is_bad_subject(candidate):
                     return candidate
 
-        # Source 2: Conversation history
+        # Source 2: Research-tagged history events.
+        # Source 3: Same-session history fallback (unfiltered by route).
         if conversation_history:
             history = list(conversation_history)
-            for item in reversed(history):
-                if str(item.get("source") or "history") != "history":
-                    continue
-                if str(item.get("role") or "").strip().lower() != "user":
-                    continue
-                if history_route_filter is not None and str(item.get("route") or "") != history_route_filter:
-                    continue
-                # Try to extract subject from user message
-                content = str(item.get("content") or "")
-                candidate = self._extract_subject_from_text(content)
-                if candidate and not self._is_bad_subject(candidate):
+            session_id = str(getattr(tool_context, "session_id", "") or "").strip()
+
+            # Pass 2a: user turns with preferred route filter (typically "research").
+            candidate = self._scan_history_for_subject(
+                history=history,
+                role="user",
+                route_filter=history_route_filter,
+                session_id=session_id,
+            )
+            if candidate:
+                return candidate
+
+            # Pass 2b: assistant turns with preferred route filter.
+            candidate = self._scan_history_for_subject(
+                history=history,
+                role="assistant",
+                route_filter=history_route_filter,
+                session_id=session_id,
+            )
+            if candidate:
+                return candidate
+
+            # Pass 3a/3b: same-session fallback ignoring route.
+            if history_route_filter is not None:
+                candidate = self._scan_history_for_subject(
+                    history=history,
+                    role="user",
+                    route_filter=None,
+                    session_id=session_id,
+                )
+                if candidate:
+                    return candidate
+                candidate = self._scan_history_for_subject(
+                    history=history,
+                    role="assistant",
+                    route_filter=None,
+                    session_id=session_id,
+                )
+                if candidate:
                     return candidate
 
+        return ""
+
+    def _scan_history_for_subject(
+        self,
+        *,
+        history: List[Dict[str, Any]],
+        role: str,
+        route_filter: Optional[str],
+        session_id: str,
+    ) -> str:
+        role_name = str(role or "").strip().lower()
+        normalized_filter = str(route_filter or "").strip().lower() if route_filter else ""
+        for item in reversed(history):
+            if str(item.get("source") or "history") != "history":
+                continue
+            if str(item.get("role") or "").strip().lower() != role_name:
+                continue
+            if normalized_filter and str(item.get("route") or "").strip().lower() != normalized_filter:
+                continue
+            if session_id:
+                event_session_id = str(item.get("session_id") or "").strip()
+                if event_session_id and event_session_id != session_id:
+                    continue
+            content = str(item.get("content") or item.get("text") or "")
+            candidate = self._extract_subject_from_text(content)
+            if candidate and not self._is_bad_subject(candidate):
+                return candidate
         return ""
 
     def _extract_subject_from_text(self, raw_text: str) -> str:

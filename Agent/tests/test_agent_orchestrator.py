@@ -699,6 +699,62 @@ async def test_research_query_ambiguous_prompts_clarification_not_research():
     assert orchestrator._handle_research_route.await_count == 0
 
 
+def test_append_conversation_history_normalizes_route_and_metadata():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._update_turn_identity(user_id="u1", session_id="s1")
+    orchestrator._start_new_turn("hello there", turn_id="turn-ctx")
+
+    orchestrator._append_conversation_history("user", "hello there", source="history")
+
+    assert orchestrator._conversation_history
+    entry = orchestrator._conversation_history[-1]
+    assert entry["route"] == "chat"
+    assert entry["intent"] in {"question", "statement", "research_statement", "slash_command"}
+    assert entry["session_id"] == "s1"
+    assert entry["turn_id"] == "turn-ctx"
+    assert entry["timestamp"]
+
+
+def test_pronoun_followup_falls_back_to_same_session_history_when_research_tags_missing():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._update_turn_identity(user_id="u1", session_id="session-pronoun")
+    orchestrator._start_new_turn("Who is Narendra Modi?", turn_id="turn-1")
+    orchestrator._append_conversation_history("user", "Who is Narendra Modi?", source="history")
+    orchestrator._append_conversation_history(
+        "assistant",
+        "Narendra Modi is the Prime Minister of India.",
+        source="history",
+    )
+
+    rewritten, changed, ambiguous = orchestrator._rewrite_pronoun_followup_pre_router(
+        "tell me more about him",
+        tool_context=SimpleNamespace(session_id="session-pronoun"),
+    )
+
+    assert changed is True
+    assert ambiguous is False
+    assert "him" not in rewritten.lower()
+    assert "narendra modi" in rewritten.lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_fragment_state_blocks_router_and_research():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator.agent.chat_ctx = SimpleNamespace(messages=[])
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(side_effect=AssertionError("router should not run"))
+    orchestrator._handle_research_route = AsyncMock(side_effect=AssertionError("research should not run"))
+
+    response = await orchestrator._handle_chat_response(
+        "maybe",
+        user_id="u1",
+        origin="voice",
+    )
+
+    assert "please continue your request" in response.display_text.lower()
+    orchestrator._router.route.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_research_voice_tts_sanitization_filters_json_fragment_before_session_say():
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())

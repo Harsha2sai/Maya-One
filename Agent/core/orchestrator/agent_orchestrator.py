@@ -22,6 +22,7 @@ from core.orchestrator.fast_path_router import FastPathRouter, DirectToolIntent
 from core.orchestrator.interaction_manager import InteractionManager
 from core.orchestrator.media_resolver import MediaResolver
 from core.orchestrator.orchestration_flow import OrchestrationFlow
+from core.orchestrator.conversation_tape import ConversationTape
 from core.orchestrator.orchestrator_constants import (
     CONVERSATIONAL_MEMORY_TRIGGERS,
     DEEP_RESEARCH_KEYWORDS,
@@ -214,6 +215,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             "pending_task_completion_summary": "",
         }
         self._conversation_history: List[Dict[str, Any]] = []
+        self._router_llm_adapter = _RouterLLMAdapter(agent)
+        self._conversation_tape = ConversationTape(
+            event_cap=max(40, int(os.getenv("CONVERSATION_TAPE_EVENT_CAP", "240"))),
+            llm_client=self._router_llm_adapter,
+            enable_llm_backfill=str(
+                os.getenv("CONVERSATION_TAPE_LLM_BACKFILL", "true")
+            ).strip().lower() in {"1", "true", "yes", "on"},
+        )
         self._session_continuity_injected: bool = False
         self._current_user_id: Optional[str] = None
         self._current_session_id: Optional[str] = None
@@ -323,7 +332,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._memory_context_service = MemoryContextService(owner=self)
         self._response_synthesizer = ResponseSynthesizer(owner=self)
         self._task_runtime_service = TaskRuntimeService(owner=self, coerce_user_role_fn=_coerce_user_role)
-        self._router = AgentRouter(_RouterLLMAdapter(agent))
+        self._router = AgentRouter(self._router_llm_adapter)
         self._agent_registry = get_agent_registry()
         self._handoff_manager = get_handoff_manager(self._agent_registry)
         self._outcome_logger: Any = None
@@ -566,9 +575,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
     def _resolve_research_subject_from_context(self, tool_context: Any = None) -> str:
         session_key = self._session_key_for_context(tool_context)
         payload = self._session_bootstrap_contexts.get(str(session_key or "").strip()) or {}
+        tape_history = self._session_lifecycle.get_tape_history(
+            session_id=session_key,
+            limit=max(40, int(os.getenv("PRONOUN_RESOLUTION_HISTORY_EVENTS", "120"))),
+        )
         return self._research_handler.resolve_research_subject_from_context(
             research_context=self._get_active_research_context(tool_context),
-            conversation_history=self._conversation_history,
+            conversation_history=tape_history or self._conversation_history,
             bootstrap_payload=payload,
         )
 
@@ -584,9 +597,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         *,
         tool_context: Any = None,
     ) -> tuple[str, bool, bool]:
+        session_key = self._session_key_for_context(tool_context)
+        history = self._session_lifecycle.get_tape_history(
+            session_id=session_key,
+            limit=max(40, int(os.getenv("PRONOUN_RESOLUTION_HISTORY_EVENTS", "120"))),
+        )
         return self._pronoun_rewriter.rewrite(
             query,
-            conversation_history=self._conversation_history,
+            conversation_history=history or self._conversation_history,
             research_context=self._get_active_research_context(tool_context),
             tool_context=tool_context,
         )
@@ -602,9 +620,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             return "", False, False
         if not self._pronoun_rewriter.should_check_rewrite(query):
             return query, False, False
+        session_key = self._session_key_for_context(tool_context)
+        history = self._session_lifecycle.get_tape_history(
+            session_id=session_key,
+            limit=max(40, int(os.getenv("PRONOUN_RESOLUTION_HISTORY_EVENTS", "120"))),
+        )
         return self._pronoun_rewriter.rewrite(
             query,
-            conversation_history=self._conversation_history,
+            conversation_history=history or self._conversation_history,
             research_context=self._get_active_research_context(tool_context),
             tool_context=tool_context,
             history_route_filter="research",
@@ -952,7 +975,21 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         origin: str,
         chat_ctx_messages: List[Any],
     ) -> bool:
-        return self._voice_coordinator.is_voice_continuation_fragment(
+        state = self._voice_utterance_state(
+            routing_text=routing_text,
+            origin=origin,
+            chat_ctx_messages=chat_ctx_messages,
+        )
+        return state in {"fragment", "continuation"}
+
+    def _voice_utterance_state(
+        self,
+        *,
+        routing_text: str,
+        origin: str,
+        chat_ctx_messages: List[Any],
+    ) -> str:
+        return self._voice_coordinator.classify_utterance_state(
             routing_text=routing_text,
             origin=origin,
             chat_ctx_messages=chat_ctx_messages,
@@ -960,6 +997,14 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             continuation_markers=self._VOICE_CONTINUATION_MARKERS,
             action_second_token_allowlist=self._VOICE_ACTION_SECOND_TOKEN_ALLOWLIST,
         )
+
+    def _get_conversation_tape_history(
+        self,
+        *,
+        session_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        return self._session_lifecycle.get_tape_history(session_id=session_id, limit=limit)
 
     def _tool_name(self, tool: Any) -> str:
         return self._context_assembler.tool_name(tool)

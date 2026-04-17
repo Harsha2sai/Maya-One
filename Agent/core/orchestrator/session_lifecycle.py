@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -133,14 +134,67 @@ class SessionLifecycle:
         text = str(content or "").strip()
         if not text:
             return
-        source_name = str(source or "history")
-        self._owner._conversation_history.append(
-            {"role": role, "content": text, "source": source_name, "route": str(route or "")}
-        )
+        source_name = str(source or "history").strip() or "history"
+        route_name = self._normalize_route(route=route, source=source_name)
+        session_id = str(self._owner._current_session_id or "").strip()
+        turn_id = str(self._owner.turn_state.get("current_turn_id") or "").strip()
+
+        tape = getattr(self._owner, "_conversation_tape", None)
+        if tape is not None:
+            event = tape.append_event(
+                role=role,
+                text=text,
+                source=source_name,
+                route=route_name,
+                intent="",
+                session_id=session_id,
+                turn_id=turn_id,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+            normalized_entry = event.to_history_entry()
+        else:
+            normalized_entry = {
+                "role": str(role or "user").strip().lower() or "user",
+                "content": text,
+                "source": source_name,
+                "route": route_name,
+                "intent": self._infer_intent(text=text, route=route_name, source=source_name),
+                "entities": [],
+                "topic": "",
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+
+        self._owner._conversation_history.append(normalized_entry)
         max_turns = max(4, int(os.getenv("PHASE6_HISTORY_TURNS", "20")))
         max_messages = max_turns * 2
         if len(self._owner._conversation_history) > max_messages:
             self._owner._conversation_history = self._owner._conversation_history[-max_messages:]
+
+    def get_tape_history(
+        self,
+        *,
+        session_id: str,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        tape = getattr(self._owner, "_conversation_tape", None)
+        if tape is None:
+            history = list(getattr(self._owner, "_conversation_history", []) or [])
+            if session_id:
+                history = [
+                    item
+                    for item in history
+                    if str(item.get("session_id") or "").strip() in {"", str(session_id).strip()}
+                ]
+            if limit is not None and limit > 0:
+                history = history[-int(limit) :]
+            return history
+
+        return tape.history(
+            session_id=str(session_id or "").strip(),
+            limit=limit,
+        )
 
     def inject_session_continuity_summary(self, summary: str) -> bool:
         text = str(summary or "").strip()
@@ -180,3 +234,31 @@ class SessionLifecycle:
             msg for msg in self._owner._conversation_history
             if str(msg.get("source", "")) != "session_continuity"
         ]
+
+    @staticmethod
+    def _normalize_route(*, route: str, source: str) -> str:
+        route_name = str(route or "").strip().lower()
+        if route_name:
+            return route_name
+        source_name = str(source or "").strip().lower()
+        if source_name in {"research_summary", "research_result"}:
+            return "research"
+        if source_name == "task_step":
+            return "task"
+        if source_name in {"tool_output", "direct_action"}:
+            return "action"
+        return "chat"
+
+    @staticmethod
+    def _infer_intent(*, text: str, route: str, source: str) -> str:
+        source_name = str(source or "").strip().lower()
+        if source_name in {"tool_output", "direct_action", "task_step"}:
+            return "action_result"
+        lowered = str(text or "").strip().lower()
+        if lowered.startswith("/"):
+            return "slash_command"
+        if lowered.endswith("?"):
+            return "question"
+        if route == "research":
+            return "research_statement"
+        return "statement"
