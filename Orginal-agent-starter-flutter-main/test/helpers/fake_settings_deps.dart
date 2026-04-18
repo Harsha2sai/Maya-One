@@ -147,6 +147,11 @@ class FakeSupabaseService implements SupabaseService {
   }
 
   @override
+  Future<AuthResponse> signInWithGoogle() async {
+    return AuthResponse(user: _user);
+  }
+
+  @override
   Future<void> signOut() async {}
 }
 
