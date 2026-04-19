@@ -7,6 +7,7 @@ from .handlers import (
     handle_ide_file_read,
     handle_ide_file_write,
     handle_ide_files_tree,
+    handle_ide_events_stream,
     handle_ide_session_close,
     handle_ide_session_open,
     handle_ide_terminal_open,
@@ -62,6 +63,7 @@ async def run_token_server(port=5050, host='0.0.0.0'):
         handle_ide_file_read,
         handle_ide_file_write,
         handle_ide_files_tree,
+        handle_ide_events_stream,
         handle_ide_session_close,
         handle_ide_session_open,
         handle_token,
@@ -83,6 +85,7 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     app.router.add_get('/ide/files/tree', handle_ide_files_tree)
     app.router.add_get('/ide/file/read', handle_ide_file_read)
     app.router.add_post('/ide/file/write', handle_ide_file_write)
+    app.router.add_get('/ide/events/stream', handle_ide_events_stream)
     app.router.add_post('/ide/terminal/open', handle_ide_terminal_open)
     app.router.add_post('/ide/terminal/close', handle_ide_terminal_close)
     app.router.add_post('/ide/terminal/resize', handle_ide_terminal_resize)

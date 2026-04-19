@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:voice_assistant/core/services/ide_agentic_service.dart';
 import 'package:voice_assistant/core/services/ide_files_service.dart';
 import 'package:voice_assistant/core/services/ide_terminal_service.dart';
 
@@ -135,5 +136,63 @@ class FakeIdeTerminalService extends IdeTerminalService {
   Future<void> dispose() async {
     await _output.close();
     await _status.close();
+  }
+}
+
+class FakeIdeAgenticService extends IdeAgenticService {
+  FakeIdeAgenticService() : super();
+
+  final StreamController<IdeAgenticEvent> _events =
+      StreamController<IdeAgenticEvent>.broadcast(sync: true);
+  final StreamController<IdeAgenticConnectionState> _states =
+      StreamController<IdeAgenticConnectionState>.broadcast(sync: true);
+
+  IdeAgenticConnectionState _currentState = IdeAgenticConnectionState.idle;
+  int _currentLastSeq = 0;
+  String? _currentError;
+
+  @override
+  Stream<IdeAgenticEvent> get events => _events.stream;
+
+  @override
+  Stream<IdeAgenticConnectionState> get stateStream => _states.stream;
+
+  @override
+  IdeAgenticConnectionState get connectionState => _currentState;
+
+  @override
+  int get lastSeq => _currentLastSeq;
+
+  @override
+  String? get lastError => _currentError;
+
+  @override
+  Future<void> start({String? sessionId}) async {
+    setState(IdeAgenticConnectionState.connected);
+  }
+
+  @override
+  Future<void> stop() async {
+    setState(IdeAgenticConnectionState.closed);
+  }
+
+  @override
+  Future<void> dispose() async {
+    await stop();
+    await _events.close();
+    await _states.close();
+  }
+
+  void emitEvent(IdeAgenticEvent event) {
+    if (event.seq > _currentLastSeq) {
+      _currentLastSeq = event.seq;
+    }
+    _events.add(event);
+  }
+
+  void setState(IdeAgenticConnectionState state, {String? error}) {
+    _currentState = state;
+    _currentError = error;
+    _states.add(state);
   }
 }

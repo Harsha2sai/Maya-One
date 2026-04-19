@@ -55,6 +55,7 @@ class GlobalAgentContainer:
     _ide_file_service: Any = None     # P12.1 IDE workspace-scoped file service
     _ide_action_guard: Any = None     # P12.1 IDE action guard
     _ide_state_bus: Any = None        # P12.1 IDE event/state bus
+    _terminal_manager: Any = None     # P12.3 terminal manager (PTY + websocket)
 
     @classmethod
     async def initialize(cls):
@@ -93,8 +94,8 @@ class GlobalAgentContainer:
             ActionGuard,
             IDEFileService,
             IDESessionManager,
-            IDEStateBus,,
-    TerminalManager,
+            IDEStateBus,
+            TerminalManager,
         )
         from core.agents.subagent import (
             SubAgentManager as RuntimeSubAgentManager,
@@ -191,7 +192,10 @@ class GlobalAgentContainer:
         cls._ide_file_service = IDEFileService(cls._ide_session_manager)
         cls._ide_action_guard = ActionGuard()
         cls._ide_state_bus = IDEStateBus()
+        cls._terminal_manager = TerminalManager()
         await cls._ide_session_manager.start_cleanup()
+        cls._terminal_manager.on_audit(cls._forward_terminal_audit_event)
+        await cls._terminal_manager.start()
         logger.info("🧰 IDE runtime initialized (P12.1 foundation)")
         
         # 3. Initialize Base LLM (Singleton connection/config)
@@ -613,6 +617,11 @@ class GlobalAgentContainer:
         return cls._ide_state_bus
 
     @classmethod
+    def get_terminal_manager(cls) -> Any:
+        """Return the shared terminal manager (P12.3)."""
+        return cls._terminal_manager
+
+    @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
         from core.system.host_capability_profile import (
             collect_host_capability_profile,
@@ -682,6 +691,35 @@ class GlobalAgentContainer:
                 logger.warning(f"⚠️ Failed stopping TaskWorker: {e}")
 
     @classmethod
+    async def _forward_terminal_audit_event(cls, event: Any) -> None:
+        """Forward terminal audit events into IDE state bus."""
+        if cls._ide_state_bus is None:
+            return
+
+        event_map = {
+            "open": "terminal_opened",
+            "input": "terminal_input",
+            "output": "terminal_output",
+            "resize": "terminal_resized",
+            "close": "terminal_closed",
+            "error": "terminal_error",
+            "reconnect": "terminal_reconnected",
+            "timeout": "terminal_timeout",
+        }
+        mapped_type = event_map.get(str(getattr(event, "event_type", "")).strip(), "terminal_event")
+        details = dict(getattr(event, "details", {}) or {})
+        await cls._ide_state_bus.emit(
+            mapped_type,
+            {
+                "session_id": getattr(event, "session_id", None),
+                "agent_id": "terminal",
+                "status": str(getattr(event, "event_type", "") or ""),
+                "payload": details,
+                "timestamp": float(getattr(event, "timestamp", 0.0) or 0.0),
+            },
+        )
+
+    @classmethod
     async def shutdown_background_tasks(cls) -> None:
         """Stop long-lived background tasks owned by the global container."""
         if cls._sentinel is not None:
@@ -719,3 +757,11 @@ class GlobalAgentContainer:
                 await cls._ide_session_manager.stop_cleanup()
             except Exception as e:
                 logger.warning(f"⚠️ Failed to stop IDE session cleanup loop: {e}")
+
+        if cls._terminal_manager is not None:
+            try:
+                await cls._terminal_manager.stop()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop terminal manager: {e}")
+            finally:
+                cls._terminal_manager = None

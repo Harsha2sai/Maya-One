@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 
+from core.ide import IDEStateBus
 from core.communication import (
     publish_chat_event,
     publish_confirmation_required,
@@ -189,3 +191,49 @@ async def test_publish_confirmation_required_event() -> None:
     assert data["type"] == "confirmation_required"
     assert data["destructive"] is True
     assert data["timeout_seconds"] == 30
+
+
+@pytest.mark.asyncio
+async def test_publish_tool_execution_bridges_to_ide_state_bus(monkeypatch: pytest.MonkeyPatch) -> None:
+    room = _FakeRoom()
+    bus = IDEStateBus()
+    queue = bus.subscribe()
+
+    monkeypatch.setattr(
+        "core.runtime.global_agent.GlobalAgentContainer.get_ide_state_bus",
+        classmethod(lambda _cls: bus),
+    )
+
+    ok = await publish_tool_execution(
+        room,
+        "turn-bridge-1",
+        "web_search",
+        "started",
+        task_id="task-bridge-1",
+    )
+    assert ok is True
+
+    first = await asyncio.wait_for(queue.get(), timeout=1.0)
+    second = await asyncio.wait_for(queue.get(), timeout=1.0)
+    event_types = {first["event_type"], second["event_type"]}
+    assert "tool_started" in event_types
+    assert "task_step" in event_types
+
+
+@pytest.mark.asyncio
+async def test_publish_error_event_bridges_task_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    room = _FakeRoom()
+    bus = IDEStateBus()
+    queue = bus.subscribe()
+
+    monkeypatch.setattr(
+        "core.runtime.global_agent.GlobalAgentContainer.get_ide_state_bus",
+        classmethod(lambda _cls: bus),
+    )
+
+    ok = await publish_error_event(room, turn_id="turn-fail", message="boom", code="E_FAIL")
+    assert ok is True
+
+    bridged = await asyncio.wait_for(queue.get(), timeout=1.0)
+    assert bridged["event_type"] == "task_failed"
+    assert bridged["status"] == "error"

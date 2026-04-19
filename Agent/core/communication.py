@@ -19,6 +19,71 @@ def _with_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     return event_payload
 
 
+def _derive_ide_event_entries(chat_event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    event_type = str(chat_event.get("type") or "").strip().lower()
+    status = str(chat_event.get("status") or "").strip().lower()
+    trace_id = chat_event.get("trace_id")
+    task_id = chat_event.get("task_id") or chat_event.get("turn_id")
+
+    shared = {
+        "trace_id": trace_id,
+        "task_id": task_id,
+        "agent_id": "maya",
+        "status": status or None,
+        "payload": chat_event,
+    }
+
+    entries: list[tuple[str, dict[str, Any]]] = []
+    if event_type == "user_message":
+        entries.append(("task_started", dict(shared)))
+    elif event_type == "agent_thinking":
+        state = str(chat_event.get("state") or "").strip().lower() or "thinking"
+        item = dict(shared)
+        item["status"] = state
+        entries.append(("task_step", item))
+    elif event_type == "tool_execution":
+        if status in {"started", "running", "in_progress"}:
+            entries.append(("tool_started", dict(shared)))
+            entries.append(("task_step", dict(shared)))
+        elif status in {"failed", "error"}:
+            entries.append(("tool_finished", dict(shared)))
+            entries.append(("task_failed", dict(shared)))
+        else:
+            entries.append(("tool_finished", dict(shared)))
+            entries.append(("task_step", dict(shared)))
+    elif event_type in {"research_result", "media_result", "system_result", "assistant_final"}:
+        item = dict(shared)
+        item["status"] = status or "completed"
+        entries.append(("task_finished", item))
+    elif event_type == "turn_complete":
+        if status in {"failed", "error"}:
+            entries.append(("task_failed", dict(shared)))
+        else:
+            item = dict(shared)
+            item["status"] = status or "completed"
+            entries.append(("task_finished", item))
+    elif event_type == "error":
+        item = dict(shared)
+        item["status"] = status or "error"
+        entries.append(("task_failed", item))
+
+    return entries
+
+
+async def _emit_to_ide_state_bus(chat_event: dict[str, Any]) -> None:
+    try:
+        from core.runtime.global_agent import GlobalAgentContainer
+
+        state_bus = GlobalAgentContainer.get_ide_state_bus()
+        if state_bus is None:
+            return
+
+        for ide_event_type, ide_payload in _derive_ide_event_entries(chat_event):
+            await state_bus.emit(ide_event_type, ide_payload)
+    except Exception as e:
+        logger.debug("ide_state_bus_emit_failed type=%s error=%s", chat_event.get("type"), e)
+
+
 async def publish_chat_event(room: rtc.Room, event_data: dict[str, Any]) -> bool:
     """Publish validated structured event over LiveKit data channel."""
     try:
@@ -39,6 +104,7 @@ async def publish_chat_event(room: rtc.Room, event_data: dict[str, Any]) -> bool
             str(normalized.get("type") or ""),
             str(normalized.get("turn_id") or ""),
         )
+        await _emit_to_ide_state_bus(normalized)
         return True
     except Exception as e:
         logger.error("❌ Failed to publish chat event: %s", e)

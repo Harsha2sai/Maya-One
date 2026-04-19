@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/services/ide_agentic_service.dart';
 import '../../../core/services/ide_files_service.dart';
 import '../../../core/services/ide_terminal_service.dart';
 import '../../../state/providers/auth_provider.dart';
@@ -14,10 +15,12 @@ class IDETab extends StatefulWidget {
     super.key,
     this.filesService,
     this.terminalService,
+    this.agenticService,
   });
 
   final IdeFilesService? filesService;
   final IdeTerminalService? terminalService;
+  final IdeAgenticService? agenticService;
 
   @override
   State<IDETab> createState() => _IDETabState();
@@ -79,7 +82,7 @@ class _IDETabState extends State<IDETab> with SingleTickerProviderStateMixin {
             children: [
               _FilesPane(service: widget.filesService),
               _TerminalPane(service: widget.terminalService),
-              const _AgenticPane(),
+              _AgenticPane(service: widget.agenticService),
             ],
           ),
         ),
@@ -971,29 +974,463 @@ class _TerminalPaneState extends State<_TerminalPane> {
   }
 }
 
-class _AgenticPane extends StatelessWidget {
-  const _AgenticPane();
+class _AgenticPane extends StatefulWidget {
+  const _AgenticPane({this.service});
+
+  final IdeAgenticService? service;
+
+  @override
+  State<_AgenticPane> createState() => _AgenticPaneState();
+}
+
+class _AgenticPaneState extends State<_AgenticPane> {
+  static const int _maxEvents = 400;
+
+  late final IdeAgenticService _service;
+  StreamSubscription<IdeAgenticEvent>? _eventSub;
+  StreamSubscription<IdeAgenticConnectionState>? _stateSub;
+  Timer? _flushTimer;
+
+  final List<IdeAgenticEvent> _events = <IdeAgenticEvent>[];
+  final List<IdeAgenticEvent> _pendingEvents = <IdeAgenticEvent>[];
+  final Set<int> _seenSeq = <int>{};
+  final List<int> _recentEventTimestampsMs = <int>[];
+
+  IdeAgenticConnectionState _connectionState = IdeAgenticConnectionState.idle;
+  bool _isCatchingUp = false;
+  String? _errorBanner;
+
+  String _selectedEventType = 'All';
+  String _selectedStatus = 'All';
+  String _selectedTaskId = 'All';
+  String _selectedAgentId = 'All';
+
+  @override
+  void initState() {
+    super.initState();
+    _service = widget.service ?? IdeAgenticService();
+    _eventSub = _service.events.listen(_onAgenticEvent);
+    _stateSub = _service.stateStream.listen((state) {
+      if (!mounted) return;
+      setState(() {
+        _connectionState = state;
+        _errorBanner = state == IdeAgenticConnectionState.error ? _service.lastError ?? 'Connection error' : null;
+      });
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_service.start());
+    });
+  }
+
+  @override
+  void dispose() {
+    _flushTimer?.cancel();
+    if (_eventSub != null) {
+      unawaited(_eventSub!.cancel());
+    }
+    if (_stateSub != null) {
+      unawaited(_stateSub!.cancel());
+    }
+    unawaited(_service.dispose());
+    super.dispose();
+  }
+
+  void _onAgenticEvent(IdeAgenticEvent event) {
+    if (!mounted) return;
+    if (_seenSeq.contains(event.seq)) return;
+    _seenSeq.add(event.seq);
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _recentEventTimestampsMs.add(now);
+    _recentEventTimestampsMs.removeWhere((ts) => (now - ts) > 1000);
+    final shouldCatchUp = _recentEventTimestampsMs.length > 60;
+
+    if (_isCatchingUp != shouldCatchUp) {
+      setState(() {
+        _isCatchingUp = shouldCatchUp;
+      });
+    }
+
+    if (shouldCatchUp) {
+      _pendingEvents.add(event);
+      _flushTimer ??= Timer.periodic(const Duration(milliseconds: 200), (_) {
+        if (!mounted) return;
+        if (_pendingEvents.isEmpty) return;
+        setState(() {
+          _events.insertAll(0, _pendingEvents);
+          _pendingEvents.clear();
+          if (_events.length > _maxEvents) {
+            _events.removeRange(_maxEvents, _events.length);
+          }
+        });
+      });
+      return;
+    }
+
+    if (_flushTimer != null) {
+      _flushTimer?.cancel();
+      _flushTimer = null;
+      if (_pendingEvents.isNotEmpty) {
+        _events.insertAll(0, _pendingEvents);
+        _pendingEvents.clear();
+      }
+    }
+
+    setState(() {
+      _events.insert(0, event);
+      if (_events.length > _maxEvents) {
+        _events.removeRange(_maxEvents, _events.length);
+      }
+    });
+  }
+
+  List<IdeAgenticEvent> _filteredEvents() {
+    return _events.where((event) {
+      if (_selectedEventType != 'All' && event.eventType != _selectedEventType) return false;
+      if (_selectedStatus != 'All' && (event.status ?? '-') != _selectedStatus) return false;
+      if (_selectedTaskId != 'All' && (event.taskId ?? '-') != _selectedTaskId) return false;
+      if (_selectedAgentId != 'All' && (event.agentId ?? '-') != _selectedAgentId) return false;
+      return true;
+    }).toList(growable: false);
+  }
+
+  List<String> _valuesFor(String kind) {
+    final values = <String>{};
+    for (final event in _events) {
+      switch (kind) {
+        case 'event_type':
+          values.add(event.eventType);
+          break;
+        case 'status':
+          values.add(event.status ?? '-');
+          break;
+        case 'task_id':
+          values.add(event.taskId ?? '-');
+          break;
+        case 'agent_id':
+          values.add(event.agentId ?? '-');
+          break;
+      }
+    }
+    final sorted = values.toList()..sort();
+    return <String>['All', ...sorted];
+  }
+
+  List<_AgenticTaskGroup> _groupedByTask(List<IdeAgenticEvent> events) {
+    final grouped = <String, List<IdeAgenticEvent>>{};
+    for (final event in events) {
+      final key = event.taskId ?? 'unscoped';
+      grouped.putIfAbsent(key, () => <IdeAgenticEvent>[]).add(event);
+    }
+    return grouped.entries
+        .map((entry) {
+          final list = entry.value..sort((a, b) => a.seq.compareTo(b.seq));
+          return _AgenticTaskGroup(taskId: entry.key, events: list);
+        })
+        .toList(growable: false)
+      ..sort((a, b) {
+        final aSeq = a.events.isNotEmpty ? a.events.last.seq : 0;
+        final bSeq = b.events.isNotEmpty ? b.events.last.seq : 0;
+        return bSeq.compareTo(aSeq);
+      });
+  }
+
+  Color _statusColor(IdeAgenticConnectionState state) {
+    switch (state) {
+      case IdeAgenticConnectionState.connected:
+        return Colors.greenAccent;
+      case IdeAgenticConnectionState.reconnecting:
+      case IdeAgenticConnectionState.connecting:
+        return Colors.orangeAccent;
+      case IdeAgenticConnectionState.error:
+        return ZoyaTheme.danger;
+      case IdeAgenticConnectionState.closed:
+      case IdeAgenticConnectionState.idle:
+        return ZoyaTheme.textMuted;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Center(
+    final filtered = _filteredEvents();
+    final groupedTasks = _groupedByTask(filtered);
+    final statusLabel = _isCatchingUp ? 'Catching up' : 'Live';
+
+    return Container(
       key: const Key('ide-pane-agentic'),
+      color: const Color(0xFF0A0F1A),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.smart_toy_outlined, size: 48, color: ZoyaTheme.textMuted.withValues(alpha: 0.5)),
-          const SizedBox(height: 16),
-          const Text(
-            'Agentic - Coming in P12.5',
-            style: TextStyle(color: ZoyaTheme.textMuted, fontSize: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: ZoyaTheme.glassBorder)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  key: const Key('ide-agentic-connection'),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _statusColor(_connectionState).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: _statusColor(_connectionState).withValues(alpha: 0.5)),
+                  ),
+                  child: Text(
+                    _connectionState.name,
+                    style: TextStyle(color: _statusColor(_connectionState), fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  key: const Key('ide-agentic-live-state'),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: (_isCatchingUp ? Colors.orange : Colors.green).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(
+                      color: _isCatchingUp ? Colors.orangeAccent : Colors.greenAccent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  'Seq ${_service.lastSeq}',
+                  style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.9), fontSize: 11),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 8),
-          Text(
-            'AI-powered code assistance',
-            style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.7), fontSize: 12),
+          _buildFilters(),
+          if (_errorBanner != null)
+            Container(
+              width: double.infinity,
+              color: ZoyaTheme.danger.withValues(alpha: 0.12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Text(
+                _errorBanner!,
+                style: const TextStyle(color: ZoyaTheme.danger, fontSize: 12),
+              ),
+            ),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth < 920) {
+                  return Column(
+                    children: [
+                      Expanded(child: _buildEventFeed(filtered)),
+                      Divider(height: 1, color: ZoyaTheme.glassBorder),
+                      Expanded(child: _buildTimeline(groupedTasks)),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(flex: 5, child: _buildEventFeed(filtered)),
+                    VerticalDivider(width: 1, color: ZoyaTheme.glassBorder),
+                    Expanded(flex: 4, child: _buildTimeline(groupedTasks)),
+                  ],
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildFilters() {
+    return Container(
+      key: const Key('ide-agentic-filters'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: ZoyaTheme.glassBorder)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          _buildFilterDropdown(
+            keyName: 'event_type',
+            label: 'Type',
+            value: _selectedEventType,
+            items: _valuesFor('event_type'),
+            onChanged: (value) => setState(() => _selectedEventType = value),
+          ),
+          _buildFilterDropdown(
+            keyName: 'status',
+            label: 'Status',
+            value: _selectedStatus,
+            items: _valuesFor('status'),
+            onChanged: (value) => setState(() => _selectedStatus = value),
+          ),
+          _buildFilterDropdown(
+            keyName: 'task_id',
+            label: 'Task',
+            value: _selectedTaskId,
+            items: _valuesFor('task_id'),
+            onChanged: (value) => setState(() => _selectedTaskId = value),
+          ),
+          _buildFilterDropdown(
+            keyName: 'agent_id',
+            label: 'Agent',
+            value: _selectedAgentId,
+            items: _valuesFor('agent_id'),
+            onChanged: (value) => setState(() => _selectedAgentId = value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterDropdown({
+    required String keyName,
+    required String label,
+    required String value,
+    required List<String> items,
+    required ValueChanged<String> onChanged,
+  }) {
+    return SizedBox(
+      width: 180,
+      child: DropdownButtonFormField<String>(
+        key: Key('ide-agentic-filter-$keyName'),
+        initialValue: items.contains(value) ? value : 'All',
+        isExpanded: true,
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85), fontSize: 12),
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          enabledBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: ZoyaTheme.glassBorder),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: BorderSide(color: ZoyaTheme.accent.withValues(alpha: 0.7)),
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+        dropdownColor: const Color(0xFF0F172A),
+        style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12),
+        items: items
+            .map(
+              (item) => DropdownMenuItem<String>(
+                value: item,
+                child: Text(item, overflow: TextOverflow.ellipsis),
+              ),
+            )
+            .toList(growable: false),
+        onChanged: (next) {
+          if (next == null) return;
+          onChanged(next);
+        },
+      ),
+    );
+  }
+
+  Widget _buildEventFeed(List<IdeAgenticEvent> events) {
+    if (events.isEmpty) {
+      return Center(
+        child: Text(
+          'Waiting for runtime events…',
+          style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85)),
+        ),
+      );
+    }
+
+    return ListView.separated(
+      key: const Key('ide-agentic-feed'),
+      itemCount: events.length,
+      separatorBuilder: (_, __) => Divider(height: 1, color: ZoyaTheme.glassBorder),
+      itemBuilder: (context, index) {
+        final event = events[index];
+        final status = event.status ?? '-';
+        return ListTile(
+          dense: true,
+          title: Text(
+            event.eventType,
+            style: const TextStyle(color: ZoyaTheme.textMain, fontWeight: FontWeight.w600, fontSize: 12),
+          ),
+          subtitle: Text(
+            'task=${event.taskId ?? '-'} · agent=${event.agentId ?? '-'} · status=$status',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.8), fontSize: 11),
+          ),
+          trailing: Text(
+            '#${event.seq}',
+            style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.75), fontSize: 11),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildTimeline(List<_AgenticTaskGroup> groups) {
+    if (groups.isEmpty) {
+      return Center(
+        child: Text(
+          'No task timeline yet',
+          style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85)),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      key: const Key('ide-agentic-timeline'),
+      itemCount: groups.length,
+      itemBuilder: (context, index) {
+        final group = groups[index];
+        return ExpansionTile(
+          key: Key('ide-agentic-task-${group.taskId}'),
+          initiallyExpanded: index == 0,
+          title: Text(
+            group.taskId,
+            style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(
+            '${group.events.length} events',
+            style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.8), fontSize: 11),
+          ),
+          children: group.events
+              .map(
+                (event) => ListTile(
+                  dense: true,
+                  leading: Icon(Icons.fiber_manual_record, size: 10, color: ZoyaTheme.accent.withValues(alpha: 0.9)),
+                  title: Text(
+                    event.eventType,
+                    style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12),
+                  ),
+                  subtitle: Text(
+                    event.status ?? '-',
+                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85), fontSize: 11),
+                  ),
+                  trailing: Text(
+                    '#${event.seq}',
+                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.75), fontSize: 11),
+                  ),
+                ),
+              )
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+}
+
+class _AgenticTaskGroup {
+  const _AgenticTaskGroup({
+    required this.taskId,
+    required this.events,
+  });
+
+  final String taskId;
+  final List<IdeAgenticEvent> events;
 }

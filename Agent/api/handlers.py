@@ -205,6 +205,32 @@ def _get_ide_runtime_components():
     return session_manager, file_service, action_guard, state_bus
 
 
+def _get_terminal_manager_component(request):
+    """Resolve terminal manager from app attachment or global container."""
+    agent = getattr(request.app, "_agent", None)
+    if agent is not None:
+        manager = getattr(agent, "_terminal_manager", None)
+        if manager is not None:
+            return manager
+
+    from core.runtime.global_agent import GlobalAgentContainer
+
+    manager = GlobalAgentContainer.get_terminal_manager()
+    if manager is None:
+        raise RuntimeError("Terminal manager not initialized")
+    return manager
+
+
+def _parse_positive_int(raw_value, *, default: int) -> int:
+    try:
+        parsed = int(str(raw_value or "").strip())
+        if parsed < 0:
+            return default
+        return parsed
+    except Exception:
+        return default
+
+
 def _guard_error_response(decision):
     status = 409 if getattr(decision, "requires_approval", False) else 403
     return web.json_response(
@@ -461,6 +487,54 @@ async def handle_ide_file_write(request):
             )
         logger.error("❌ IDE file write failed: %s", e, exc_info=True)
         return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_events_stream(request):
+    """GET /ide/events/stream — Authoritative IDE runtime event stream (WS)."""
+    try:
+        _session_manager, _file_service, _action_guard, state_bus = _get_ide_runtime_components()
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=503)
+
+    session_id_filter = str(request.query.get("session_id", "")).strip() or None
+    after_seq = _parse_positive_int(request.query.get("after_seq"), default=0)
+    limit = _parse_positive_int(request.query.get("limit"), default=500)
+    limit = max(1, min(limit, 5000))
+
+    ws = web.WebSocketResponse(heartbeat=30.0, autoping=True)
+    await ws.prepare(request)
+
+    queue = state_bus.subscribe(session_id=session_id_filter)
+    replay = state_bus.get_events_since(
+        after_seq=after_seq,
+        limit=limit,
+        session_id=session_id_filter,
+    )
+
+    try:
+        for event in replay:
+            await ws.send_json(event)
+
+        while not ws.closed:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                if ws.closed:
+                    break
+                await ws.ping()
+                continue
+
+            await ws.send_json(event)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning("ide_events_stream_error session_id=%s error=%s", session_id_filter or "-", e)
+    finally:
+        state_bus.unsubscribe(queue=queue)
+        if not ws.closed:
+            await ws.close()
+
+    return ws
 
 
 async def _ensure_room_dispatch(room_name: str) -> None:
@@ -1031,20 +1105,7 @@ async def handle_ide_terminal_open(request):
                 status=400,
             )
 
-        # Get terminal manager from runtime container
-        agent = getattr(request.app, "_agent", None)
-        if agent is None:
-            return web.json_response(
-                {"error": "Terminal manager not available"},
-                status=503,
-            )
-
-        terminal_manager = getattr(agent, "_terminal_manager", None)
-        if terminal_manager is None:
-            return web.json_response(
-                {"error": "Terminal manager not initialized"},
-                status=503,
-            )
+        terminal_manager = _get_terminal_manager_component(request)
 
         session_id, token, expires_at = await terminal_manager.open_terminal(
             ide_session_id=ide_session_id,
@@ -1080,19 +1141,7 @@ async def handle_ide_terminal_close(request):
                 status=400,
             )
 
-        agent = getattr(request.app, "_agent", None)
-        if agent is None:
-            return web.json_response(
-                {"error": "Terminal manager not available"},
-                status=503,
-            )
-
-        terminal_manager = getattr(agent, "_terminal_manager", None)
-        if terminal_manager is None:
-            return web.json_response(
-                {"error": "Terminal manager not initialized"},
-                status=503,
-            )
+        terminal_manager = _get_terminal_manager_component(request)
 
         success = await terminal_manager.close_terminal(session_id)
         if not success:
@@ -1122,19 +1171,7 @@ async def handle_ide_terminal_resize(request):
                 status=400,
             )
 
-        agent = getattr(request.app, "_agent", None)
-        if agent is None:
-            return web.json_response(
-                {"error": "Terminal manager not available"},
-                status=503,
-            )
-
-        terminal_manager = getattr(agent, "_terminal_manager", None)
-        if terminal_manager is None:
-            return web.json_response(
-                {"error": "Terminal manager not initialized"},
-                status=503,
-            )
+        terminal_manager = _get_terminal_manager_component(request)
 
         success = await terminal_manager.resize_terminal(session_id, rows, cols)
         if not success:
@@ -1162,19 +1199,10 @@ async def handle_terminal_websocket(request):
             status=400,
         )
 
-    agent = getattr(request.app, "_agent", None)
-    if agent is None:
-        return web.json_response(
-            {"error": "Terminal manager not available"},
-            status=503,
-        )
-
-    terminal_manager = getattr(agent, "_terminal_manager", None)
-    if terminal_manager is None:
-        return web.json_response(
-            {"error": "Terminal manager not initialized"},
-            status=503,
-        )
+    try:
+        terminal_manager = _get_terminal_manager_component(request)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=503)
 
     # Validate token
     session = await terminal_manager.validate_token(token)
