@@ -191,6 +191,278 @@ def _parse_env_bool(raw_value: str) -> bool:
     normalized = str(raw_value or '').strip().lower()
     return normalized in {'1', 'true', 'yes', 'on', 'enabled'}
 
+
+def _get_ide_runtime_components():
+    """Resolve IDE runtime singletons from the global container."""
+    from core.runtime.global_agent import GlobalAgentContainer
+
+    session_manager = GlobalAgentContainer.get_ide_session_manager()
+    file_service = GlobalAgentContainer.get_ide_file_service()
+    action_guard = GlobalAgentContainer.get_ide_action_guard()
+    state_bus = GlobalAgentContainer.get_ide_state_bus()
+    if not all([session_manager, file_service, action_guard, state_bus]):
+        raise RuntimeError("IDE runtime not initialized")
+    return session_manager, file_service, action_guard, state_bus
+
+
+def _guard_error_response(decision):
+    status = 409 if getattr(decision, "requires_approval", False) else 403
+    return web.json_response(
+        {
+            "error": "action not permitted",
+            "decision": {
+                "risk": decision.risk,
+                "allowed": decision.allowed,
+                "requires_approval": decision.requires_approval,
+                "policy_reason": decision.policy_reason,
+            },
+        },
+        status=status,
+    )
+
+
+async def handle_ide_session_open(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    workspace_path = str((data or {}).get("workspace_path") or "").strip()
+    user_id = str((data or {}).get("user_id") or "unknown").strip() or "unknown"
+    if not workspace_path:
+        return web.json_response({"error": "workspace_path is required"}, status=400)
+
+    try:
+        session_manager, _file_service, _action_guard, state_bus = _get_ide_runtime_components()
+        session = session_manager.open_session(workspace_path=workspace_path, user_id=user_id)
+        await state_bus.emit(
+            "session_opened",
+            {
+                "session_id": session.session_id,
+                "workspace_path": session.workspace_path,
+                "user_id": session.user_id,
+            },
+        )
+        return web.json_response(
+            {
+                "session_id": session.session_id,
+                "workspace_path": session.workspace_path,
+                "user_id": session.user_id,
+                "created_at": session.created_at,
+                "status": session.status,
+            }
+        )
+    except Exception as e:
+        from core.ide import MaxSessionsExceededError
+
+        if isinstance(e, MaxSessionsExceededError):
+            return web.json_response({"error": str(e)}, status=429)
+        if isinstance(e, ValueError):
+            return web.json_response({"error": str(e)}, status=400)
+        logger.error("❌ IDE session open failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_session_close(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    session_id = str((data or {}).get("session_id") or "").strip()
+    if not session_id:
+        return web.json_response({"error": "session_id is required"}, status=400)
+
+    try:
+        session_manager, _file_service, _action_guard, state_bus = _get_ide_runtime_components()
+        closed = session_manager.close_session(session_id)
+        if not closed:
+            return web.json_response({"error": "session not found"}, status=404)
+        await state_bus.emit("session_closed", {"session_id": session_id})
+        return web.json_response({"status": "ok", "closed": True, "session_id": session_id})
+    except Exception as e:
+        logger.error("❌ IDE session close failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_files_tree(request):
+    session_id = str(request.query.get("session_id", "")).strip()
+    relative_path = str(request.query.get("relative_path", "")).strip()
+    if not session_id:
+        return web.json_response({"error": "session_id is required"}, status=400)
+
+    from core.ide import ActionEnvelope, SessionNotFoundError
+
+    try:
+        session_manager, file_service, action_guard, state_bus = _get_ide_runtime_components()
+        if session_manager.get_session(session_id) is None:
+            return web.json_response({"error": "session not found"}, status=404)
+
+        action = ActionEnvelope(
+            type="ide_action",
+            target="file",
+            operation="read",
+            arguments={"relative_path": relative_path},
+            confidence=1.0,
+            reason="list tree",
+        )
+        decision = action_guard.check(action)
+        if not decision.allowed or decision.requires_approval:
+            await state_bus.emit(
+                "action_blocked",
+                {
+                    "session_id": session_id,
+                    "target": action.target,
+                    "operation": action.operation,
+                    "path": relative_path,
+                    "risk": decision.risk,
+                    "reason": decision.policy_reason,
+                },
+            )
+            return _guard_error_response(decision)
+
+        tree = file_service.list_tree(session_id=session_id, relative_path=relative_path)
+        await state_bus.emit(
+            "file_read",
+            {"session_id": session_id, "path": relative_path, "kind": "tree"},
+        )
+        return web.json_response({"session_id": session_id, "path": relative_path, "entries": tree})
+    except Exception as e:
+        from core.ide import PathEscapeError
+
+        if isinstance(e, SessionNotFoundError):
+            return web.json_response({"error": str(e)}, status=404)
+        if isinstance(e, (PathEscapeError, FileNotFoundError, NotADirectoryError)):
+            return web.json_response({"error": str(e)}, status=400)
+        logger.error("❌ IDE files tree failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_file_read(request):
+    session_id = str(request.query.get("session_id", "")).strip()
+    relative_path = str(request.query.get("relative_path", "")).strip()
+    if not session_id:
+        return web.json_response({"error": "session_id is required"}, status=400)
+    if not relative_path:
+        return web.json_response({"error": "relative_path is required"}, status=400)
+
+    from core.ide import ActionEnvelope, SessionNotFoundError
+
+    try:
+        session_manager, file_service, action_guard, state_bus = _get_ide_runtime_components()
+        if session_manager.get_session(session_id) is None:
+            return web.json_response({"error": "session not found"}, status=404)
+
+        action = ActionEnvelope(
+            type="ide_action",
+            target="file",
+            operation="read",
+            arguments={"relative_path": relative_path},
+            confidence=1.0,
+            reason="file read",
+        )
+        decision = action_guard.check(action)
+        if not decision.allowed or decision.requires_approval:
+            await state_bus.emit(
+                "action_blocked",
+                {
+                    "session_id": session_id,
+                    "target": action.target,
+                    "operation": action.operation,
+                    "path": relative_path,
+                    "risk": decision.risk,
+                    "reason": decision.policy_reason,
+                },
+            )
+            return _guard_error_response(decision)
+
+        content = file_service.read_file(session_id=session_id, relative_path=relative_path)
+        await state_bus.emit("file_read", {"session_id": session_id, "path": relative_path})
+        return web.json_response(
+            {"session_id": session_id, "path": relative_path, "content": content}
+        )
+    except Exception as e:
+        from core.ide import PathEscapeError
+
+        if isinstance(e, SessionNotFoundError):
+            return web.json_response({"error": str(e)}, status=404)
+        if isinstance(e, (PathEscapeError, FileNotFoundError)):
+            return web.json_response({"error": str(e)}, status=400)
+        logger.error("❌ IDE file read failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_file_write(request):
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    session_id = str((data or {}).get("session_id") or "").strip()
+    relative_path = str((data or {}).get("relative_path") or "").strip()
+    content = str((data or {}).get("content") or "")
+    if not session_id:
+        return web.json_response({"error": "session_id is required"}, status=400)
+    if not relative_path:
+        return web.json_response({"error": "relative_path is required"}, status=400)
+
+    from core.ide import ActionEnvelope, SessionNotFoundError
+
+    try:
+        session_manager, file_service, action_guard, state_bus = _get_ide_runtime_components()
+        if session_manager.get_session(session_id) is None:
+            return web.json_response({"error": "session not found"}, status=404)
+
+        action = ActionEnvelope(
+            type="ide_action",
+            target="file",
+            operation="write",
+            arguments={"relative_path": relative_path, "content": content[:1024]},
+            confidence=1.0,
+            reason="file write",
+        )
+        decision = action_guard.check(action)
+        if not decision.allowed or decision.requires_approval:
+            await state_bus.emit(
+                "action_blocked",
+                {
+                    "session_id": session_id,
+                    "target": action.target,
+                    "operation": action.operation,
+                    "path": relative_path,
+                    "risk": decision.risk,
+                    "reason": decision.policy_reason,
+                },
+            )
+            return _guard_error_response(decision)
+
+        file_service.write_file(session_id=session_id, relative_path=relative_path, content=content)
+        await state_bus.emit(
+            "file_written",
+            {"session_id": session_id, "path": relative_path, "bytes": len(content.encode("utf-8"))},
+        )
+        return web.json_response({"status": "ok", "session_id": session_id, "path": relative_path})
+    except Exception as e:
+        from core.ide import PathEscapeError
+
+        if isinstance(e, SessionNotFoundError):
+            return web.json_response({"error": str(e)}, status=404)
+        if isinstance(e, PathEscapeError):
+            return web.json_response({"error": str(e)}, status=400)
+        if isinstance(e, IsADirectoryError):
+            return web.json_response(
+                {"error": "Cannot write to a directory path. Provide a file path."},
+                status=400,
+            )
+        if isinstance(e, NotADirectoryError):
+            return web.json_response(
+                {"error": "A path component is a directory, not a file. Check your path."},
+                status=400,
+            )
+        logger.error("❌ IDE file write failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
 async def _ensure_room_dispatch(room_name: str) -> None:
     """
     Ensure the room has a dispatch targeting LIVEKIT_AGENT_NAME.

@@ -1,6 +1,8 @@
 """Session and turn lifecycle helpers for AgentOrchestrator."""
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
 import os
 import re
@@ -141,7 +143,7 @@ class SessionLifecycle:
 
         tape = getattr(self._owner, "_conversation_tape", None)
         if tape is not None:
-            event = tape.append_event(
+            event_result = tape.append_event(
                 role=role,
                 text=text,
                 source=source_name,
@@ -151,7 +153,23 @@ class SessionLifecycle:
                 turn_id=turn_id,
                 timestamp=datetime.now(timezone.utc).isoformat(),
             )
-            normalized_entry = event.to_history_entry()
+            resolved_event = self._resolve_tape_result(event_result)
+            if resolved_event is not None:
+                normalized_entry = resolved_event.to_history_entry()
+            else:
+                # Sync fallback preserves immediate availability for current turn.
+                normalized_entry = {
+                    "role": str(role or "user").strip().lower() or "user",
+                    "content": text,
+                    "source": source_name,
+                    "route": route_name,
+                    "intent": self._infer_intent(text=text, route=route_name, source=source_name),
+                    "entities": [],
+                    "topic": "",
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
         else:
             normalized_entry = {
                 "role": str(role or "user").strip().lower() or "user",
@@ -191,10 +209,25 @@ class SessionLifecycle:
                 history = history[-int(limit) :]
             return history
 
-        return tape.history(
+        history_result = tape.history(
             session_id=str(session_id or "").strip(),
             limit=limit,
         )
+        resolved_history = self._resolve_tape_result(history_result)
+        if resolved_history is not None:
+            return list(resolved_history)
+
+        # Running-loop fallback path for sync callers.
+        history = list(getattr(self._owner, "_conversation_history", []) or [])
+        if session_id:
+            history = [
+                item
+                for item in history
+                if str(item.get("session_id") or "").strip() in {"", str(session_id).strip()}
+            ]
+        if limit is not None and limit > 0:
+            history = history[-int(limit) :]
+        return history
 
     def inject_session_continuity_summary(self, summary: str) -> bool:
         text = str(summary or "").strip()
@@ -234,6 +267,18 @@ class SessionLifecycle:
             msg for msg in self._owner._conversation_history
             if str(msg.get("source", "")) != "session_continuity"
         ]
+
+    def _resolve_tape_result(self, value: Any) -> Any:
+        if not inspect.isawaitable(value):
+            return value
+        try:
+            asyncio.get_running_loop()
+            # Running loop: cannot block in sync method.
+            # Schedule and return None so caller can use deterministic fallback.
+            asyncio.create_task(value)
+            return None
+        except RuntimeError:
+            return asyncio.run(value)
 
     @staticmethod
     def _normalize_route(*, route: str, source: str) -> str:

@@ -334,7 +334,8 @@ async def test_research_route_publishes_searching_and_tool_started_for_live_room
 
     with patch("core.orchestrator.agent_orchestrator.publish_agent_thinking", new=AsyncMock()) as publish_thinking, \
          patch("core.orchestrator.agent_orchestrator.publish_tool_execution", new=AsyncMock()) as publish_tool, \
-         patch("core.orchestrator.agent_orchestrator.asyncio.create_task") as create_task:
+         patch("core.orchestrator.agent_orchestrator.asyncio.create_task") as create_task, \
+         patch.object(orchestrator._conversation_tape, "append_event", new=AsyncMock()):
         create_task.return_value = MagicMock()
 
         response = await orchestrator._handle_research_route(
