@@ -93,7 +93,8 @@ class GlobalAgentContainer:
             ActionGuard,
             IDEFileService,
             IDESessionManager,
-            IDEStateBus,
+            IDEStateBus,,
+    TerminalManager,
         )
         from core.agents.subagent import (
             SubAgentManager as RuntimeSubAgentManager,

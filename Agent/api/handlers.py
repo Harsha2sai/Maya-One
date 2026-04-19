@@ -4,7 +4,7 @@ import logging
 import asyncio
 import re
 import time
-from aiohttp import web
+from aiohttp import web, WSMsgType
 from livekit.api import (
     AccessToken,
     VideoGrants,
@@ -1009,3 +1009,301 @@ async def handle_upload(request):
     except Exception as e:
         logger.error(f"❌ Upload error: {e}")
         return web.json_response({'error': str(e)}, status=500)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Terminal WebSocket Handlers (P12.3)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def handle_ide_terminal_open(request):
+    """POST /ide/terminal/open — Create terminal session, return session_id + token."""
+    from core.ide import TerminalManager, TerminalLimitExceededError
+
+    try:
+        data = await request.json()
+        ide_session_id = data.get("ide_session_id", "")
+        user_id = data.get("user_id", "")
+        cwd = data.get("cwd", "~")
+
+        if not ide_session_id or not user_id:
+            return web.json_response(
+                {"error": "Missing ide_session_id or user_id"},
+                status=400,
+            )
+
+        # Get terminal manager from runtime container
+        agent = getattr(request.app, "_agent", None)
+        if agent is None:
+            return web.json_response(
+                {"error": "Terminal manager not available"},
+                status=503,
+            )
+
+        terminal_manager = getattr(agent, "_terminal_manager", None)
+        if terminal_manager is None:
+            return web.json_response(
+                {"error": "Terminal manager not initialized"},
+                status=503,
+            )
+
+        session_id, token, expires_at = await terminal_manager.open_terminal(
+            ide_session_id=ide_session_id,
+            user_id=user_id,
+            cwd=cwd,
+        )
+
+        logger.info("terminal_opened session_id=%s user_id=%s", session_id, user_id)
+        return web.json_response({
+            "status": "ok",
+            "session_id": session_id,
+            "token": token,
+            "expires_at": expires_at,
+            "ws_url": f"/ws/terminal?session_id={session_id}&token={token}",
+        })
+    except TerminalLimitExceededError as e:
+        logger.warning("terminal_limit_exceeded user_id=%s", user_id)
+        return web.json_response({"error": str(e)}, status=429)
+    except Exception as e:
+        logger.error("❌ Terminal open failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_terminal_close(request):
+    """POST /ide/terminal/close — Close terminal session."""
+    try:
+        data = await request.json()
+        session_id = data.get("session_id", "")
+
+        if not session_id:
+            return web.json_response(
+                {"error": "Missing session_id"},
+                status=400,
+            )
+
+        agent = getattr(request.app, "_agent", None)
+        if agent is None:
+            return web.json_response(
+                {"error": "Terminal manager not available"},
+                status=503,
+            )
+
+        terminal_manager = getattr(agent, "_terminal_manager", None)
+        if terminal_manager is None:
+            return web.json_response(
+                {"error": "Terminal manager not initialized"},
+                status=503,
+            )
+
+        success = await terminal_manager.close_terminal(session_id)
+        if not success:
+            return web.json_response(
+                {"error": "Session not found or already closed"},
+                status=404,
+            )
+
+        logger.info("terminal_closed session_id=%s", session_id)
+        return web.json_response({"status": "ok", "session_id": session_id})
+    except Exception as e:
+        logger.error("❌ Terminal close failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_terminal_resize(request):
+    """POST /ide/terminal/resize — Resize terminal."""
+    try:
+        data = await request.json()
+        session_id = data.get("session_id", "")
+        rows = data.get("rows", 24)
+        cols = data.get("cols", 80)
+
+        if not session_id:
+            return web.json_response(
+                {"error": "Missing session_id"},
+                status=400,
+            )
+
+        agent = getattr(request.app, "_agent", None)
+        if agent is None:
+            return web.json_response(
+                {"error": "Terminal manager not available"},
+                status=503,
+            )
+
+        terminal_manager = getattr(agent, "_terminal_manager", None)
+        if terminal_manager is None:
+            return web.json_response(
+                {"error": "Terminal manager not initialized"},
+                status=503,
+            )
+
+        success = await terminal_manager.resize_terminal(session_id, rows, cols)
+        if not success:
+            return web.json_response(
+                {"error": "Session not found or resize failed"},
+                status=404,
+            )
+
+        return web.json_response({"status": "ok", "session_id": session_id})
+    except Exception as e:
+        logger.error("❌ Terminal resize failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_terminal_websocket(request):
+    """WebSocket endpoint for terminal streaming."""
+    from core.ide import TerminalManager
+
+    session_id = request.query.get("session_id", "")
+    token = request.query.get("token", "")
+
+    if not session_id or not token:
+        return web.json_response(
+            {"error": "Missing session_id or token"},
+            status=400,
+        )
+
+    agent = getattr(request.app, "_agent", None)
+    if agent is None:
+        return web.json_response(
+            {"error": "Terminal manager not available"},
+            status=503,
+        )
+
+    terminal_manager = getattr(agent, "_terminal_manager", None)
+    if terminal_manager is None:
+        return web.json_response(
+            {"error": "Terminal manager not initialized"},
+            status=503,
+        )
+
+    # Validate token
+    session = await terminal_manager.validate_token(token)
+    if session is None or session.session_id != session_id:
+        return web.json_response(
+            {"error": "Invalid token or session"},
+            status=401,
+        )
+
+    ws = web.WebSocketResponse(
+        heartbeat=30.0,
+        autoping=True,
+    )
+    await ws.prepare(request)
+
+    logger.info("terminal_ws_connected session_id=%s", session_id)
+    session.reconnect_count += 1
+
+    # Send initial acknowledgement with current offset
+    await ws.send_json({
+        "type": "connected",
+        "session_id": session_id,
+        "reconnect_count": session.reconnect_count,
+        "offset": session.write_offset,
+    })
+
+    # Send any buffered output since last known offset (for reconnects)
+    last_offset = session.write_offset
+    try:
+        # Background: stream output + handle input
+        input_task = asyncio.create_task(
+            _terminal_input_handler(ws, terminal_manager, session_id)
+        )
+        output_task = asyncio.create_task(
+            _terminal_output_handler(ws, terminal_manager, session_id, last_offset)
+        )
+
+        done, pending = await asyncio.wait(
+            [input_task, output_task],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        # Cancel remaining task
+        for task in pending:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    except Exception as e:
+        logger.warning("terminal_ws_error session_id=%s error=%s", session_id, e)
+    finally:
+        logger.info("terminal_ws_disconnected session_id=%s", session_id)
+        await ws.close()
+
+    return ws
+
+
+async def _terminal_input_handler(
+    ws,
+    terminal_manager,
+    session_id: str,
+):
+    """Handle input from WebSocket client to PTY."""
+    try:
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                data = json.loads(msg.data)
+                msg_type = data.get("type")
+
+                if msg_type == "input":
+                    # Terminal input
+                    text = data.get("text", "")
+                    await terminal_manager.write_input(session_id, text)
+
+                elif msg_type == "resize":
+                    # Resize event
+                    rows = data.get("rows", 24)
+                    cols = data.get("cols", 80)
+                    await terminal_manager.resize_terminal(session_id, rows, cols)
+
+                elif msg_type == "ping":
+                    # Client ping -> pong
+                    await ws.send_json({"type": "pong", "ts": data.get("ts")})
+
+            elif msg_type == WSMsgType.BINARY:
+                # Binary input (raw bytes)
+                text = msg.data.decode("utf-8", errors="replace")
+                await terminal_manager.write_input(session_id, text)
+
+            elif msg_type == WSMsgType.ERROR:
+                logger.warning("terminal_ws_error session_id=%s", session_id)
+                break
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning("terminal_input_error session_id=%s error=%s", session_id, e)
+
+
+async def _terminal_output_handler(
+    ws,
+    terminal_manager,
+    session_id: str,
+    start_offset: int,
+):
+    """Stream output from PTY ring buffer to WebSocket."""
+    try:
+        last_offset = start_offset
+
+        while True:
+            # Get new output since last offset
+            chunks, new_offset = await terminal_manager.get_output_since(
+                session_id, last_offset
+            )
+
+            for write_idx, chunk in chunks:
+                await ws.send_json({
+                    "type": "output",
+                    "text": chunk,
+                    "offset": write_idx,
+                })
+
+            last_offset = new_offset
+
+            # Small sleep to avoid busy loop
+            await asyncio.sleep(0.05)
+
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning("terminal_output_error session_id=%s error=%s", session_id, e)

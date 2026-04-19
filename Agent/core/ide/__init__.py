@@ -7,6 +7,12 @@ from .ide_session_manager import (
     SessionNotFoundError,
 )
 from .ide_state_bus import IDEStateBus
+from .ide_terminal_manager import (
+    TerminalManager,
+    TerminalSession,
+    TerminalAuditEvent,
+    TerminalLimitExceededError,
+)
 
 __all__ = [
     "ActionEnvelope",
@@ -19,5 +25,9 @@ __all__ = [
     "MaxSessionsExceededError",
     "PathEscapeError",
     "SessionNotFoundError",
+    "TerminalManager",
+    "TerminalSession",
+    "TerminalAuditEvent",
+    "TerminalLimitExceededError",
 ]
 

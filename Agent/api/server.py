@@ -9,6 +9,10 @@ from .handlers import (
     handle_ide_files_tree,
     handle_ide_session_close,
     handle_ide_session_open,
+    handle_ide_terminal_open,
+    handle_ide_terminal_close,
+    handle_ide_terminal_resize,
+    handle_terminal_websocket,
     handle_token,
     handle_health,
     handle_ready,
@@ -79,6 +83,10 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     app.router.add_get('/ide/files/tree', handle_ide_files_tree)
     app.router.add_get('/ide/file/read', handle_ide_file_read)
     app.router.add_post('/ide/file/write', handle_ide_file_write)
+    app.router.add_post('/ide/terminal/open', handle_ide_terminal_open)
+    app.router.add_post('/ide/terminal/close', handle_ide_terminal_close)
+    app.router.add_post('/ide/terminal/resize', handle_ide_terminal_resize)
+    app.router.add_get('/ws/terminal', handle_terminal_websocket)
     
     # Static files for uploads
     uploads_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')
