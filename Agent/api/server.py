@@ -4,6 +4,11 @@ import os
 from aiohttp import web
 from dotenv import load_dotenv
 from .handlers import (
+    handle_ide_file_read,
+    handle_ide_file_write,
+    handle_ide_files_tree,
+    handle_ide_session_close,
+    handle_ide_session_open,
     handle_token,
     handle_health,
     handle_ready,
@@ -50,6 +55,11 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     # Register routes
     from .handlers import (
         handle_upload,
+        handle_ide_file_read,
+        handle_ide_file_write,
+        handle_ide_files_tree,
+        handle_ide_session_close,
+        handle_ide_session_open,
         handle_token,
         handle_health,
         handle_ready,
@@ -64,6 +74,11 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     app.router.add_get('/ready', handle_ready)
     app.router.add_post('/api-keys', handle_api_keys)
     app.router.add_get('/api-keys/status', handle_get_api_status)
+    app.router.add_post('/ide/session/open', handle_ide_session_open)
+    app.router.add_post('/ide/session/close', handle_ide_session_close)
+    app.router.add_get('/ide/files/tree', handle_ide_files_tree)
+    app.router.add_get('/ide/file/read', handle_ide_file_read)
+    app.router.add_post('/ide/file/write', handle_ide_file_write)
     
     # Static files for uploads
     uploads_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'uploads')

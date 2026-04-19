@@ -51,6 +51,10 @@ class GlobalAgentContainer:
     _monitor: Any = None         # MayaMonitor (P28 observability bridge)
     _a2a_server: Any = None      # MayaA2AServer foundation stub (P28)
     _agentscope_memory: Any = None  # MayaAgentScopeMemory parallel store (P28)
+    _ide_session_manager: Any = None  # P12.1 IDE session lifecycle manager
+    _ide_file_service: Any = None     # P12.1 IDE workspace-scoped file service
+    _ide_action_guard: Any = None     # P12.1 IDE action guard
+    _ide_state_bus: Any = None        # P12.1 IDE event/state bus
 
     @classmethod
     async def initialize(cls):
@@ -85,6 +89,12 @@ class GlobalAgentContainer:
         from core.memory.agentscope_store import MayaAgentScopeMemory
         from core.observability import MayaMonitor
         from core.a2a import MayaA2AServer
+        from core.ide import (
+            ActionGuard,
+            IDEFileService,
+            IDESessionManager,
+            IDEStateBus,
+        )
         from core.agents.subagent import (
             SubAgentManager as RuntimeSubAgentManager,
             WorktreeManager as RuntimeWorktreeManager,
@@ -176,6 +186,12 @@ class GlobalAgentContainer:
         logger.info("🔌 MayaA2AServer initialized available=%s", cls._a2a_server.available)
         cls._agentscope_memory = MayaAgentScopeMemory(db_path=cls._task_store.db_path)
         logger.info("🧠 MayaAgentScopeMemory initialized (parallel to HybridMemoryManager)")
+        cls._ide_session_manager = IDESessionManager(max_concurrent=5)
+        cls._ide_file_service = IDEFileService(cls._ide_session_manager)
+        cls._ide_action_guard = ActionGuard()
+        cls._ide_state_bus = IDEStateBus()
+        await cls._ide_session_manager.start_cleanup()
+        logger.info("🧰 IDE runtime initialized (P12.1 foundation)")
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -576,6 +592,26 @@ class GlobalAgentContainer:
         return cls._agentscope_memory
 
     @classmethod
+    def get_ide_session_manager(cls) -> Any:
+        """Return the shared IDE session manager (P12.1)."""
+        return cls._ide_session_manager
+
+    @classmethod
+    def get_ide_file_service(cls) -> Any:
+        """Return the shared IDE file service (P12.1)."""
+        return cls._ide_file_service
+
+    @classmethod
+    def get_ide_action_guard(cls) -> Any:
+        """Return the shared IDE action guard (P12.1)."""
+        return cls._ide_action_guard
+
+    @classmethod
+    def get_ide_state_bus(cls) -> Any:
+        """Return the shared IDE state bus (P12.1)."""
+        return cls._ide_state_bus
+
+    @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
         from core.system.host_capability_profile import (
             collect_host_capability_profile,
@@ -676,3 +712,9 @@ class GlobalAgentContainer:
                 logger.warning(f"⚠️ Failed to stop MayaA2AServer: {e}")
             finally:
                 cls._a2a_server = None
+
+        if cls._ide_session_manager is not None:
+            try:
+                await cls._ide_session_manager.stop_cleanup()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop IDE session cleanup loop: {e}")

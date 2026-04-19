@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -62,12 +63,13 @@ class ConversationTape:
         llm_client: Any = None,
         enable_llm_backfill: bool = True,
     ) -> None:
-        self._event_cap = max(20, int(event_cap))
-        self._events: List[Dict[str, Any]] = []
+        capped = max(1, int(event_cap))
+        self._events: deque[Dict[str, Any]] = deque(maxlen=capped)
+        self._lock = asyncio.Lock()
         self._llm = llm_client
         self._enable_llm_backfill = bool(enable_llm_backfill and llm_client is not None)
 
-    def append_event(
+    async def append_event(
         self,
         *,
         role: str,
@@ -109,16 +111,20 @@ class ConversationTape:
             extraction_confidence=confidence,
         )
 
-        self._events.append(asdict(event))
-        if len(self._events) > self._event_cap:
-            self._events = self._events[-self._event_cap :]
+        # Lock protects concurrent deque mutations (append + deque maxlen trim).
+        # deque.append with maxlen is atomic — the lock prevents interleaving
+        # between this append and _backfill_event's in-place dict mutations.
+        async with self._lock:
+            self._events.append(asdict(event))
+            # deque(maxlen=N) auto-discards oldest when full — no manual cap needed.
+            index = len(self._events) - 1
 
         if self._enable_llm_backfill and confidence < 0.6:
-            self._schedule_backfill(len(self._events) - 1)
+            self._schedule_backfill(index)
 
         return event
 
-    def history(
+    async def history(
         self,
         *,
         session_id: str = "",
@@ -126,26 +132,27 @@ class ConversationTape:
         route: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         route_filter = str(route or "").strip().lower()
-        rows = self.events(session_id=session_id, limit=None)
+        rows = await self.events(session_id=session_id, limit=None)
         if route_filter:
             rows = [item for item in rows if str(item.get("route", "")).lower() == route_filter]
         if limit is not None and limit > 0:
             rows = rows[-int(limit) :]
         return [self._event_to_history(item) for item in rows]
 
-    def events(
+    async def events(
         self,
         *,
         session_id: str = "",
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         session_key = str(session_id or "").strip()
-        rows = list(self._events)
+        async with self._lock:
+            rows = [dict(item) for item in self._events]
         if session_key:
             rows = [item for item in rows if str(item.get("session_id") or "").strip() == session_key]
         if limit is not None and limit > 0:
             rows = rows[-int(limit) :]
-        return [dict(item) for item in rows]
+        return rows
 
     @staticmethod
     def _event_to_history(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -226,9 +233,12 @@ class ConversationTape:
         loop.create_task(self._backfill_event(index))
 
     async def _backfill_event(self, index: int) -> None:
-        if index < 0 or index >= len(self._events):
-            return
-        snapshot = dict(self._events[index])
+        # Fast-path: check bounds under lock, take immutable snapshot, release lock
+        async with self._lock:
+            if index < 0 or index >= len(self._events):
+                return
+            snapshot = dict(self._events[index])
+
         text = str(snapshot.get("text") or "").strip()
         if not text or snapshot.get("extraction_confidence", 1.0) >= 0.6:
             return
@@ -255,17 +265,23 @@ class ConversationTape:
                     if value and value not in normalized_entities:
                         normalized_entities.append(value)
 
-            current = self._events[index]
-            if intent:
-                current["intent"] = intent
-            if topic:
-                current["topic"] = topic
-            if normalized_entities:
-                current["entities"] = normalized_entities[:8]
-            current["extractor"] = "hybrid_llm_backfill"
-            current["extraction_confidence"] = max(
-                float(current.get("extraction_confidence", 0.45)),
-                0.7,
-            )
+            # Re-acquire lock for write-back; bounds may have shifted but snapshot
+            # already captured the intent/text so the backfill intent is preserved.
+            async with self._lock:
+                try:
+                    current = self._events[index]
+                except IndexError:
+                    return  # deque was cleared between read and write (very rare)
+                if intent:
+                    current["intent"] = intent
+                if topic:
+                    current["topic"] = topic
+                if normalized_entities:
+                    current["entities"] = normalized_entities[:8]
+                current["extractor"] = "hybrid_llm_backfill"
+                current["extraction_confidence"] = max(
+                    float(current.get("extraction_confidence", 0.45)),
+                    0.7,
+                )
         except Exception as exc:
             logger.debug("conversation_tape_llm_backfill_failed index=%s error=%s", index, exc)
