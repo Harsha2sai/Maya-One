@@ -13,6 +13,7 @@ enum WorkbenchTab {
   logs,
   artifacts,
   memory,
+  ide,
 }
 
 enum TaskUiState {

@@ -10,6 +10,7 @@ import 'task_inspector.dart';
 import 'logs_panel.dart';
 import 'research_artifact_panel.dart';
 import 'artifacts_tab.dart';
+import 'ide_tab.dart';
 
 final GlobalKey workbenchPaneKey = GlobalKey(debugLabel: 'workbench_pane');
 
@@ -122,6 +123,11 @@ class WorkbenchPane extends StatelessWidget {
                 isActive: workspace.selectedWorkbenchTab == WorkbenchTab.memory,
                 onTap: () => workspace.selectWorkbenchTab(WorkbenchTab.memory),
               ),
+              _TabButton(
+                label: 'IDE',
+                isActive: workspace.selectedWorkbenchTab == WorkbenchTab.ide,
+                onTap: () => workspace.selectWorkbenchTab(WorkbenchTab.ide),
+              ),
             ],
           ),
         ),
@@ -157,6 +163,8 @@ class WorkbenchPane extends StatelessWidget {
             style: TextStyle(color: ZoyaTheme.textMuted),
           ),
         );
+      case WorkbenchTab.ide:
+        return const IDETab();
     }
   }
 }
