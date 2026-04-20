@@ -4,10 +4,18 @@ import os
 from aiohttp import web
 from dotenv import load_dotenv
 from .handlers import (
+    handle_ide_action_approve,
+    handle_ide_action_audit,
+    handle_ide_action_cancel,
+    handle_ide_action_deny,
+    handle_ide_action_pending,
+    handle_ide_action_request,
     handle_ide_file_read,
     handle_ide_file_write,
     handle_ide_files_tree,
     handle_ide_events_stream,
+    handle_ide_mcp_inventory,
+    handle_ide_mcp_mutate,
     handle_ide_session_close,
     handle_ide_session_open,
     handle_ide_terminal_open,
@@ -60,10 +68,18 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     # Register routes
     from .handlers import (
         handle_upload,
+        handle_ide_action_approve,
+        handle_ide_action_audit,
+        handle_ide_action_cancel,
+        handle_ide_action_deny,
+        handle_ide_action_pending,
+        handle_ide_action_request,
         handle_ide_file_read,
         handle_ide_file_write,
         handle_ide_files_tree,
         handle_ide_events_stream,
+        handle_ide_mcp_inventory,
+        handle_ide_mcp_mutate,
         handle_ide_session_close,
         handle_ide_session_open,
         handle_token,
@@ -86,6 +102,14 @@ async def run_token_server(port=5050, host='0.0.0.0'):
     app.router.add_get('/ide/file/read', handle_ide_file_read)
     app.router.add_post('/ide/file/write', handle_ide_file_write)
     app.router.add_get('/ide/events/stream', handle_ide_events_stream)
+    app.router.add_post('/ide/action/request', handle_ide_action_request)
+    app.router.add_get('/ide/action/pending', handle_ide_action_pending)
+    app.router.add_get('/ide/action/audit', handle_ide_action_audit)
+    app.router.add_post('/ide/action/approve', handle_ide_action_approve)
+    app.router.add_post('/ide/action/deny', handle_ide_action_deny)
+    app.router.add_post('/ide/action/cancel', handle_ide_action_cancel)
+    app.router.add_get('/ide/mcp/inventory', handle_ide_mcp_inventory)
+    app.router.add_post('/ide/mcp/mutate', handle_ide_mcp_mutate)
     app.router.add_post('/ide/terminal/open', handle_ide_terminal_open)
     app.router.add_post('/ide/terminal/close', handle_ide_terminal_close)
     app.router.add_post('/ide/terminal/resize', handle_ide_terminal_resize)

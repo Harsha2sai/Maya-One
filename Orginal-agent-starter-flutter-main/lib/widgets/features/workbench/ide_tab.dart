@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../../../core/services/ide_agentic_service.dart';
 import '../../../core/services/ide_agentic_analysis.dart';
+import '../../../core/services/ide_actions_service.dart';
 import '../../../core/services/ide_files_service.dart';
 import '../../../core/services/ide_terminal_service.dart';
 import '../../../state/providers/auth_provider.dart';
@@ -17,11 +18,13 @@ class IDETab extends StatefulWidget {
     this.filesService,
     this.terminalService,
     this.agenticService,
+    this.actionsService,
   });
 
   final IdeFilesService? filesService;
   final IdeTerminalService? terminalService;
   final IdeAgenticService? agenticService;
+  final IdeActionsService? actionsService;
 
   @override
   State<IDETab> createState() => _IDETabState();
@@ -83,7 +86,10 @@ class _IDETabState extends State<IDETab> with SingleTickerProviderStateMixin {
             children: [
               _FilesPane(service: widget.filesService),
               _TerminalPane(service: widget.terminalService),
-              _AgenticPane(service: widget.agenticService),
+              _AgenticPane(
+                service: widget.agenticService,
+                actionsService: widget.actionsService,
+              ),
             ],
           ),
         ),
@@ -976,9 +982,10 @@ class _TerminalPaneState extends State<_TerminalPane> {
 }
 
 class _AgenticPane extends StatefulWidget {
-  const _AgenticPane({this.service});
+  const _AgenticPane({this.service, this.actionsService});
 
   final IdeAgenticService? service;
+  final IdeActionsService? actionsService;
 
   @override
   State<_AgenticPane> createState() => _AgenticPaneState();
@@ -988,6 +995,7 @@ class _AgenticPaneState extends State<_AgenticPane> {
   static const int _maxEvents = 400;
 
   late final IdeAgenticService _service;
+  late final IdeActionsService _actionsService;
   StreamSubscription<IdeAgenticEvent>? _eventSub;
   StreamSubscription<IdeAgenticConnectionState>? _stateSub;
   Timer? _flushTimer;
@@ -1006,11 +1014,18 @@ class _AgenticPaneState extends State<_AgenticPane> {
   String _selectedTaskId = 'All';
   String _selectedAgentId = 'All';
   String? _focusedTaskId;
+  bool _isMutating = false;
+  bool _isApprovalLoading = false;
+  List<IdePendingAction> _pendingActions = <IdePendingAction>[];
+  List<IdeActionAuditEvent> _auditEvents = <IdeActionAuditEvent>[];
+  IdeMcpInventory? _mcpInventory;
+  String? _infoBanner;
 
   @override
   void initState() {
     super.initState();
     _service = widget.service ?? IdeAgenticService();
+    _actionsService = widget.actionsService ?? IdeActionsService();
     _eventSub = _service.events.listen(_onAgenticEvent);
     _stateSub = _service.stateStream.listen((state) {
       if (!mounted) return;
@@ -1023,6 +1038,8 @@ class _AgenticPaneState extends State<_AgenticPane> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_service.start());
+      unawaited(_loadApprovalCenter());
+      unawaited(_loadMcpInventory());
     });
   }
 
@@ -1036,7 +1053,432 @@ class _AgenticPaneState extends State<_AgenticPane> {
       unawaited(_stateSub!.cancel());
     }
     unawaited(_service.dispose());
+    if (widget.actionsService == null) {
+      unawaited(_actionsService.dispose());
+    }
     super.dispose();
+  }
+
+  String _resolveUserId() {
+    try {
+      final auth = context.read<AuthProvider>();
+      return auth.user?.id ?? 'guest-local';
+    } catch (_) {
+      return 'guest-local';
+    }
+  }
+
+  String _resolveSessionId() {
+    for (final event in _events) {
+      final candidate = (event.sessionId ?? '').trim();
+      if (candidate.isNotEmpty) {
+        return candidate;
+      }
+    }
+    return 'ide-agentic';
+  }
+
+  Future<void> _loadApprovalCenter() async {
+    if (!mounted) return;
+    setState(() {
+      _isApprovalLoading = true;
+    });
+    try {
+      final userId = _resolveUserId();
+      final sessionId = _resolveSessionId();
+      final pending = await _actionsService.listPending(userId: userId);
+      final audit = await _actionsService.listAudit(userId: userId, sessionId: sessionId, limit: 200);
+      if (!mounted) return;
+      setState(() {
+        _pendingActions = pending;
+        _auditEvents = audit;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorBanner = 'Approval center load failed: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isApprovalLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMcpInventory() async {
+    try {
+      final inventory = await _actionsService.getMcpInventory();
+      if (!mounted) return;
+      setState(() {
+        _mcpInventory = inventory;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorBanner = 'MCP inventory load failed: $e';
+      });
+    }
+  }
+
+  Future<void> _requestTaskAction(String operation) async {
+    final taskId = _focusedTaskId;
+    if (taskId == null || taskId.isEmpty) {
+      setState(() {
+        _infoBanner = 'Select a task first.';
+      });
+      return;
+    }
+    if (_isMutating) return;
+
+    setState(() {
+      _isMutating = true;
+      _infoBanner = null;
+    });
+    try {
+      final result = await _actionsService.requestAction(
+        userId: _resolveUserId(),
+        sessionId: _resolveSessionId(),
+        taskId: taskId,
+        action: IdeActionEnvelope(
+          target: 'agent',
+          operation: operation,
+          arguments: <String, dynamic>{'task_id': taskId},
+          reason: 'agentic toolbar action',
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        _infoBanner = result.status == 'pending'
+            ? 'Action queued for approval: ${result.actionId}'
+            : 'Action executed: ${operation.toUpperCase()}';
+      });
+      await _loadApprovalCenter();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorBanner = 'Action request failed: $e';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isMutating = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _approveAction(String actionId) async {
+    try {
+      await _actionsService.approveAction(
+        actionId: actionId,
+        decidedBy: _resolveUserId(),
+      );
+      await _loadApprovalCenter();
+      if (!mounted) return;
+      setState(() {
+        _infoBanner = 'Approved action $actionId';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorBanner = 'Approve failed: $e';
+      });
+    }
+  }
+
+  Future<void> _denyAction(String actionId) async {
+    try {
+      await _actionsService.denyAction(
+        actionId: actionId,
+        decidedBy: _resolveUserId(),
+        reason: 'Denied from IDE approval center',
+      );
+      await _loadApprovalCenter();
+      if (!mounted) return;
+      setState(() {
+        _infoBanner = 'Denied action $actionId';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorBanner = 'Deny failed: $e';
+      });
+    }
+  }
+
+  Future<void> _cancelAction(String actionId) async {
+    try {
+      await _actionsService.cancelAction(
+        actionId: actionId,
+        userId: _resolveUserId(),
+      );
+      await _loadApprovalCenter();
+      if (!mounted) return;
+      setState(() {
+        _infoBanner = 'Cancelled action $actionId';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorBanner = 'Cancel failed: $e';
+      });
+    }
+  }
+
+  Future<void> _openApprovalCenterDialog() async {
+    await _loadApprovalCenter();
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          key: const Key('ide-agentic-approval-dialog'),
+          backgroundColor: const Color(0xFF0B1220),
+          title: const Text(
+            'Approval Center',
+            style: TextStyle(color: ZoyaTheme.textMain),
+          ),
+          content: SizedBox(
+            width: 880,
+            height: 460,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final vertical = constraints.maxWidth < 720;
+                final pendingPane = _pendingActions.isEmpty
+                    ? Text(
+                        'No pending actions',
+                        style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.9)),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: _pendingActions.length,
+                        itemBuilder: (context, index) {
+                          final action = _pendingActions[index];
+                          return Card(
+                            color: const Color(0xFF111A2B),
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(action.actionType, style: const TextStyle(color: ZoyaTheme.textMain)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'risk=${action.risk} · ${action.policyReason}',
+                                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85), fontSize: 12),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      FilledButton(
+                                        key: Key('ide-agentic-approve-${action.actionId}'),
+                                        onPressed: _isApprovalLoading ? null : () => _approveAction(action.actionId),
+                                        child: const Text('Approve'),
+                                      ),
+                                      OutlinedButton(
+                                        key: Key('ide-agentic-deny-${action.actionId}'),
+                                        onPressed: _isApprovalLoading ? null : () => _denyAction(action.actionId),
+                                        child: const Text('Deny'),
+                                      ),
+                                      OutlinedButton(
+                                        key: Key('ide-agentic-cancel-${action.actionId}'),
+                                        onPressed: _isApprovalLoading ? null : () => _cancelAction(action.actionId),
+                                        child: const Text('Cancel'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+
+                final auditPane = Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Audit Log',
+                      style: TextStyle(color: ZoyaTheme.textMain, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: _auditEvents.isEmpty
+                          ? Text(
+                              'No audit events yet',
+                              style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.9)),
+                            )
+                          : ListView.builder(
+                              itemCount: _auditEvents.length,
+                              itemBuilder: (context, index) {
+                                final event = _auditEvents[index];
+                                return ListTile(
+                                  dense: true,
+                                  title: Text(
+                                    '${event.eventType} · ${event.actionType}',
+                                    style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12),
+                                  ),
+                                  subtitle: Text(
+                                    event.actionId,
+                                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.8), fontSize: 11),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                );
+
+                if (vertical) {
+                  return Column(
+                    children: [
+                      Expanded(child: pendingPane),
+                      Divider(height: 1, color: ZoyaTheme.glassBorder),
+                      Expanded(child: auditPane),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: pendingPane),
+                    const SizedBox(width: 10),
+                    Expanded(child: auditPane),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _openMcpDialog() async {
+    await _loadMcpInventory();
+    if (!mounted) return;
+    final controller = TextEditingController(
+      text: ((_mcpInventory?.mcpServers['n8n'] as Map?)?['url'] ?? '').toString(),
+    );
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        final loaded = List<String>.from((_mcpInventory?.plugins['loaded'] as List?) ?? const <String>[]);
+        final discovered = List<String>.from((_mcpInventory?.plugins['discovered'] as List?) ?? const <String>[]);
+        return AlertDialog(
+          key: const Key('ide-agentic-mcp-dialog'),
+          backgroundColor: const Color(0xFF0B1220),
+          title: const Text('MCP + Plugin Inventory', style: TextStyle(color: ZoyaTheme.textMain)),
+          content: SizedBox(
+            width: 760,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('N8N MCP URL', style: TextStyle(color: ZoyaTheme.textMain)),
+                const SizedBox(height: 6),
+                TextField(
+                  key: const Key('ide-agentic-mcp-url'),
+                  controller: controller,
+                  decoration: const InputDecoration(hintText: 'http://localhost:5678'),
+                ),
+                const SizedBox(height: 8),
+                FilledButton(
+                  key: const Key('ide-agentic-mcp-update'),
+                  onPressed: () async {
+                    final url = controller.text.trim();
+                    if (url.isEmpty) return;
+                    try {
+                      await _actionsService.mutateMcp(
+                        userId: _resolveUserId(),
+                        sessionId: _resolveSessionId(),
+                        action: IdeActionEnvelope(
+                          target: 'mcp',
+                          operation: 'set_url',
+                          arguments: <String, dynamic>{'url': url},
+                          reason: 'update mcp url from ide dialog',
+                        ),
+                      );
+                      await _loadApprovalCenter();
+                      if (!mounted) return;
+                      setState(() {
+                        _infoBanner = 'MCP URL update requested.';
+                      });
+                    } catch (e) {
+                      if (!mounted) return;
+                      setState(() {
+                        _errorBanner = 'MCP mutation failed: $e';
+                      });
+                    }
+                  },
+                  child: const Text('Request URL Update'),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Loaded plugins: ${loaded.join(', ')}',
+                  style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.9), fontSize: 12),
+                ),
+                const SizedBox(height: 6),
+                const Text('Discovered plugins', style: TextStyle(color: ZoyaTheme.textMain, fontSize: 12)),
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: discovered
+                      .map(
+                        (name) => ActionChip(
+                          key: Key('ide-agentic-plugin-install-$name'),
+                          label: Text('Install $name'),
+                          onPressed: () async {
+                            try {
+                              await _actionsService.mutateMcp(
+                                userId: _resolveUserId(),
+                                sessionId: _resolveSessionId(),
+                                action: IdeActionEnvelope(
+                                  target: 'plugin',
+                                  operation: 'install',
+                                  arguments: <String, dynamic>{'name': name},
+                                  reason: 'plugin install request from ide dialog',
+                                ),
+                              );
+                              await _loadApprovalCenter();
+                              if (!mounted) return;
+                              setState(() {
+                                _infoBanner = 'Plugin install requested: $name';
+                              });
+                            } catch (e) {
+                              if (!mounted) return;
+                              setState(() {
+                                _errorBanner = 'Plugin mutation failed: $e';
+                              });
+                            }
+                          },
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
   }
 
   void _onAgenticEvent(IdeAgenticEvent event) {
@@ -1206,6 +1648,7 @@ class _AgenticPaneState extends State<_AgenticPane> {
             ),
           ),
           _buildFilters(),
+          _buildActionToolbar(),
           if (_errorBanner != null)
             Container(
               width: double.infinity,
@@ -1214,6 +1657,16 @@ class _AgenticPaneState extends State<_AgenticPane> {
               child: Text(
                 _errorBanner!,
                 style: const TextStyle(color: ZoyaTheme.danger, fontSize: 12),
+              ),
+            ),
+          if (_infoBanner != null)
+            Container(
+              width: double.infinity,
+              color: Colors.green.withValues(alpha: 0.12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: Text(
+                _infoBanner!,
+                style: const TextStyle(color: Colors.greenAccent, fontSize: 12),
               ),
             ),
           Expanded(
@@ -1320,6 +1773,52 @@ class _AgenticPaneState extends State<_AgenticPane> {
             value: _selectedAgentId,
             items: _valuesFor('agent_id'),
             onChanged: (value) => setState(() => _selectedAgentId = value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionToolbar() {
+    final pendingCount = _pendingActions.length;
+    return Container(
+      key: const Key('ide-agentic-actions'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: ZoyaTheme.glassBorder)),
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          FilledButton.tonal(
+            key: const Key('ide-agentic-action-retry'),
+            onPressed: _isMutating ? null : () => _requestTaskAction('retry'),
+            child: const Text('Retry Task'),
+          ),
+          FilledButton.tonal(
+            key: const Key('ide-agentic-action-cancel'),
+            onPressed: _isMutating ? null : () => _requestTaskAction('cancel'),
+            child: const Text('Cancel Task'),
+          ),
+          FilledButton.tonal(
+            key: const Key('ide-agentic-action-approval-center'),
+            onPressed: _isApprovalLoading ? null : _openApprovalCenterDialog,
+            child: Text('Approval Center (${pendingCount})'),
+          ),
+          FilledButton.tonal(
+            key: const Key('ide-agentic-action-mcp'),
+            onPressed: _openMcpDialog,
+            child: const Text('MCP Inventory'),
+          ),
+          IconButton(
+            key: const Key('ide-agentic-action-refresh'),
+            tooltip: 'Refresh approvals and inventory',
+            onPressed: () async {
+              await _loadApprovalCenter();
+              await _loadMcpInventory();
+            },
+            icon: const Icon(Icons.refresh),
           ),
         ],
       ),

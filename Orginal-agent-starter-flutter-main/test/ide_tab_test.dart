@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:voice_assistant/core/services/ide_actions_service.dart';
 import 'package:voice_assistant/core/services/ide_agentic_service.dart';
 import 'package:voice_assistant/widgets/features/workbench/ide_tab.dart';
 
@@ -10,6 +11,7 @@ void main() {
     late FakeIdeFilesService filesService;
     late FakeIdeTerminalService terminalService;
     late FakeIdeAgenticService agenticService;
+    late FakeIdeActionsService actionsService;
 
     Future<void> pumpIdeTab(WidgetTester tester) async {
       await tester.pumpWidget(
@@ -19,6 +21,7 @@ void main() {
               filesService: filesService,
               terminalService: terminalService,
               agenticService: agenticService,
+              actionsService: actionsService,
             ),
           ),
         ),
@@ -37,6 +40,7 @@ void main() {
       filesService = FakeIdeFilesService();
       terminalService = FakeIdeTerminalService();
       agenticService = FakeIdeAgenticService();
+      actionsService = FakeIdeActionsService();
     });
 
     testWidgets('IDE tab renders with three sub-tabs', (WidgetTester tester) async {
@@ -286,13 +290,62 @@ void main() {
       expect(find.text('ws down'), findsOneWidget);
     });
 
-    testWidgets('Agentic pane exposes no mutating action controls', (WidgetTester tester) async {
+    testWidgets('Agentic pane exposes mutating action controls', (WidgetTester tester) async {
       await pumpIdeTab(tester);
       await switchToAgentic(tester);
 
-      expect(find.text('Retry'), findsNothing);
-      expect(find.text('Cancel'), findsNothing);
-      expect(find.text('Approve'), findsNothing);
+      expect(find.byKey(const Key('ide-agentic-action-retry')), findsOneWidget);
+      expect(find.byKey(const Key('ide-agentic-action-cancel')), findsOneWidget);
+      expect(find.byKey(const Key('ide-agentic-action-approval-center')), findsOneWidget);
+      expect(find.byKey(const Key('ide-agentic-action-mcp')), findsOneWidget);
+    });
+
+    testWidgets('Agentic toolbar opens approval center with pending actions', (WidgetTester tester) async {
+      await pumpIdeTab(tester);
+      await switchToAgentic(tester);
+
+      actionsService.nextRequestResult = IdeActionResult(
+        actionId: 'act-pending-1',
+        status: 'pending',
+        risk: 'high',
+        policyReason: 'approval required',
+      );
+
+      agenticService.emitEvent(
+        const IdeAgenticEvent(
+          seq: 1,
+          eventType: 'task_started',
+          timestamp: 1,
+          taskId: 'task-p13',
+          traceId: 'trace-p13',
+          payload: <String, dynamic>{},
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('ide-agentic-task-row-task-p13')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('ide-agentic-action-retry')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('queued for approval'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('ide-agentic-action-approval-center')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ide-agentic-approval-dialog')), findsOneWidget);
+      expect(find.textContaining('act-pending-1'), findsOneWidget);
+    });
+
+    testWidgets('Agentic toolbar opens MCP inventory dialog', (WidgetTester tester) async {
+      await pumpIdeTab(tester);
+      await switchToAgentic(tester);
+
+      await tester.tap(find.byKey(const Key('ide-agentic-action-mcp')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('ide-agentic-mcp-dialog')), findsOneWidget);
+      expect(find.byKey(const Key('ide-agentic-mcp-url')), findsOneWidget);
     });
   });
 }

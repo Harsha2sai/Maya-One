@@ -1271,7 +1271,10 @@ async def _terminal_input_handler(
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
-                data = json.loads(msg.data)
+                try:
+                    data = json.loads(msg.data)
+                except Exception:
+                    data = {}
                 msg_type = data.get("type")
 
                 if msg_type == "input":
@@ -1289,12 +1292,12 @@ async def _terminal_input_handler(
                     # Client ping -> pong
                     await ws.send_json({"type": "pong", "ts": data.get("ts")})
 
-            elif msg_type == WSMsgType.BINARY:
+            elif msg.type == WSMsgType.BINARY:
                 # Binary input (raw bytes)
                 text = msg.data.decode("utf-8", errors="replace")
                 await terminal_manager.write_input(session_id, text)
 
-            elif msg_type == WSMsgType.ERROR:
+            elif msg.type == WSMsgType.ERROR:
                 logger.warning("terminal_ws_error session_id=%s", session_id)
                 break
     except asyncio.CancelledError:
@@ -1335,3 +1338,558 @@ async def _terminal_output_handler(
         pass
     except Exception as e:
         logger.warning("terminal_output_error session_id=%s error=%s", session_id, e)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Pending Action API Handlers (P13)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _get_pending_action_components():
+    from core.runtime.global_agent import GlobalAgentContainer
+
+    action_guard = GlobalAgentContainer.get_ide_action_guard()
+    pending_store = GlobalAgentContainer.get_pending_action_store()
+    state_bus = GlobalAgentContainer.get_ide_state_bus()
+    if not all([action_guard, pending_store, state_bus]):
+        raise RuntimeError("Pending action runtime not initialized")
+    return action_guard, pending_store, state_bus
+
+
+def _parse_action_type(action_type: str) -> tuple[str, str]:
+    normalized = str(action_type or "").strip()
+    if ":" in normalized:
+        target, operation = normalized.split(":", 1)
+        return target.strip(), operation.strip()
+    if "_" in normalized:
+        target, operation = normalized.split("_", 1)
+        return target.strip(), operation.strip()
+    return normalized, normalized
+
+
+def _normalize_action_envelope(raw: dict):
+    from core.ide import ActionEnvelope
+
+    action = raw.get("action")
+    if isinstance(action, dict):
+        target = str(action.get("target", "")).strip()
+        operation = str(action.get("operation", "")).strip()
+        arguments = dict(action.get("arguments") or {})
+        envelope = ActionEnvelope(
+            type="ide_action",
+            target=target,
+            operation=operation,
+            arguments=arguments,
+            confidence=float(action.get("confidence") or 1.0),
+            reason=str(action.get("reason") or "request"),
+        )
+        target_id = str(arguments.get("target_id") or arguments.get("task_id") or target or operation).strip()
+        return envelope, target_id
+
+    legacy_type = str(raw.get("action_type") or "").strip()
+    target, operation = _parse_action_type(legacy_type)
+    payload = dict(raw.get("payload") or {})
+    target_id = str(raw.get("target_id") or payload.get("target_id") or payload.get("task_id") or "").strip()
+    if not target_id:
+        target_id = target or operation
+    envelope = ActionEnvelope(
+        type="ide_action",
+        target=target,
+        operation=operation,
+        arguments=payload,
+        confidence=1.0,
+        reason="legacy request",
+    )
+    return envelope, target_id
+
+
+def _serialize_pending_action(action) -> dict:
+    return {
+        "action_id": action.action_id,
+        "action_type": action.action_type,
+        "target_id": action.target_id,
+        "risk": action.risk,
+        "policy_reason": action.policy_reason,
+        "requested_at": action.requested_at,
+        "expires_at": action.expires_at,
+        "user_id": action.user_id,
+        "session_id": action.session_id,
+        "trace_id": action.trace_id,
+        "task_id": action.task_id,
+        "payload": dict(action.payload or {}),
+    }
+
+
+def _serialize_audit_event(event) -> dict:
+    return {
+        "action_id": event.action_id,
+        "event_type": event.event_type,
+        "timestamp": event.timestamp,
+        "user_id": event.user_id,
+        "session_id": event.session_id,
+        "action_type": event.action_type,
+        "risk": event.risk,
+        "idempotency_key": event.idempotency_key,
+        "decided_by": event.decided_by,
+        "decided_at": event.decided_at,
+        "execution_result": event.execution_result,
+        "error": event.error,
+        "trace_id": event.trace_id,
+        "task_id": event.task_id,
+    }
+
+
+def _action_idempotency_fallback(data: dict, envelope) -> str:
+    existing = str(data.get("idempotency_key") or "").strip()
+    if existing:
+        return existing
+    base = f"{data.get('user_id','')}::{data.get('session_id','')}::{envelope.target}:{envelope.operation}::{json.dumps(envelope.arguments, sort_keys=True)}"
+    return str(abs(hash(base)))
+
+
+async def _execute_ide_action(*, envelope, session_id: str, user_id: str, timeout_seconds: float = 10.0):
+    from core.runtime.global_agent import GlobalAgentContainer
+
+    async def _run():
+        target = envelope.target.lower().strip()
+        operation = envelope.operation.lower().strip()
+        arguments = dict(envelope.arguments or {})
+        state_bus = GlobalAgentContainer.get_ide_state_bus()
+
+        if target == "agent":
+            event_type = {
+                "task_retry": "task_retry_requested",
+                "retry": "task_retry_requested",
+                "task_cancel": "task_cancel_requested",
+                "cancel": "task_cancel_requested",
+                "approve": "task_approval_requested",
+                "deny": "task_denial_requested",
+            }.get(operation, "task_action_requested")
+            await state_bus.emit(
+                event_type,
+                {
+                    "session_id": session_id,
+                    "task_id": str(arguments.get("task_id") or ""),
+                    "agent_id": "approval-center",
+                    "status": "requested",
+                    "payload": {"operation": operation, "arguments": arguments, "user_id": user_id},
+                },
+            )
+            return {"executed": True, "target": target, "operation": operation}
+
+        if target == "terminal" and operation == "exec":
+            manager = GlobalAgentContainer.get_terminal_manager()
+            terminal_session_id = str(
+                arguments.get("terminal_session_id") or arguments.get("session_id") or ""
+            ).strip()
+            command = str(arguments.get("command") or arguments.get("cmd") or "").strip()
+            if manager is None:
+                raise RuntimeError("terminal manager unavailable")
+            if not terminal_session_id:
+                raise ValueError("terminal_session_id is required")
+            if not command:
+                raise ValueError("command is required")
+            ok = await manager.write_input(terminal_session_id, f"{command}\n")
+            if not ok:
+                raise RuntimeError("terminal session not found or write failed")
+            return {"executed": True, "target": target, "operation": operation, "terminal_session_id": terminal_session_id}
+
+        if target in {"mcp", "plugin", "setting"}:
+            return _apply_config_mutation(target=target, operation=operation, arguments=arguments)
+
+        return {"executed": False, "target": target, "operation": operation, "reason": "unsupported executable action"}
+
+    return await asyncio.wait_for(_run(), timeout=timeout_seconds)
+
+
+def _apply_config_mutation(*, target: str, operation: str, arguments: dict) -> dict:
+    target = target.lower().strip()
+    operation = operation.lower().strip()
+
+    # P13 keeps mutating actions guarded and explicit. Mutations update runtime env only.
+    if target == "mcp":
+        if operation in {"set_url", "update"}:
+            url = str(arguments.get("url") or arguments.get("value") or "").strip()
+            if not url:
+                raise ValueError("url is required")
+            previous = os.getenv("N8N_MCP_SERVER_URL", "")
+            os.environ["N8N_MCP_SERVER_URL"] = url
+            return {"executed": True, "previous": previous, "current": url}
+        if operation in {"toggle", "enable", "disable"}:
+            enabled = operation in {"toggle", "enable"}
+            if "enabled" in arguments:
+                enabled = bool(arguments.get("enabled"))
+            os.environ["CONNECTOR_GOOGLE_WORKSPACE_ENABLED"] = "true" if enabled else "false"
+            return {"executed": True, "enabled": enabled}
+        raise ValueError(f"unsupported mcp operation: {operation}")
+
+    if target == "setting":
+        key = str(arguments.get("key") or "").strip()
+        if not key:
+            raise ValueError("setting key is required")
+        env_var = _provider_id_to_env_var(key) or key.upper()
+        previous = os.getenv(env_var, "")
+        if operation in {"set", "toggle", "enable", "disable"}:
+            if operation == "set":
+                value = str(arguments.get("value") or "")
+            elif operation in {"enable", "disable"}:
+                value = "true" if operation == "enable" else "false"
+            else:
+                requested = arguments.get("value", arguments.get("enabled", True))
+                value = "true" if bool(requested) else "false"
+            os.environ[env_var] = value
+            return {"executed": True, "env_var": env_var, "previous": previous, "current": value}
+        raise ValueError(f"unsupported setting operation: {operation}")
+
+    if target == "plugin":
+        plugin_name = str(arguments.get("name") or arguments.get("plugin") or "").strip()
+        if not plugin_name:
+            raise ValueError("plugin name is required")
+        if operation in {"install", "enable", "disable", "toggle"}:
+            return {"executed": True, "plugin": plugin_name, "operation": operation}
+        raise ValueError(f"unsupported plugin operation: {operation}")
+
+    raise ValueError(f"unsupported target for mutation: {target}")
+
+
+def _build_mcp_inventory() -> dict:
+    from core.runtime.global_agent import GlobalAgentContainer
+
+    plugin_loader = GlobalAgentContainer.get_plugin_loader()
+    loaded_plugins = sorted((plugin_loader.loaded() or {}).keys()) if plugin_loader else []
+    discovered_plugins = sorted(plugin_loader.discover()) if plugin_loader else []
+
+    connectors = {}
+    for connector_id, status_key in CONNECTOR_STATUS_KEYS.items():
+        availability = CONNECTOR_AVAILABILITY.get(
+            connector_id,
+            {"available": False, "reason": "Unknown connector."},
+        )
+        env_key = ENV_VAR_MAPPING.get(status_key, status_key.upper())
+        connectors[connector_id] = {
+            "enabled": _parse_env_bool(os.getenv(env_key, "")),
+            "available": bool(availability.get("available", False)),
+            "reason": str(availability.get("reason", "") or ""),
+        }
+
+    return {
+        "mcp_servers": {
+            "n8n": {
+                "url": str(os.getenv("N8N_MCP_SERVER_URL", "")).strip(),
+                "configured": bool(str(os.getenv("N8N_MCP_SERVER_URL", "")).strip()),
+            }
+        },
+        "plugins": {
+            "loaded": loaded_plugins,
+            "discovered": discovered_plugins,
+        },
+        "connectors": connectors,
+    }
+
+
+async def handle_ide_action_request(request):
+    """POST /ide/action/request — Submit action request (guarded execution)."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    user_id = str((data or {}).get("user_id") or "").strip()
+    session_id = str((data or {}).get("session_id") or "").strip()
+    trace_id = str((data or {}).get("trace_id") or "").strip() or None
+    task_id = str((data or {}).get("task_id") or "").strip() or None
+    if not user_id or not session_id:
+        return web.json_response({"error": "user_id and session_id are required"}, status=400)
+
+    try:
+        envelope, target_id = _normalize_action_envelope(data or {})
+        idempotency_key = _action_idempotency_fallback(data or {}, envelope)
+        action_type = f"{envelope.target}:{envelope.operation}"
+        action_guard, pending_store, state_bus = _get_pending_action_components()
+
+        decision = action_guard.check(envelope)
+        if not decision.allowed:
+            await state_bus.emit(
+                "action_blocked",
+                {
+                    "session_id": session_id,
+                    "trace_id": trace_id,
+                    "task_id": task_id,
+                    "agent_id": "approval-center",
+                    "status": "blocked",
+                    "payload": {
+                        "action_type": action_type,
+                        "target_id": target_id,
+                        "risk": decision.risk,
+                        "policy_reason": decision.policy_reason,
+                    },
+                },
+            )
+            return _guard_error_response(decision)
+
+        if decision.requires_approval:
+            pending = await pending_store.request(
+                user_id=user_id,
+                session_id=session_id,
+                action_type=action_type,
+                target_id=target_id,
+                payload={"action": {"target": envelope.target, "operation": envelope.operation, "arguments": envelope.arguments}},
+                risk=decision.risk,
+                policy_reason=decision.policy_reason,
+                idempotency_key=idempotency_key,
+                trace_id=trace_id,
+                task_id=task_id,
+            )
+            return web.json_response(
+                {
+                    "action_id": pending.action_id,
+                    "status": "pending",
+                    "risk": pending.risk,
+                    "policy_reason": pending.policy_reason,
+                    "requires_approval": True,
+                }
+            )
+
+        try:
+            execution = await _execute_ide_action(
+                envelope=envelope,
+                session_id=session_id,
+                user_id=user_id,
+                timeout_seconds=10.0,
+            )
+        except asyncio.TimeoutError:
+            return web.json_response(
+                {"error": "action execution timed out", "status": "failed", "action_type": action_type},
+                status=504,
+            )
+
+        return web.json_response(
+            {
+                "action_id": f"exec_{idempotency_key[:16]}",
+                "status": "executed",
+                "result": execution,
+                "risk": decision.risk,
+                "requires_approval": False,
+            }
+        )
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.error("❌ Action request failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_action_pending(request):
+    """GET /ide/action/pending — List pending actions."""
+    try:
+        user_id = str(request.query.get("user_id", "")).strip() or None
+        _action_guard, pending_store, _state_bus = _get_pending_action_components()
+        actions = await pending_store.get_pending(user_id=user_id)
+        return web.json_response({"actions": [_serialize_pending_action(action) for action in actions]})
+    except Exception as e:
+        logger.error("❌ Action pending fetch failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_action_audit(request):
+    """GET /ide/action/audit — List action audit events."""
+    try:
+        user_id = str(request.query.get("user_id", "")).strip() or None
+        session_id = str(request.query.get("session_id", "")).strip() or None
+        limit = _parse_positive_int(request.query.get("limit"), default=200)
+        _action_guard, pending_store, _state_bus = _get_pending_action_components()
+        events = await pending_store.get_audit_events(user_id=user_id, session_id=session_id, limit=limit)
+        return web.json_response({"events": [_serialize_audit_event(event) for event in events]})
+    except Exception as e:
+        logger.error("❌ Action audit fetch failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_action_approve(request):
+    """POST /ide/action/approve — Approve and execute pending action."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    action_id = str((data or {}).get("action_id") or "").strip()
+    decided_by = str((data or {}).get("decided_by") or "").strip()
+    reason = str((data or {}).get("reason") or "").strip()
+    if not action_id or not decided_by:
+        return web.json_response({"error": "action_id and decided_by are required"}, status=400)
+
+    try:
+        _action_guard, pending_store, _state_bus = _get_pending_action_components()
+        action = await pending_store.approve(
+            action_id=action_id,
+            decided_by=decided_by,
+            execution_result={"approval_reason": reason},
+        )
+        if action is None:
+            return web.json_response({"error": "Action not found or already processed"}, status=404)
+
+        payload_action = dict((action.payload or {}).get("action") or {})
+        target = str(payload_action.get("target") or "").strip()
+        operation = str(payload_action.get("operation") or "").strip()
+        arguments = dict(payload_action.get("arguments") or {})
+        if not target or not operation:
+            target, operation = _parse_action_type(action.action_type)
+            arguments = dict(action.payload or {})
+
+        from core.ide import ActionEnvelope
+
+        envelope = ActionEnvelope(
+            type="ide_action",
+            target=target,
+            operation=operation,
+            arguments=arguments,
+            confidence=1.0,
+            reason="approved action execution",
+        )
+        try:
+            result = await _execute_ide_action(
+                envelope=envelope,
+                session_id=action.session_id,
+                user_id=action.user_id,
+                timeout_seconds=15.0,
+            )
+            await pending_store.record_execution_result(
+                action=action,
+                succeeded=True,
+                execution_result=result,
+            )
+            return web.json_response(
+                {
+                    "action_id": action.action_id,
+                    "status": "executed",
+                    "executed_at": time.monotonic(),
+                    "result": result,
+                }
+            )
+        except asyncio.TimeoutError:
+            await pending_store.record_execution_result(
+                action=action,
+                succeeded=False,
+                error="execution timeout",
+            )
+            return web.json_response(
+                {"error": "action execution timed out", "action_id": action.action_id, "status": "failed"},
+                status=504,
+            )
+        except Exception as exec_err:
+            await pending_store.record_execution_result(
+                action=action,
+                succeeded=False,
+                error=str(exec_err),
+            )
+            return web.json_response(
+                {"error": str(exec_err), "action_id": action.action_id, "status": "failed"},
+                status=500,
+            )
+    except Exception as e:
+        logger.error("❌ Action approve failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_action_deny(request):
+    """POST /ide/action/deny — Deny pending action."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    action_id = str((data or {}).get("action_id") or "").strip()
+    decided_by = str((data or {}).get("decided_by") or "").strip()
+    reason = str((data or {}).get("reason") or "").strip()
+    if not action_id or not decided_by or not reason:
+        return web.json_response(
+            {"error": "action_id, decided_by, and reason are required"},
+            status=400,
+        )
+
+    try:
+        _action_guard, pending_store, _state_bus = _get_pending_action_components()
+        success = await pending_store.deny(
+            action_id=action_id,
+            decided_by=decided_by,
+            reason=reason,
+        )
+        if not success:
+            return web.json_response({"error": "Action not found or already processed"}, status=404)
+
+        return web.json_response(
+            {
+                "action_id": action_id,
+                "status": "denied",
+                "decided_by": decided_by,
+                "reason": reason,
+            }
+        )
+    except Exception as e:
+        logger.error("❌ Action deny failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_action_cancel(request):
+    """POST /ide/action/cancel — Cancel own pending action."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    action_id = str((data or {}).get("action_id") or "").strip()
+    user_id = str((data or {}).get("user_id") or "").strip()
+    if not action_id or not user_id:
+        return web.json_response({"error": "action_id and user_id are required"}, status=400)
+
+    try:
+        _action_guard, pending_store, _state_bus = _get_pending_action_components()
+        success = await pending_store.cancel(action_id=action_id, user_id=user_id)
+        if not success:
+            return web.json_response({"error": "Action not found or not owned by user"}, status=403)
+
+        return web.json_response(
+            {
+                "action_id": action_id,
+                "status": "cancelled",
+            }
+        )
+    except Exception as e:
+        logger.error("❌ Action cancel failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_mcp_inventory(request):
+    """GET /ide/mcp/inventory — MCP/plugin inventory for IDE control surface."""
+    try:
+        return web.json_response(_build_mcp_inventory())
+    except Exception as e:
+        logger.error("❌ MCP inventory failed: %s", e, exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
+async def handle_ide_mcp_mutate(request):
+    """POST /ide/mcp/mutate — Guarded MCP/plugin/setting mutation request."""
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json payload"}, status=400)
+
+    user_id = str((data or {}).get("user_id") or "").strip()
+    session_id = str((data or {}).get("session_id") or "").strip()
+    if not user_id or not session_id:
+        return web.json_response({"error": "user_id and session_id are required"}, status=400)
+
+    action = dict((data or {}).get("action") or {})
+    target = str(action.get("target") or "").strip().lower()
+    if target not in {"mcp", "plugin", "setting"}:
+        return web.json_response({"error": "action.target must be one of mcp|plugin|setting"}, status=400)
+
+    # Reuse generic action request path for guard + pending + execution behavior.
+    class _LocalRequest:
+        def __init__(self, payload):
+            self._payload = payload
+
+        async def json(self):
+            return self._payload
+
+    return await handle_ide_action_request(_LocalRequest(data))

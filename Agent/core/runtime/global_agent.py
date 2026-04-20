@@ -56,6 +56,7 @@ class GlobalAgentContainer:
     _ide_action_guard: Any = None     # P12.1 IDE action guard
     _ide_state_bus: Any = None        # P12.1 IDE event/state bus
     _terminal_manager: Any = None     # P12.3 terminal manager (PTY + websocket)
+    _pending_action_store: Any = None # P13.1 pending action + approval queue
 
     @classmethod
     async def initialize(cls):
@@ -95,6 +96,7 @@ class GlobalAgentContainer:
             IDEFileService,
             IDESessionManager,
             IDEStateBus,
+            PendingActionStore,
             TerminalManager,
         )
         from core.agents.subagent import (
@@ -193,10 +195,13 @@ class GlobalAgentContainer:
         cls._ide_action_guard = ActionGuard()
         cls._ide_state_bus = IDEStateBus()
         cls._terminal_manager = TerminalManager()
+        cls._pending_action_store = PendingActionStore(max_actions=1000)
         await cls._ide_session_manager.start_cleanup()
+        await cls._pending_action_store.start()
         cls._terminal_manager.on_audit(cls._forward_terminal_audit_event)
+        cls._pending_action_store.on_audit(cls._forward_pending_action_audit_event)
         await cls._terminal_manager.start()
-        logger.info("🧰 IDE runtime initialized (P12.1 foundation)")
+        logger.info("🧰 IDE runtime initialized (P12.1 + P13 foundation)")
         
         # 3. Initialize Base LLM (Singleton connection/config)
         provider_name = str(settings.llm_provider or "").strip().lower()
@@ -622,6 +627,11 @@ class GlobalAgentContainer:
         return cls._terminal_manager
 
     @classmethod
+    def get_pending_action_store(cls) -> Any:
+        """Return the shared pending action store (P13.1)."""
+        return cls._pending_action_store
+
+    @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
         from core.system.host_capability_profile import (
             collect_host_capability_profile,
@@ -720,6 +730,36 @@ class GlobalAgentContainer:
         )
 
     @classmethod
+    async def _forward_pending_action_audit_event(cls, event: Any) -> None:
+        """Forward pending-action lifecycle into IDE state bus."""
+        if cls._ide_state_bus is None:
+            return
+
+        payload = {
+            "action_id": getattr(event, "action_id", None),
+            "user_id": getattr(event, "user_id", None),
+            "action_type": getattr(event, "action_type", None),
+            "risk": getattr(event, "risk", None),
+            "idempotency_key": getattr(event, "idempotency_key", None),
+            "decided_by": getattr(event, "decided_by", None),
+            "decided_at": getattr(event, "decided_at", None),
+            "execution_result": getattr(event, "execution_result", None),
+            "error": getattr(event, "error", None),
+        }
+        await cls._ide_state_bus.emit(
+            f"action_{str(getattr(event, 'event_type', 'event') or 'event')}",
+            {
+                "session_id": getattr(event, "session_id", None),
+                "trace_id": getattr(event, "trace_id", None),
+                "task_id": getattr(event, "task_id", None),
+                "agent_id": "approval-center",
+                "status": str(getattr(event, "event_type", "") or ""),
+                "payload": payload,
+                "timestamp": float(getattr(event, "timestamp", 0.0) or 0.0),
+            },
+        )
+
+    @classmethod
     async def shutdown_background_tasks(cls) -> None:
         """Stop long-lived background tasks owned by the global container."""
         if cls._sentinel is not None:
@@ -765,3 +805,11 @@ class GlobalAgentContainer:
                 logger.warning(f"⚠️ Failed to stop terminal manager: {e}")
             finally:
                 cls._terminal_manager = None
+
+        if cls._pending_action_store is not None:
+            try:
+                await cls._pending_action_store.stop()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to stop pending action store: {e}")
+            finally:
+                cls._pending_action_store = None

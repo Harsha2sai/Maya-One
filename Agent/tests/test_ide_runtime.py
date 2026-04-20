@@ -81,7 +81,7 @@ def test_action_guard_high_risk_requires_approval():
             type="ide_action",
             target="terminal",
             operation="exec",
-            arguments={"cmd": "rm -rf build"},
+            arguments={"cmd": "echo hello"},
             confidence=0.71,
             reason="run command",
         )

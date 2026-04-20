@@ -45,6 +45,14 @@ class ActionGuard:
                 policy_reason="path traversal detected in arguments",
             )
 
+        if self._contains_destructive_command(envelope.arguments):
+            return GuardDecision(
+                risk="high",
+                allowed=False,
+                requires_approval=False,
+                policy_reason="destructive command pattern blocked",
+            )
+
         target = envelope.target.lower().strip()
         operation = envelope.operation.lower().strip()
 
@@ -70,6 +78,38 @@ class ActionGuard:
                 policy_reason="terminal execution requires explicit approval",
             )
 
+        if target == "agent" and operation in {"task_retry", "retry", "task_cancel", "cancel"}:
+            return GuardDecision(
+                risk="medium",
+                allowed=True,
+                requires_approval=False,
+                policy_reason="agent task control allowed",
+            )
+
+        if target == "agent" and operation in {"approve", "deny"}:
+            return GuardDecision(
+                risk="low",
+                allowed=True,
+                requires_approval=False,
+                policy_reason="approval queue operation allowed",
+            )
+
+        if target in {"plugin", "mcp", "setting"} and operation in {
+            "install",
+            "enable",
+            "disable",
+            "toggle",
+            "set",
+            "set_url",
+            "update",
+        }:
+            return GuardDecision(
+                risk="high",
+                allowed=True,
+                requires_approval=True,
+                policy_reason=f"{target} mutation requires explicit approval",
+            )
+
         return GuardDecision(
             risk="high",
             allowed=False,
@@ -86,3 +126,25 @@ class ActionGuard:
             return ".." in value
         return False
 
+    def _contains_destructive_command(self, value: Any) -> bool:
+        patterns = (
+            "rm -rf",
+            "mkfs",
+            "dd if=",
+            "shutdown",
+            "reboot",
+            "poweroff",
+            "chmod -r 000",
+        )
+
+        def _scan(candidate: Any) -> bool:
+            if isinstance(candidate, dict):
+                return any(_scan(v) for v in candidate.values())
+            if isinstance(candidate, (list, tuple, set)):
+                return any(_scan(v) for v in candidate)
+            if isinstance(candidate, str):
+                lower = candidate.lower()
+                return any(pattern in lower for pattern in patterns)
+            return False
+
+        return _scan(value)

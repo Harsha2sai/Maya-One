@@ -1,5 +1,10 @@
 from .ide_action_guard import ActionEnvelope, ActionGuard, GuardDecision
 from .ide_file_service import IDEFileService, PathEscapeError
+from .ide_pending_action_store import (
+    PendingAction,
+    PendingActionStore,
+    ActionAuditEvent,
+)
 from .ide_session_manager import (
     IDESession,
     IDESessionManager,
@@ -16,6 +21,7 @@ from .ide_terminal_manager import (
 
 __all__ = [
     "ActionEnvelope",
+    "ActionAuditEvent",
     "ActionGuard",
     "GuardDecision",
     "IDEFileService",
@@ -24,6 +30,8 @@ __all__ = [
     "IDESessionManager",
     "MaxSessionsExceededError",
     "PathEscapeError",
+    "PendingAction",
+    "PendingActionStore",
     "SessionNotFoundError",
     "TerminalManager",
     "TerminalSession",
