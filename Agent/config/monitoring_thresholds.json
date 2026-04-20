@@ -1,8 +1,11 @@
 {
-  "route_get_time_max_ratio_10m": 0.3,
-  "tts_fallback_rate_max_ratio": 0.15,
-  "memory_write_failed_max_5m": 10000,
-  "turn_latency_p95_max_ms": 60000,
-  "bootstrap_ack_max_ms": 5000,
-  "fact_classifier_fallback_rate_max_ratio": 0.30
+  "route_get_time_max_ratio_10m": 0.20,
+  "tts_fallback_rate_max_ratio": 0.10,
+  "memory_write_failed_max_5m": 0,
+  "turn_latency_p95_max_ms": 3000,
+  "bootstrap_ack_max_ms": 2000,
+  "fact_classifier_fallback_rate_max_ratio": 0.20,
+  "shadow_router_invalid_max_ratio": 0.10,
+  "shadow_router_agreement_min_ratio": 0.85,
+  "pronoun_clarification_fallback_max_ratio": 0.05
 }
