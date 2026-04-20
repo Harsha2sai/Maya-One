@@ -118,6 +118,7 @@ class MayaStaticAnalyzer:
     def _check_identity_prompt(self) -> CheckResult:
         """Check that voice agent system prompt contains 'Maya' and no wrong names."""
         agent_py = self.base_path / "agent.py"
+        prompt_py = self.base_path / "core" / "prompts" / "maya_primary.py"
         if not agent_py.exists():
             return CheckResult(
                 name="",
@@ -125,39 +126,51 @@ class MayaStaticAnalyzer:
                 reason="agent.py not found"
             )
 
-        content = agent_py.read_text()
-
-        # Look for the voice agent instructions block
-        pattern = r'voice_agent\s*=\s*agents\.Agent\([^)]+instructions=\(([^)]+)\)'
-        match = re.search(pattern, content, re.DOTALL)
-
-        if not match:
-            # Try alternative pattern
-            pattern = r'instructions=\("""([^"]+)"""\)'
-            match = re.search(pattern, content, re.DOTALL)
-
-        if not match:
-            # Look for instructions directly
-            pattern = r'instructions=\(\s*"([^"]+)"'
-            match = re.search(pattern, content, re.DOTALL)
-
-        if not match:
-            # Try looking for the specific instruction string around line 453
-            lines = content.split('\n')
-            for i, line in enumerate(lines[450:470], start=451):
-                if 'instructions=' in line.lower() and 'maya' in line.lower():
-                    # Found potential instruction block
-                    prompt_text = '\n'.join(lines[450:470])
-                    return self._validate_identity_prompt(prompt_text)
-
+        agent_content = agent_py.read_text()
+        if "get_bootstrap_prompt_with_personality" not in agent_content:
             return CheckResult(
                 name="",
                 passed=False,
-                reason="Could not locate voice agent instructions in agent.py"
+                reason="Voice bootstrap prompt wiring missing in agent.py",
+                details="Expected get_bootstrap_prompt_with_personality(...) in voice agent instructions",
             )
 
-        prompt_text = match.group(1) if match else ""
-        return self._validate_identity_prompt(prompt_text)
+        if not prompt_py.exists():
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="Canonical prompt file not found",
+                details="Required file: core/prompts/maya_primary.py",
+            )
+
+        prompt_content = prompt_py.read_text()
+        prompt_literals = re.findall(
+            r'_MAYA_(?:PRIMARY|VOICE_BOOTSTRAP)_PROMPT\s*=\s*"""(.*?)"""',
+            prompt_content,
+            flags=re.DOTALL,
+        )
+        if not prompt_literals:
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="Could not locate canonical Maya prompt literals",
+            )
+
+        validation_errors: List[str] = []
+        for prompt_text in prompt_literals:
+            validation = self._validate_identity_prompt(prompt_text)
+            if not validation.passed:
+                validation_errors.append(validation.reason)
+
+        if validation_errors:
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="Identity prompt validation failed",
+                details="; ".join(validation_errors),
+            )
+
+        return CheckResult(name="", passed=True)
 
     def _validate_identity_prompt(self, prompt_text: str) -> CheckResult:
         """Validate the identity prompt text."""
@@ -172,27 +185,27 @@ class MayaStaticAnalyzer:
                 details="The voice agent system prompt must identify the assistant as 'Maya'"
             )
 
-        # Check for wrong model names unless they appear in explicit denial form.
-        wrong_names = ["llama", "gpt", "claude", "gemini", "openai", "anthropic"]
-        found_wrong = []
+        # Reject only positive wrong-identity claims. Negative guardrails are valid.
+        wrong_names = ["llama", "gpt", "claude", "gemini", "openai", "anthropic", "meta ai"]
+        positive_claims: List[str] = []
         for name in wrong_names:
-            if name not in prompt_lower:
-                continue
-            allowed_denials = (
-                f"not {name}",
-                f"not by {name}",
-                f"not by {name},",
-            )
-            if any(denial in prompt_lower for denial in allowed_denials):
-                continue
-            found_wrong.append(name)
+            claim_patterns = [
+                rf"\byou are {re.escape(name)}\b",
+                rf"\byour name is {re.escape(name)}\b",
+                rf"\bi am {re.escape(name)}\b",
+                rf"\bi'm {re.escape(name)}\b",
+            ]
+            for pattern in claim_patterns:
+                if re.search(pattern, prompt_lower):
+                    positive_claims.append(name)
+                    break
 
-        if found_wrong:
+        if positive_claims:
             return CheckResult(
                 name="",
                 passed=False,
-                reason=f"Prompt contains wrong model names: {found_wrong}",
-                details="The prompt should not identify as other AI models"
+                reason=f"Prompt contains positive wrong-identity claims: {sorted(set(positive_claims))}",
+                details="The prompt should not claim the assistant is another model/vendor.",
             )
 
         # Check for contradictions, but allow reinforced identity instructions.
@@ -669,7 +682,6 @@ class MayaStaticAnalyzer:
             "LIVEKIT_API_KEY": {"required": True, "non_empty": True},
             "LIVEKIT_API_SECRET": {"required": True, "non_empty": True},
             "TTS_PROVIDER": {"required": True, "choices": ["elevenlabs", "cartesia", "edge_tts"]},
-            "MAYA_CHAT_LLM_MODEL": {"required": True, "non_empty": True},
         }
 
         issues = []
@@ -703,6 +715,12 @@ class MayaStaticAnalyzer:
             if "choices" in config and value not in config["choices"]:
                 issues.append(f"{var}: must be one of {config['choices']}")
 
+        chat_model = str(env_vars.get("MAYA_CHAT_LLM_MODEL", "")).strip().strip("'\"")
+        if not chat_model:
+            chat_model = str(env_vars.get("LLM_MODEL", "")).strip().strip("'\"")
+        if not chat_model:
+            issues.append("MAYA_CHAT_LLM_MODEL/LLM_MODEL: at least one must be set and non-empty")
+
         llm_provider = str(env_vars.get("LLM_PROVIDER", "")).strip().strip("'\"").lower()
         together_key = str(env_vars.get("TOGETHER_API_KEY", "")).strip()
         if llm_provider == "together" and not together_key:
@@ -735,6 +753,7 @@ class MayaStaticAnalyzer:
     def _check_context_bleed(self) -> CheckResult:
         """Check that per-turn state is reset between turns."""
         orch_py = self.base_path / "core" / "orchestrator" / "agent_orchestrator.py"
+        lifecycle_py = self.base_path / "core" / "orchestrator" / "session_lifecycle.py"
 
         if not orch_py.exists():
             return CheckResult(
@@ -761,6 +780,29 @@ class MayaStaticAnalyzer:
                 reason="current_turn_id not tracked in turn_state"
             )
 
+        if "start_new_turn(" not in content:
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="start_new_turn not wired in orchestrator",
+                details="Expected _session_lifecycle.start_new_turn(...) integration",
+            )
+
+        if not lifecycle_py.exists():
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="session_lifecycle.py not found",
+            )
+
+        lifecycle_content = lifecycle_py.read_text()
+        if "def start_new_turn" not in lifecycle_content:
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="SessionLifecycle.start_new_turn not found",
+            )
+
         # Look for turn reset patterns
         reset_patterns = [
             r'turn_state\[\"current_turn_id\"\]\s*=\s*None',
@@ -770,7 +812,7 @@ class MayaStaticAnalyzer:
 
         found_resets = 0
         for pattern in reset_patterns:
-            if re.search(pattern, content):
+            if re.search(pattern, lifecycle_content):
                 found_resets += 1
 
         if found_resets < 2:
@@ -789,6 +831,8 @@ class MayaStaticAnalyzer:
     def _check_sanitize_coverage(self) -> CheckResult:
         """Check that _sanitize_response is called on all LLM output paths."""
         orch_py = self.base_path / "core" / "orchestrator" / "agent_orchestrator.py"
+        chat_mixin_py = self.base_path / "core" / "orchestrator" / "chat_mixin.py"
+        response_synth_py = self.base_path / "core" / "orchestrator" / "response_synthesizer.py"
 
         if not orch_py.exists():
             return CheckResult(
@@ -807,30 +851,39 @@ class MayaStaticAnalyzer:
                 reason="_sanitize_response method not found"
             )
 
-        # Count calls to _sanitize_response
-        sanitize_calls = content.count("_sanitize_response(")
-
-        # Look for response paths that might bypass sanitization
-        # Check for places where response_text is used directly
-        response_assignments = re.findall(r'response_text\s*=\s*[^\n]+', content)
-
-        # Check that these are followed by sanitization
-        lines = content.split('\n')
-        bypass_risk = []
-
-        for i, line in enumerate(lines):
-            if 'response_text =' in line and 'await' not in line:
-                # Check next few lines for sanitization
-                next_lines = '\n'.join(lines[i:i+10])
-                if '_sanitize_response' not in next_lines and 'return' in next_lines:
-                    bypass_risk.append(f"Line {i+1}")
-
-        if sanitize_calls < 3:
+        if "sanitize_response(text)" not in content:
             return CheckResult(
                 name="",
                 passed=False,
-                reason=f"Only {sanitize_calls} _sanitize_response calls found",
-                details="Multiple LLM output paths should call sanitization"
+                reason="_sanitize_response does not delegate to voice_coordinator.sanitize_response",
+            )
+
+        missing_files = [
+            str(p)
+            for p in (chat_mixin_py, response_synth_py)
+            if not p.exists()
+        ]
+        if missing_files:
+            return CheckResult(
+                name="",
+                passed=False,
+                reason="Sanitization check files missing",
+                details="; ".join(missing_files),
+            )
+
+        chat_content = chat_mixin_py.read_text()
+        synth_content = response_synth_py.read_text()
+        total_calls = (
+            content.count("_sanitize_response(")
+            + chat_content.count("_sanitize_response(")
+            + synth_content.count("_sanitize_response(")
+        )
+        if total_calls < 4:
+            return CheckResult(
+                name="",
+                passed=False,
+                reason=f"Insufficient sanitize call coverage: {total_calls} calls found",
+                details="Expected sanitization usage across orchestrator, chat_mixin, and response_synthesizer.",
             )
 
         return CheckResult(name="", passed=True)
@@ -848,39 +901,54 @@ class MayaStaticAnalyzer:
         may exist under different log key names (e.g., "tool_executed" vs
         "tool_invoked"). Runtime log validation is the authoritative check.
         """
-        required_events = [
-            "agent_router_decision",
-            "fast_path_matched",
-            "route_completed",
-            "tool_call",
-            "tool_invoked",
-            "chat_event_published",
-        ]
+        event_alias_groups = {
+            "route_decision": ["agent_router_decision"],
+            "fast_path": [
+                "small_talk_fast_path_matched",
+                "identity_fast_path_matched",
+                "console_preinit_fast_path_matched",
+            ],
+            "tool_exec": [
+                "tool_invoked",
+                "tool_call_failed_safe_wrap",
+                "tool_execution_published",
+            ],
+            "chat_publish": ["chat_event_published"],
+        }
 
         # Search across key files
         key_files = [
             self.base_path / "core" / "orchestrator" / "agent_orchestrator.py",
             self.base_path / "core" / "orchestrator" / "agent_router.py",
+            self.base_path / "core" / "orchestrator" / "chat_mixin.py",
+            self.base_path / "core" / "orchestrator" / "interaction_manager.py",
+            self.base_path / "core" / "orchestrator" / "tool_executor.py",
+            self.base_path / "core" / "runtime" / "entrypoint.py",
             self.base_path / "core" / "communication.py",
         ]
 
-        found_events = set()
+        found_tokens = set()
 
         for file_path in key_files:
             if file_path.exists():
                 content = file_path.read_text()
-                for event in required_events:
-                    if event in content:
-                        found_events.add(event)
+                for aliases in event_alias_groups.values():
+                    for token in aliases:
+                        if token in content:
+                            found_tokens.add(token)
 
-        missing_events = set(required_events) - found_events
+        missing_groups = [
+            group_name
+            for group_name, aliases in event_alias_groups.items()
+            if not any(token in found_tokens for token in aliases)
+        ]
 
-        if missing_events:
+        if missing_groups:
             return CheckResult(
                 name="",
                 passed=False,
-                reason=f"Expected event names not found: {sorted(missing_events)}",
-                details="These events should be emitted in the codebase for log capture"
+                reason=f"Expected log event groups not found: {sorted(missing_groups)}",
+                details="At least one alias per required event group must exist.",
             )
 
         return CheckResult(name="", passed=True)

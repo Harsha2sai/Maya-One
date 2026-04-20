@@ -15,6 +15,11 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+Agent/logs/sessions/
+Agent/reports/monitoring_bootstrap.json
+Agent/reports/monitoring_baseline.json
+Agent/dev_maya_one.db
+Agent/data/outcomes.json
 
 # --- Flutter / App ---
 agent-starter-flutter-main/build/
@@ -31,6 +36,20 @@ agent-starter-flutter-main/.env
 agent-starter-flutter-main/.env.local
 agent-starter-flutter-main/*.lock
 agent-starter-flutter-main/pubspec.lock
+Orginal-agent-starter-flutter-main/build/
+Orginal-agent-starter-flutter-main/.dart_tool/
+Orginal-agent-starter-flutter-main/.flutter-plugins
+Orginal-agent-starter-flutter-main/.flutter-plugins-dependencies
+Orginal-agent-starter-flutter-main/.packages
+Orginal-agent-starter-flutter-main/.pub-cache/
+Orginal-agent-starter-flutter-main/.pub/
+Orginal-agent-starter-flutter-main/.idea/
+Orginal-agent-starter-flutter-main/.vscode/
+Orginal-agent-starter-flutter-main/coverage/
+Orginal-agent-starter-flutter-main/.env
+Orginal-agent-starter-flutter-main/.env.local
+Orginal-agent-starter-flutter-main/*.lock
+Orginal-agent-starter-flutter-main/pubspec.lock
 
 # --- General / OS ---
 .DS_Store
@@ -41,3 +60,7 @@ Thumbs.db
 *.swo
 *~
 agent_runtime/cc-nim
+.gitnexus
+.remember/logs/
+.remember/tmp/
+.remember/session.json
