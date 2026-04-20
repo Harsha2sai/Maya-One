@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/services/ide_agentic_service.dart';
+import '../../../core/services/ide_agentic_analysis.dart';
 import '../../../core/services/ide_files_service.dart';
 import '../../../core/services/ide_terminal_service.dart';
 import '../../../state/providers/auth_provider.dart';
@@ -1004,6 +1005,7 @@ class _AgenticPaneState extends State<_AgenticPane> {
   String _selectedStatus = 'All';
   String _selectedTaskId = 'All';
   String _selectedAgentId = 'All';
+  String? _focusedTaskId;
 
   @override
   void initState() {
@@ -1118,25 +1120,6 @@ class _AgenticPaneState extends State<_AgenticPane> {
     return <String>['All', ...sorted];
   }
 
-  List<_AgenticTaskGroup> _groupedByTask(List<IdeAgenticEvent> events) {
-    final grouped = <String, List<IdeAgenticEvent>>{};
-    for (final event in events) {
-      final key = event.taskId ?? 'unscoped';
-      grouped.putIfAbsent(key, () => <IdeAgenticEvent>[]).add(event);
-    }
-    return grouped.entries
-        .map((entry) {
-          final list = entry.value..sort((a, b) => a.seq.compareTo(b.seq));
-          return _AgenticTaskGroup(taskId: entry.key, events: list);
-        })
-        .toList(growable: false)
-      ..sort((a, b) {
-        final aSeq = a.events.isNotEmpty ? a.events.last.seq : 0;
-        final bSeq = b.events.isNotEmpty ? b.events.last.seq : 0;
-        return bSeq.compareTo(aSeq);
-      });
-  }
-
   Color _statusColor(IdeAgenticConnectionState state) {
     switch (state) {
       case IdeAgenticConnectionState.connected:
@@ -1155,7 +1138,21 @@ class _AgenticPaneState extends State<_AgenticPane> {
   @override
   Widget build(BuildContext context) {
     final filtered = _filteredEvents();
-    final groupedTasks = _groupedByTask(filtered);
+    final analysis = deriveAgenticAnalysis(
+      filtered,
+      maxGraphNodes: 100,
+    );
+    final focusedTaskId = _resolveFocusedTaskId(analysis.taskSummaries);
+    final selectedTaskSummary = _taskSummaryById(
+      analysis.taskSummaries,
+      focusedTaskId,
+    );
+    final selectedTaskEvents = focusedTaskId == null
+        ? <IdeAgenticEvent>[]
+        : (List<IdeAgenticEvent>.from(analysis.eventsByTask[focusedTaskId] ?? const <IdeAgenticEvent>[])
+          ..sort((a, b) => a.seq.compareTo(b.seq)));
+    final selectedTrace =
+        selectedTaskSummary?.traceId == null ? null : analysis.tracesById[selectedTaskSummary!.traceId!];
     final statusLabel = _isCatchingUp ? 'Catching up' : 'Live';
 
     return Container(
@@ -1222,20 +1219,59 @@ class _AgenticPaneState extends State<_AgenticPane> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                if (constraints.maxWidth < 920) {
+                if (constraints.maxWidth < 1100) {
                   return Column(
                     children: [
-                      Expanded(child: _buildEventFeed(filtered)),
+                      Expanded(
+                        child: _buildTaskListPane(
+                          analysis.taskSummaries,
+                          focusedTaskId: focusedTaskId,
+                        ),
+                      ),
                       Divider(height: 1, color: ZoyaTheme.glassBorder),
-                      Expanded(child: _buildTimeline(groupedTasks)),
+                      Expanded(
+                        child: _buildDrilldownPane(
+                          selectedTaskSummary: selectedTaskSummary,
+                          selectedTaskEvents: selectedTaskEvents,
+                        ),
+                      ),
+                      Divider(height: 1, color: ZoyaTheme.glassBorder),
+                      Expanded(
+                        child: _buildTraceAndGraphPane(
+                          selectedTaskSummary: selectedTaskSummary,
+                          selectedTrace: selectedTrace,
+                          graph: analysis.graph,
+                        ),
+                      ),
                     ],
                   );
                 }
                 return Row(
                   children: [
-                    Expanded(flex: 5, child: _buildEventFeed(filtered)),
+                    Expanded(
+                      flex: 3,
+                      child: _buildTaskListPane(
+                        analysis.taskSummaries,
+                        focusedTaskId: focusedTaskId,
+                      ),
+                    ),
                     VerticalDivider(width: 1, color: ZoyaTheme.glassBorder),
-                    Expanded(flex: 4, child: _buildTimeline(groupedTasks)),
+                    Expanded(
+                      flex: 4,
+                      child: _buildDrilldownPane(
+                        selectedTaskSummary: selectedTaskSummary,
+                        selectedTaskEvents: selectedTaskEvents,
+                      ),
+                    ),
+                    VerticalDivider(width: 1, color: ZoyaTheme.glassBorder),
+                    Expanded(
+                      flex: 4,
+                      child: _buildTraceAndGraphPane(
+                        selectedTaskSummary: selectedTaskSummary,
+                        selectedTrace: selectedTrace,
+                        graph: analysis.graph,
+                      ),
+                    ),
                   ],
                 );
               },
@@ -1335,8 +1371,41 @@ class _AgenticPaneState extends State<_AgenticPane> {
     );
   }
 
-  Widget _buildEventFeed(List<IdeAgenticEvent> events) {
-    if (events.isEmpty) {
+  String? _resolveFocusedTaskId(List<AgenticTaskSummary> taskSummaries) {
+    if (taskSummaries.isEmpty) {
+      return null;
+    }
+    final existing = _focusedTaskId;
+    if (existing != null && taskSummaries.any((task) => task.taskId == existing)) {
+      return existing;
+    }
+    return taskSummaries.first.taskId;
+  }
+
+  AgenticTaskSummary? _taskSummaryById(List<AgenticTaskSummary> taskSummaries, String? taskId) {
+    if (taskId == null) return null;
+    for (final task in taskSummaries) {
+      if (task.taskId == taskId) return task;
+    }
+    return null;
+  }
+
+  Color _taskStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return Colors.greenAccent;
+      case 'failed':
+        return ZoyaTheme.danger;
+      default:
+        return Colors.orangeAccent;
+    }
+  }
+
+  Widget _buildTaskListPane(
+    List<AgenticTaskSummary> tasks, {
+    required String? focusedTaskId,
+  }) {
+    if (tasks.isEmpty) {
       return Center(
         child: Text(
           'Waiting for runtime events…',
@@ -1346,26 +1415,55 @@ class _AgenticPaneState extends State<_AgenticPane> {
     }
 
     return ListView.separated(
-      key: const Key('ide-agentic-feed'),
-      itemCount: events.length,
+      key: const Key('ide-agentic-task-list'),
+      itemCount: tasks.length,
       separatorBuilder: (_, __) => Divider(height: 1, color: ZoyaTheme.glassBorder),
       itemBuilder: (context, index) {
-        final event = events[index];
-        final status = event.status ?? '-';
+        final task = tasks[index];
+        final isSelected = task.taskId == focusedTaskId;
+        final statusColor = _taskStatusColor(task.status);
         return ListTile(
+          key: Key('ide-agentic-task-row-${task.taskId}'),
           dense: true,
-          title: Text(
-            event.eventType,
-            style: const TextStyle(color: ZoyaTheme.textMain, fontWeight: FontWeight.w600, fontSize: 12),
+          selected: isSelected,
+          selectedTileColor: ZoyaTheme.accent.withValues(alpha: 0.08),
+          onTap: () {
+            setState(() {
+              _focusedTaskId = task.taskId;
+            });
+          },
+          title: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  task.taskId,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: ZoyaTheme.textMain, fontWeight: FontWeight.w600, fontSize: 12),
+                ),
+              ),
+              Container(
+                key: Key('ide-agentic-task-status-${task.taskId}'),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  task.status,
+                  style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
           ),
           subtitle: Text(
-            'task=${event.taskId ?? '-'} · agent=${event.agentId ?? '-'} · status=$status',
+            '${task.eventCount} events · seq ${task.firstSeq}-${task.lastSeq}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.8), fontSize: 11),
           ),
           trailing: Text(
-            '#${event.seq}',
+            '#${task.lastSeq}',
             style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.75), fontSize: 11),
           ),
         );
@@ -1373,64 +1471,282 @@ class _AgenticPaneState extends State<_AgenticPane> {
     );
   }
 
-  Widget _buildTimeline(List<_AgenticTaskGroup> groups) {
-    if (groups.isEmpty) {
+  Widget _buildDrilldownPane({
+    required AgenticTaskSummary? selectedTaskSummary,
+    required List<IdeAgenticEvent> selectedTaskEvents,
+  }) {
+    if (selectedTaskSummary == null) {
       return Center(
         child: Text(
-          'No task timeline yet',
+          'Select a task to inspect execution trace',
           style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85)),
         ),
       );
     }
 
-    return ListView.builder(
-      key: const Key('ide-agentic-timeline'),
-      itemCount: groups.length,
-      itemBuilder: (context, index) {
-        final group = groups[index];
-        return ExpansionTile(
-          key: Key('ide-agentic-task-${group.taskId}'),
-          initiallyExpanded: index == 0,
-          title: Text(
-            group.taskId,
-            style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12, fontWeight: FontWeight.w700),
+    return Container(
+      key: const Key('ide-agentic-drilldown'),
+      color: const Color(0xFF090F1A),
+      child: Column(
+        children: [
+          Container(
+            key: const Key('ide-agentic-drilldown-header'),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: ZoyaTheme.glassBorder)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    selectedTaskSummary.taskId,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: ZoyaTheme.textMain, fontWeight: FontWeight.w700, fontSize: 12),
+                  ),
+                ),
+                Text(
+                  '${selectedTaskSummary.eventCount} events',
+                  style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85), fontSize: 11),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  selectedTaskSummary.status,
+                  style: TextStyle(
+                    color: _taskStatusColor(selectedTaskSummary.status),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           ),
-          subtitle: Text(
-            '${group.events.length} events',
-            style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.8), fontSize: 11),
-          ),
-          children: group.events
-              .map(
-                (event) => ListTile(
+          Expanded(
+            child: ListView.separated(
+              key: const Key('ide-agentic-drilldown-events'),
+              itemCount: selectedTaskEvents.length,
+              separatorBuilder: (_, __) => Divider(height: 1, color: ZoyaTheme.glassBorder),
+              itemBuilder: (context, index) {
+                final event = selectedTaskEvents[index];
+                return ListTile(
                   dense: true,
-                  leading: Icon(Icons.fiber_manual_record, size: 10, color: ZoyaTheme.accent.withValues(alpha: 0.9)),
+                  leading: Text(
+                    '#${event.seq}',
+                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.7), fontSize: 10),
+                  ),
                   title: Text(
                     event.eventType,
                     style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12),
                   ),
                   subtitle: Text(
-                    event.status ?? '-',
-                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85), fontSize: 11),
+                    'status=${event.status ?? '-'} · agent=${event.agentId ?? '-'}',
+                    style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.82), fontSize: 11),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTraceAndGraphPane({
+    required AgenticTaskSummary? selectedTaskSummary,
+    required AgenticTraceGroup? selectedTrace,
+    required AgenticGraphSnapshot graph,
+  }) {
+    return Column(
+      key: const Key('ide-agentic-trace-graph'),
+      children: [
+        Expanded(
+          child: _buildTraceCorrelationView(
+            selectedTaskSummary: selectedTaskSummary,
+            selectedTrace: selectedTrace,
+          ),
+        ),
+        Divider(height: 1, color: ZoyaTheme.glassBorder),
+        Expanded(
+          child: _buildDependencyGraph(graph),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTraceCorrelationView({
+    required AgenticTaskSummary? selectedTaskSummary,
+    required AgenticTraceGroup? selectedTrace,
+  }) {
+    if (selectedTaskSummary == null) {
+      return Center(
+        child: Text(
+          'Select a task to view correlated traces',
+          style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85)),
+        ),
+      );
+    }
+
+    final traceId = selectedTaskSummary.traceId;
+    if (traceId == null || selectedTrace == null || selectedTrace.events.isEmpty) {
+      return Center(
+        child: Text(
+          'No trace_id correlation available',
+          style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85)),
+        ),
+      );
+    }
+
+    return Container(
+      key: const Key('ide-agentic-trace-view'),
+      color: const Color(0xFF09131F),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: ZoyaTheme.glassBorder)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.hub, size: 14, color: ZoyaTheme.textMuted),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'trace_id: $traceId',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Text(
+                  '${selectedTrace.events.length} events',
+                  style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.82), fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              key: const Key('ide-agentic-trace-events'),
+              itemCount: selectedTrace.events.length,
+              separatorBuilder: (_, __) => Divider(height: 1, color: ZoyaTheme.glassBorder),
+              itemBuilder: (context, index) {
+                final event = selectedTrace.events[index];
+                return ListTile(
+                  dense: true,
+                  title: Text(
+                    '${event.eventType} · task=${event.taskId ?? kUnscopedTaskId}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12),
                   ),
                   trailing: Text(
                     '#${event.seq}',
                     style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.75), fontSize: 11),
                   ),
-                ),
-              )
-              .toList(growable: false),
-        );
-      },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
-}
 
-class _AgenticTaskGroup {
-  const _AgenticTaskGroup({
-    required this.taskId,
-    required this.events,
-  });
+  Widget _buildDependencyGraph(AgenticGraphSnapshot graph) {
+    final nodeLabelById = <String, String>{
+      for (final node in graph.nodes) node.id: node.label,
+    };
 
-  final String taskId;
-  final List<IdeAgenticEvent> events;
+    return Container(
+      key: const Key('ide-agentic-graph'),
+      color: const Color(0xFF0A1421),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: ZoyaTheme.glassBorder)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.account_tree_outlined, size: 14, color: ZoyaTheme.textMuted),
+                const SizedBox(width: 6),
+                Text(
+                  'Graph (${graph.nodes.length} nodes, ${graph.edges.length} edges)',
+                  style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                if (graph.truncated)
+                  Text(
+                    'trimmed ${graph.droppedNodes}',
+                    style: TextStyle(color: Colors.orangeAccent.withValues(alpha: 0.9), fontSize: 11),
+                  ),
+              ],
+            ),
+          ),
+          if (graph.nodes.isEmpty)
+            Expanded(
+              child: Center(
+                child: Text(
+                  'No dependency graph data',
+                  style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.85)),
+                ),
+              ),
+            )
+          else
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.all(10),
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: graph.nodes
+                        .map(
+                          (node) => Container(
+                            key: Key('ide-agentic-graph-node-${node.id}'),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: node.type == AgenticGraphNodeType.task
+                                  ? ZoyaTheme.accent.withValues(alpha: 0.15)
+                                  : Colors.blueGrey.withValues(alpha: 0.18),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: ZoyaTheme.glassBorder),
+                            ),
+                            child: Text(
+                              '${node.type.name}: ${node.label}',
+                              style: const TextStyle(color: ZoyaTheme.textMain, fontSize: 11),
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                  ),
+                  const SizedBox(height: 12),
+                  if (graph.edges.isEmpty)
+                    Text(
+                      'No dependency edges yet',
+                      style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.8), fontSize: 11),
+                    )
+                  else
+                    ...graph.edges.map(
+                      (edge) {
+                        final from = nodeLabelById[edge.fromNodeId] ?? edge.fromNodeId;
+                        final to = nodeLabelById[edge.toNodeId] ?? edge.toNodeId;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: Text(
+                            '$from → $to (${edge.kind})',
+                            style: TextStyle(color: ZoyaTheme.textMuted.withValues(alpha: 0.9), fontSize: 11),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 }
