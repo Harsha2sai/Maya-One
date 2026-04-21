@@ -56,6 +56,7 @@ class GlobalAgentContainer:
     _ide_action_guard: Any = None     # P12.1 IDE action guard
     _ide_state_bus: Any = None        # P12.1 IDE event/state bus
     _terminal_manager: Any = None     # P12.3 terminal manager (PTY + websocket)
+    _ide_audit_store: Any = None      # P14 IDE SQLite audit persistence
     _pending_action_store: Any = None # P13.1 pending action + approval queue
 
     @classmethod
@@ -93,6 +94,7 @@ class GlobalAgentContainer:
         from core.a2a import MayaA2AServer
         from core.ide import (
             ActionGuard,
+            IDEAuditStore,
             IDEFileService,
             IDESessionManager,
             IDEStateBus,
@@ -195,7 +197,11 @@ class GlobalAgentContainer:
         cls._ide_action_guard = ActionGuard()
         cls._ide_state_bus = IDEStateBus()
         cls._terminal_manager = TerminalManager()
-        cls._pending_action_store = PendingActionStore(max_actions=1000)
+        cls._ide_audit_store = IDEAuditStore()
+        cls._pending_action_store = PendingActionStore(
+            max_actions=1000,
+            audit_store=cls._ide_audit_store,
+        )
         await cls._ide_session_manager.start_cleanup()
         await cls._pending_action_store.start()
         cls._terminal_manager.on_audit(cls._forward_terminal_audit_event)
@@ -632,6 +638,11 @@ class GlobalAgentContainer:
         return cls._pending_action_store
 
     @classmethod
+    def get_ide_audit_store(cls) -> Any:
+        """Return the shared IDE audit store (P14)."""
+        return cls._ide_audit_store
+
+    @classmethod
     def get_host_capability_profile(cls, refresh: bool = False):
         from core.system.host_capability_profile import (
             collect_host_capability_profile,
@@ -813,3 +824,11 @@ class GlobalAgentContainer:
                 logger.warning(f"⚠️ Failed to stop pending action store: {e}")
             finally:
                 cls._pending_action_store = None
+
+        if cls._ide_audit_store is not None:
+            try:
+                cls._ide_audit_store.close()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to close IDE audit store: {e}")
+            finally:
+                cls._ide_audit_store = None

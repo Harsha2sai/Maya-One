@@ -1,4 +1,5 @@
 from .ide_action_guard import ActionEnvelope, ActionGuard, GuardDecision
+from .ide_audit_store import IDEAuditStore
 from .ide_file_service import IDEFileService, PathEscapeError
 from .ide_pending_action_store import (
     PendingAction,
@@ -20,10 +21,11 @@ from .ide_terminal_manager import (
 )
 
 __all__ = [
-    "ActionEnvelope",
     "ActionAuditEvent",
+    "ActionEnvelope",
     "ActionGuard",
     "GuardDecision",
+    "IDEAuditStore",
     "IDEFileService",
     "IDEStateBus",
     "IDESession",
@@ -38,4 +40,3 @@ __all__ = [
     "TerminalAuditEvent",
     "TerminalLimitExceededError",
 ]
-

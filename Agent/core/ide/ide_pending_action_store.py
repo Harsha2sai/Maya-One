@@ -6,7 +6,7 @@ import logging
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from typing import Any, Callable, Coroutine, Deque, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class ActionAuditEvent:
     """Audit event for action lifecycle."""
 
     action_id: str
-    event_type: str  # requested|approved|denied|executed|failed|cancelled|expired
+    event_type: str # requested|approved|denied|executed|failed|cancelled|expired
     timestamp: float
     user_id: str
     session_id: str
@@ -52,7 +52,11 @@ class ActionAuditEvent:
 
 
 class PendingActionStore:
-    """In-memory pending action state with bounded audit history."""
+    """In-memory pending action state with bounded audit history.
+
+    Write-through SQLite persistence via an optional IDEAuditStore
+    so events survive process restarts.
+    """
 
     def __init__(
         self,
@@ -61,6 +65,7 @@ class PendingActionStore:
         default_ttl_seconds: int = 600,
         cleanup_interval_seconds: int = 60,
         max_audit_events: int = 5000,
+        audit_store=None,  # forward ref — set before start()
     ) -> None:
         self._max_actions = max(1, int(max_actions))
         self._default_ttl = max(1, int(default_ttl_seconds))
@@ -68,17 +73,46 @@ class PendingActionStore:
         self._max_audit_events = max(100, int(max_audit_events))
 
         self._actions: Dict[str, PendingAction] = {}
-        self._idempotency_keys: Dict[str, str] = {}  # key -> action_id
+        self._idempotency_keys: Dict[str, str] = {} # key -> action_id
         self._audit_events: Deque[ActionAuditEvent] = deque(maxlen=self._max_audit_events)
 
         self._cleanup_task: Optional[asyncio.Task[Any]] = None
         self._audit_callbacks: List[Callable[[ActionAuditEvent], Coroutine[Any, Any, None]]] = []
         self._lock = asyncio.Lock()
+        self._audit_store = audit_store  # IDEAuditStore; None = in-memory only
 
     async def start(self) -> None:
         if self._cleanup_task is None:
             self._cleanup_task = asyncio.create_task(self._cleanup_loop())
-            logger.info("pending_action_store_started")
+        # Rehydrate expired-but-not-yet-cleaned pending actions from SQLite
+        if self._audit_store is not None:
+            try:
+                persisted = self._audit_store.get_pending_actions()
+                restored = 0
+                for row in persisted:
+                    action = PendingAction(
+                        action_id=row["action_id"],
+                        user_id=row["user_id"],
+                        session_id=row["session_id"],
+                        action_type=row["action_type"],
+                        target_id=row.get("target_id", ""),
+                        payload=row.get("payload", {}) or {},
+                        risk=row["risk"],
+                        policy_reason=row.get("policy_reason", ""),
+                        idempotency_key=row["idempotency_key"],
+                        requested_at=row["requested_at"],
+                        expires_at=row["expires_at"],
+                        trace_id=row.get("trace_id"),
+                        task_id=row.get("task_id"),
+                    )
+                    self._actions[action.action_id] = action
+                    self._idempotency_keys[action.idempotency_key] = action.action_id
+                    restored += 1
+                if restored:
+                    logger.info("pending_action_store_rehydrated count=%d", restored)
+            except Exception as exc:
+                logger.warning("pending_action_rehydration skipped: %s", exc)
+        logger.info("pending_action_store_started")
 
     async def stop(self) -> None:
         task = self._cleanup_task
@@ -131,7 +165,7 @@ class PendingActionStore:
                         ActionAuditEvent(
                             action_id=evicted.action_id,
                             event_type="expired",
-                            timestamp=time.monotonic(),
+                            timestamp=time.time(),
                             user_id=evicted.user_id,
                             session_id=evicted.session_id,
                             action_type=evicted.action_type,
@@ -144,7 +178,7 @@ class PendingActionStore:
                     )
 
             action_id = f"act_{uuid.uuid4().hex[:16]}"
-            now = time.monotonic()
+            now = time.time()
             ttl = max(1, int(ttl_seconds or self._default_ttl))
             action = PendingAction(
                 action_id=action_id,
@@ -178,6 +212,9 @@ class PendingActionStore:
             )
             self._audit_events.append(audit_event)
 
+            if self._audit_store is not None:
+                self._audit_store.write_pending_action(asdict(action))
+
         if audit_event is not None:
             await self._notify_audit(audit_event)
         logger.info("pending_action_requested action_id=%s type=%s", action_id, action_type)
@@ -186,9 +223,9 @@ class PendingActionStore:
     async def get_pending(self, *, user_id: Optional[str] = None) -> List[PendingAction]:
         async with self._lock:
             actions = list(self._actions.values())
-        if user_id:
-            actions = [action for action in actions if action.user_id == user_id]
-        return sorted(actions, key=lambda action: action.requested_at, reverse=True)
+            if user_id:
+                actions = [action for action in actions if action.user_id == user_id]
+            return sorted(actions, key=lambda action: action.requested_at, reverse=True)
 
     async def get_by_id(self, action_id: str) -> Optional[PendingAction]:
         async with self._lock:
@@ -206,7 +243,7 @@ class PendingActionStore:
             action = self._pop_action_without_audit(action_id)
             if action is None:
                 return None
-            now = time.monotonic()
+            now = time.time()
             audit_event = ActionAuditEvent(
                 action_id=action_id,
                 event_type="approved",
@@ -223,6 +260,9 @@ class PendingActionStore:
                 task_id=action.task_id,
             )
             self._audit_events.append(audit_event)
+
+        if self._audit_store is not None:
+            self._audit_store.remove_pending_action(action_id)
 
         if audit_event is not None:
             await self._notify_audit(audit_event)
@@ -241,7 +281,7 @@ class PendingActionStore:
             action = self._pop_action_without_audit(action_id)
             if action is None:
                 return False
-            now = time.monotonic()
+            now = time.time()
             audit_event = ActionAuditEvent(
                 action_id=action_id,
                 event_type="denied",
@@ -259,6 +299,9 @@ class PendingActionStore:
             )
             self._audit_events.append(audit_event)
 
+        if self._audit_store is not None:
+            self._audit_store.remove_pending_action(action_id)
+
         if audit_event is not None:
             await self._notify_audit(audit_event)
         logger.info("pending_action_denied action_id=%s decided_by=%s", action_id, decided_by)
@@ -274,7 +317,7 @@ class PendingActionStore:
             if action is None:
                 return False
 
-            now = time.monotonic()
+            now = time.time()
             audit_event = ActionAuditEvent(
                 action_id=action_id,
                 event_type="cancelled",
@@ -290,6 +333,9 @@ class PendingActionStore:
                 task_id=action.task_id,
             )
             self._audit_events.append(audit_event)
+
+        if self._audit_store is not None:
+            self._audit_store.remove_pending_action(action_id)
 
         if audit_event is not None:
             await self._notify_audit(audit_event)
@@ -308,7 +354,7 @@ class PendingActionStore:
         event = ActionAuditEvent(
             action_id=action.action_id,
             event_type=event_type,
-            timestamp=time.monotonic(),
+            timestamp=time.time(),
             user_id=action.user_id,
             session_id=action.session_id,
             action_type=action.action_type,
@@ -334,13 +380,13 @@ class PendingActionStore:
         async with self._lock:
             events = list(self._audit_events)
 
-        if user_id:
-            events = [event for event in events if event.user_id == user_id]
-        if session_id:
-            events = [event for event in events if event.session_id == session_id]
+            if user_id:
+                events = [event for event in events if event.user_id == user_id]
+            if session_id:
+                events = [event for event in events if event.session_id == session_id]
 
-        events.sort(key=lambda event: event.timestamp, reverse=True)
-        return events[:normalized_limit]
+            events.sort(key=lambda event: event.timestamp, reverse=True)
+            return events[:normalized_limit]
 
     async def is_action_pending(self, action_type: str, target_id: str) -> bool:
         async with self._lock:
@@ -356,8 +402,16 @@ class PendingActionStore:
         for callback in list(self._audit_callbacks):
             try:
                 await callback(event)
-            except Exception as exc:  # pragma: no cover - defensive callback handling
+            except Exception as exc: # pragma: no cover - defensive callback handling
                 logger.warning("pending_action_audit_callback_failed error=%s", exc)
+
+        # Write-through to SQLite audit store (non-blocking for in-memory path)
+        if self._audit_store is not None:
+            try:
+                self._audit_store.write_audit_event(asdict(event))
+            except Exception as exc:
+                logger.warning("audit_store_write_failed event_type=%s error=%s",
+                               event.event_type, exc)
 
     def _pop_action_without_audit(self, action_id: str) -> Optional[PendingAction]:
         action = self._actions.pop(action_id, None)
@@ -369,8 +423,9 @@ class PendingActionStore:
         try:
             while True:
                 await asyncio.sleep(self._cleanup_interval)
-                now = time.monotonic()
+                now = time.time()
                 expired: List[PendingAction] = []
+                expired_events: List[ActionAuditEvent] = []
                 async with self._lock:
                     expired_ids = [
                         action_id
@@ -382,25 +437,7 @@ class PendingActionStore:
                         if action is None:
                             continue
                         expired.append(action)
-                        self._audit_events.append(
-                            ActionAuditEvent(
-                                action_id=action.action_id,
-                                event_type="expired",
-                                timestamp=now,
-                                user_id=action.user_id,
-                                session_id=action.session_id,
-                                action_type=action.action_type,
-                                risk=action.risk,
-                                idempotency_key=action.idempotency_key,
-                                error="evicted:expired",
-                                trace_id=action.trace_id,
-                                task_id=action.task_id,
-                            )
-                        )
-
-                for action in expired:
-                    await self._notify_audit(
-                        ActionAuditEvent(
+                        expired_event = ActionAuditEvent(
                             action_id=action.action_id,
                             event_type="expired",
                             timestamp=now,
@@ -413,6 +450,14 @@ class PendingActionStore:
                             trace_id=action.trace_id,
                             task_id=action.task_id,
                         )
-                    )
+                        self._audit_events.append(expired_event)
+                        expired_events.append(expired_event)
+
+                for action in expired:
+                    if self._audit_store is not None:
+                        self._audit_store.remove_pending_action(action.action_id)
+
+                for event in expired_events:
+                    await self._notify_audit(event)
         except asyncio.CancelledError:
             return
