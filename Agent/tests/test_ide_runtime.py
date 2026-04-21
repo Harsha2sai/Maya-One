@@ -10,6 +10,7 @@ import pytest
 from core.ide import (
     ActionEnvelope,
     ActionGuard,
+    IDEAuditStore,
     IDEFileService,
     IDESessionManager,
     IDEStateBus,
@@ -34,6 +35,40 @@ def test_open_and_close_session(tmp_path: Path):
 
     assert manager.close_session(session.session_id) is True
     assert manager.get_session(session.session_id) is None
+
+
+def test_session_persists_to_sqlite_on_open_and_close(tmp_path: Path):
+    db_path = tmp_path / "ide_audit.db"
+    audit_store = IDEAuditStore(db_path=str(db_path))
+    manager = IDESessionManager(max_concurrent=5, audit_store=audit_store)
+
+    session = manager.open_session(str(tmp_path), user_id="u1")
+    persisted = audit_store.get_open_sessions(user_id="u1")
+    assert len(persisted) == 1
+    assert persisted[0]["session_id"] == session.session_id
+
+    assert manager.close_session(session.session_id) is True
+    assert audit_store.get_open_sessions(user_id="u1") == []
+    audit_store.close()
+
+
+@pytest.mark.asyncio
+async def test_session_rehydrates_from_sqlite_on_manager_start(tmp_path: Path):
+    db_path = tmp_path / "ide_audit.db"
+    audit_store = IDEAuditStore(db_path=str(db_path))
+
+    manager_1 = IDESessionManager(max_concurrent=5, audit_store=audit_store)
+    session = manager_1.open_session(str(tmp_path), user_id="u1")
+
+    manager_2 = IDESessionManager(max_concurrent=5, audit_store=audit_store)
+    await manager_2.start_cleanup()
+    restored = manager_2.get_session(session.session_id)
+    await manager_2.stop_cleanup()
+
+    assert restored is not None
+    assert restored.session_id == session.session_id
+    assert restored.user_id == "u1"
+    audit_store.close()
 
 
 def test_file_read_within_workspace(tmp_path: Path):

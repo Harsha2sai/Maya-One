@@ -192,12 +192,15 @@ class GlobalAgentContainer:
         logger.info("🔌 MayaA2AServer initialized available=%s", cls._a2a_server.available)
         cls._agentscope_memory = MayaAgentScopeMemory(db_path=cls._task_store.db_path)
         logger.info("🧠 MayaAgentScopeMemory initialized (parallel to HybridMemoryManager)")
-        cls._ide_session_manager = IDESessionManager(max_concurrent=5)
+        cls._ide_audit_store = IDEAuditStore()
+        cls._ide_session_manager = IDESessionManager(
+            max_concurrent=5,
+            audit_store=cls._ide_audit_store,
+        )
         cls._ide_file_service = IDEFileService(cls._ide_session_manager)
         cls._ide_action_guard = ActionGuard()
         cls._ide_state_bus = IDEStateBus()
         cls._terminal_manager = TerminalManager()
-        cls._ide_audit_store = IDEAuditStore()
         cls._pending_action_store = PendingActionStore(
             max_actions=1000,
             audit_store=cls._ide_audit_store,

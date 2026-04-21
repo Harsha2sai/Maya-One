@@ -43,6 +43,7 @@ class IDEAuditStore:
         *,
         max_audit_events: int = 5000,
         max_pending_actions: int = 1000,
+        max_sessions: int = 5000,
     ) -> None:
         if db_path is None:
             base = os.getenv("MAYA_DATA_DIR", os.path.expanduser("~/.maya"))
@@ -52,6 +53,7 @@ class IDEAuditStore:
         self.db_path = db_path
         self._max_audit_events = max(100, int(max_audit_events))
         self._max_pending_actions = max(10, int(max_pending_actions))
+        self._max_sessions = max(100, int(max_sessions))
         self._conn: Optional[sqlite3.Connection] = None
         self._init_db()
 
@@ -115,6 +117,17 @@ class IDEAuditStore:
                 created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS ide_sessions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id       TEXT    UNIQUE NOT NULL,
+                workspace_path   TEXT    NOT NULL,
+                user_id          TEXT    NOT NULL,
+                created_at       TEXT    NOT NULL,
+                created_at_epoch_s REAL  NOT NULL,
+                status           TEXT    NOT NULL DEFAULT 'open',
+                updated_at       TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_audit_action_id
                 ON ide_audit_events(action_id);
             CREATE INDEX IF NOT EXISTS idx_audit_timestamp
@@ -123,6 +136,10 @@ class IDEAuditStore:
                 ON ide_audit_events(user_id);
             CREATE INDEX IF NOT EXISTS idx_pending_expires
                 ON ide_pending_actions(expires_at);
+            CREATE INDEX IF NOT EXISTS idx_sessions_status
+                ON ide_sessions(status);
+            CREATE INDEX IF NOT EXISTS idx_sessions_created_epoch
+                ON ide_sessions(created_at_epoch_s DESC);
         """)
 
     def _validate_schema(self, conn: sqlite3.Connection) -> None:
@@ -263,6 +280,74 @@ class IDEAuditStore:
         except Exception as e:
             logger.warning("remove_pending_action failed: %s", e)
 
+    # ─── Session persistence ──────────────────────────────────────────────────
+
+    def write_session(self, session: dict) -> None:
+        """Upsert IDE session snapshot."""
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO ide_sessions
+                        (session_id, workspace_path, user_id, created_at,
+                         created_at_epoch_s, status, updated_at)
+                    VALUES
+                        (:session_id, :workspace_path, :user_id, :created_at,
+                         :created_at_epoch_s, :status, datetime('now'))
+                    """,
+                    {
+                        "session_id": str(session.get("session_id") or ""),
+                        "workspace_path": str(session.get("workspace_path") or ""),
+                        "user_id": str(session.get("user_id") or ""),
+                        "created_at": str(session.get("created_at") or ""),
+                        "created_at_epoch_s": float(session.get("created_at_epoch_s") or 0.0),
+                        "status": str(session.get("status") or "open"),
+                    },
+                )
+                conn.execute(
+                    """
+                    DELETE FROM ide_sessions
+                    WHERE id NOT IN (
+                        SELECT id FROM ide_sessions
+                        ORDER BY created_at_epoch_s DESC
+                        LIMIT ?
+                    )
+                    """,
+                    (self._max_sessions,),
+                )
+        except Exception as e:
+            logger.warning("write_session failed: %s", e)
+
+    def remove_session(self, session_id: str) -> None:
+        """Remove session by id."""
+        try:
+            with self._get_conn() as conn:
+                conn.execute(
+                    "DELETE FROM ide_sessions WHERE session_id = ?",
+                    (session_id,),
+                )
+        except Exception as e:
+            logger.warning("remove_session failed: %s", e)
+
+    def get_open_sessions(self, *, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Load sessions still marked open."""
+        try:
+            conn = self._get_conn()
+            sql = [
+                "SELECT * FROM ide_sessions",
+                "WHERE status = 'open'",
+            ]
+            params: list[Any] = []
+            if user_id:
+                sql.append("AND user_id = ?")
+                params.append(user_id)
+            sql.append("ORDER BY created_at_epoch_s DESC")
+            rows = conn.execute(" ".join(sql), params).fetchall()
+            return [self._row_to_session(dict(r)) for r in rows]
+        except Exception as e:
+            logger.warning("get_open_sessions failed: %s", e)
+            return []
+
     # ─── Query methods ────────────────────────────────────────────────────────
 
     def get_audit_events(
@@ -329,6 +414,12 @@ class IDEAuditStore:
         row.pop("id", None)
         row.pop("created_at", None)
         row["payload"] = _json_loads(row.pop("payload", None))
+        return row
+
+    def _row_to_session(self, row: dict) -> dict:
+        row.pop("id", None)
+        row.pop("updated_at", None)
+        row["created_at_epoch_s"] = float(row.get("created_at_epoch_s") or 0.0)
         return row
 
     def close(self) -> None:
