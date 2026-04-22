@@ -66,11 +66,11 @@ class LeftNavigationRail extends StatelessWidget {
               onTap: () => _handleTap(context, workspace, WorkbenchTab.artifacts),
             ),
             _RailDestination(
-              key: const Key('rail_tab_memory'),
-              icon: FontAwesomeIcons.microchip,
-              label: 'Memory',
-              selected: workspace.selectedWorkbenchTab == WorkbenchTab.memory,
-              onTap: () => _handleTap(context, workspace, WorkbenchTab.memory),
+              key: const Key('rail_tab_ide'),
+              icon: FontAwesomeIcons.code,
+              label: 'IDE',
+              selected: workspace.currentPage == 'ide_workspace',
+              onTap: () => _handleTap(context, workspace, WorkbenchTab.ide),
             ),
             const Spacer(),
           ],
@@ -80,6 +80,11 @@ class LeftNavigationRail extends StatelessWidget {
   }
 
   void _handleTap(BuildContext context, WorkspaceController workspace, WorkbenchTab tab) {
+    if (tab == WorkbenchTab.ide) {
+      workspace.setCurrentPage('ide_workspace');
+      return;
+    }
+
     if (workspace.selectedWorkbenchTab == tab && workspace.workbenchVisible) {
       workspace.setWorkbenchVisible(false);
     } else {
@@ -136,12 +141,12 @@ class _RailDestinationState extends State<_RailDestination> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: widget.selected 
-                      ? ZoyaTheme.accent.withValues(alpha: 0.12) 
+                  color: widget.selected
+                      ? ZoyaTheme.accent.withValues(alpha: 0.12)
                       : (_hover ? Colors.white.withValues(alpha: 0.05) : Colors.transparent),
                   borderRadius: BorderRadius.circular(12),
-                  border: widget.selected 
-                      ? Border.all(color: ZoyaTheme.accent.withValues(alpha: 0.28)) 
+                  border: widget.selected
+                      ? Border.all(color: ZoyaTheme.accent.withValues(alpha: 0.28))
                       : Border.all(color: Colors.transparent),
                 ),
                 child: Center(

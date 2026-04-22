@@ -27,6 +27,7 @@ import 'state/controllers/conversation_controller.dart';
 import 'state/controllers/orb_controller.dart';
 import 'state/controllers/workspace_controller.dart';
 import 'state/controllers/overlay_controller.dart';
+import 'state/controllers/ide_workspace_controller.dart';
 import 'ui/theme/app_theme.dart';
 import 'widgets/overlays/global_overlay_host.dart';
 import 'app.dart';
@@ -34,10 +35,7 @@ import 'app.dart';
 bool _isTruthyEnv(String? raw, {bool defaultValue = false}) {
   if (raw == null) return defaultValue;
   final normalized = raw.trim().toLowerCase();
-  return normalized == '1' ||
-      normalized == 'true' ||
-      normalized == 'yes' ||
-      normalized == 'on';
+  return normalized == '1' || normalized == 'true' || normalized == 'yes' || normalized == 'on';
 }
 
 void main() async {
@@ -71,9 +69,7 @@ void main() async {
     dotenv.env['FLUTTER_AUTO_START_AGENT'],
     defaultValue: false,
   );
-  if (!kIsWeb &&
-      (Platform.isLinux || Platform.isMacOS || Platform.isWindows) &&
-      autoStartLocalAgent) {
+  if (!kIsWeb && (Platform.isLinux || Platform.isMacOS || Platform.isWindows) && autoStartLocalAgent) {
     final agentManager = AgentProcessManager();
     final started = await agentManager.startAgent();
     if (started) {
@@ -164,6 +160,7 @@ void main() async {
           },
         ),
         ChangeNotifierProvider(create: (_) => WorkspaceController()),
+        ChangeNotifierProvider(create: (_) => IDEWorkspaceController()),
         ChangeNotifierProvider(create: (_) => AppInitController()),
       ],
       child: const VoiceAssistantApp(),

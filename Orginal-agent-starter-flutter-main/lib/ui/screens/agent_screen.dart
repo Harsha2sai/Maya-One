@@ -19,7 +19,6 @@ import '../../widgets/features/chat/chat_overlay.dart';
 import '../../state/providers/settings_provider.dart';
 import '../../widgets/features/workbench/workbench_pane.dart';
 
-
 class AgentScreen extends StatefulWidget {
   final bool showSidebar;
   const AgentScreen({super.key, this.showSidebar = true});
@@ -39,6 +38,11 @@ class _AgentScreenState extends State<AgentScreen> {
   void _openWorkbenchTab(WorkbenchTab tab) {
     final workspace = Provider.of<WorkspaceController?>(context, listen: false);
     final overlay = Provider.of<OverlayController?>(context, listen: false);
+
+    if (workspace != null && tab == WorkbenchTab.ide) {
+      workspace.setCurrentPage('ide_workspace');
+      return;
+    }
 
     if (workspace == null || overlay == null) {
       debugPrint(
@@ -234,7 +238,6 @@ class _AgentScreenState extends State<AgentScreen> {
                 },
               )
             : null,
-
         leftControlBar: _ControlBar(
           onChatToggle: () => setState(() => _chatOpen = !_chatOpen),
           isChatOpen: _chatOpen,
@@ -618,10 +621,10 @@ class _FloatingWidgetsPanel extends StatelessWidget {
           onTap: () => onOpenTab(WorkbenchTab.logs),
         ),
         _FloatingWidget(
-          key: const Key('floating_icon_system_health'),
-          icon: FontAwesomeIcons.microchip,
-          label: 'System Health',
-          onTap: () => onOpenTab(WorkbenchTab.memory),
+          key: const Key('floating_icon_ide'),
+          icon: FontAwesomeIcons.code,
+          label: 'IDE',
+          onTap: () => onOpenTab(WorkbenchTab.ide),
         ),
       ],
     );

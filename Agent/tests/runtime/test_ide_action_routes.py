@@ -6,6 +6,7 @@ import pytest
 from aiohttp import ClientSession, web
 
 from api.handlers import (
+    _execute_ide_action,
     handle_ide_action_approve,
     handle_ide_action_audit,
     handle_ide_action_pending,
@@ -14,6 +15,7 @@ from api.handlers import (
     handle_ide_mcp_mutate,
 )
 from core.ide import ActionGuard, IDEStateBus, PendingActionStore
+from core.runtime.global_agent import GlobalAgentContainer
 
 
 async def _post_json(base_url: str, path: str, payload: dict) -> tuple[int, dict]:
@@ -128,6 +130,46 @@ async def test_action_request_requires_approval(monkeypatch, unused_tcp_port):
 
 
 @pytest.mark.asyncio
+async def test_action_request_spawn_is_pending(monkeypatch, unused_tcp_port):
+    guard = ActionGuard()
+    store = PendingActionStore()
+    bus = IDEStateBus()
+    monkeypatch.setattr(
+        "api.handlers._get_pending_action_components",
+        lambda: (guard, store, bus),
+    )
+
+    app = web.Application()
+    app.router.add_post("/ide/action/request", handle_ide_action_request)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", unused_tcp_port)
+    await site.start()
+
+    try:
+        status, body = await _post_json(
+            f"http://127.0.0.1:{unused_tcp_port}",
+            "/ide/action/request",
+            {
+                "user_id": "u1",
+                "session_id": "sess-1",
+                "idempotency_key": "idem-spawn",
+                "action": {
+                    "target": "agent",
+                    "operation": "spawn",
+                    "arguments": {"agent_type": "coder", "task": "plan tests"},
+                },
+            },
+        )
+        assert status == 200
+        assert body["status"] == "pending"
+        assert body["requires_approval"] is True
+        assert body["risk"] == "high"
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_action_approve_executes_and_audits(monkeypatch, unused_tcp_port):
     guard = ActionGuard()
     store = PendingActionStore()
@@ -230,3 +272,56 @@ async def test_mcp_inventory_and_mutate(monkeypatch, unused_tcp_port):
         assert mutate["status"] == "pending"
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_execute_spawn_action_emits_spawn_lifecycle(monkeypatch):
+    bus = IDEStateBus()
+    queue = bus.subscribe()
+
+    original_bus = GlobalAgentContainer._ide_state_bus
+    GlobalAgentContainer._ide_state_bus = bus
+
+    async def _fake_spawn_subagent(*, agent_type, task, wait=True, use_worktree=False):
+        assert agent_type == "coder"
+        assert task == "ship p14.1"
+        assert wait is False
+        assert use_worktree is True
+        return "agent_id:agent-123 status:running"
+
+    monkeypatch.setattr("core.tools.agent_tools.spawn_subagent", _fake_spawn_subagent)
+
+    try:
+        result = await _execute_ide_action(
+            envelope=type(
+                "Envelope",
+                (),
+                {
+                    "target": "agent",
+                    "operation": "spawn",
+                    "arguments": {
+                        "agent_type": "coder",
+                        "task": "ship p14.1",
+                        "use_worktree": True,
+                    },
+                },
+            )(),
+            session_id="ide-sess-1",
+            user_id="u1",
+            timeout_seconds=2.0,
+        )
+
+        assert result["target"] == "agent"
+        assert result["operation"] == "spawn"
+        assert result["executed"] is True
+        assert "agent-123" in result["result"]
+
+        events = [await queue.get(), await queue.get(), await queue.get()]
+        assert [event["event_type"] for event in events] == [
+            "agent_spawn_requested",
+            "agent_spawn_executing",
+            "agent_spawn_finished",
+        ]
+        assert events[-1]["status"] == "success"
+    finally:
+        GlobalAgentContainer._ide_state_bus = original_bus

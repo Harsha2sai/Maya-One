@@ -15,6 +15,7 @@ import 'ui/screens/agent_screen.dart';
 import 'ui/screens/welcome_screen.dart';
 import 'ui/screens/login_screen.dart';
 import 'ui/screens/projects_screen.dart';
+import 'ui/screens/ide_workspace_screen.dart';
 import 'widgets/layout/shell_sidebar.dart';
 import 'widgets/common/error_banner.dart';
 import 'ui/theme/app_theme.dart';
@@ -70,14 +71,14 @@ class _AppState extends State<App> {
         if (!mounted) {
           return;
         }
-        
+
         final overlayCtrl = context.read<OverlayController>();
         final workspaceCtrl = context.read<WorkspaceController>();
-        
+
         if (resolvedLayoutMode != WorkspaceLayoutMode.compact) {
           overlayCtrl.setCompactWorkbenchSheetOpen(false);
         }
-        
+
         workspaceCtrl.setLayoutMode(resolvedLayoutMode);
       });
     }
@@ -157,6 +158,10 @@ class _AppState extends State<App> {
 
     if (page == 'projects') {
       return const ProjectsScreen();
+    }
+
+    if (page == 'ide_workspace') {
+      return const IDEWorkspaceScreen();
     }
 
     // Other pages: Dashboard, History, etc.

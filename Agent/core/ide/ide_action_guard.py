@@ -86,6 +86,14 @@ class ActionGuard:
                 policy_reason="agent task control allowed",
             )
 
+        if target == "agent" and operation in {"spawn", "agent_spawn"}:
+            return GuardDecision(
+                risk="high",
+                allowed=True,
+                requires_approval=True,
+                policy_reason="agent spawn requires explicit approval",
+            )
+
         if target == "agent" and operation in {"approve", "deny"}:
             return GuardDecision(
                 risk="low",

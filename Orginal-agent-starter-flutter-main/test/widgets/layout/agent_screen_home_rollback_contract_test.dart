@@ -22,8 +22,9 @@ void main() {
     expect(source, contains("Key('floating_icon_n8n')"));
     expect(source, contains('onTap: () => onOpenTab(WorkbenchTab.logs)'));
 
-    expect(source, contains("Key('floating_icon_system_health')"));
-    expect(source, contains('onTap: () => onOpenTab(WorkbenchTab.memory)'));
+    expect(source, contains("Key('floating_icon_ide')"));
+    expect(source, contains('onTap: () => onOpenTab(WorkbenchTab.ide)'));
+    expect(source, contains("workspace.setCurrentPage('ide_workspace')"));
   });
 
   test('AgentScreen workbench open path guards unavailable controllers', () {

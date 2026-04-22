@@ -579,6 +579,72 @@ async def _ensure_room_dispatch(room_name: str) -> None:
     finally:
         await lk.aclose()
 
+
+async def _check_room_session_ready(
+    lk: LiveKitAPI,
+    room_name: str,
+) -> tuple[bool, dict[str, object]]:
+    """
+    Validate room readiness for /send_message.
+    Ready means:
+    1) dispatch exists for configured agent name, and
+    2) at least one agent participant is present in the room.
+    """
+    agent_name = os.getenv("LIVEKIT_AGENT_NAME", "maya-one").strip()
+    dispatch_ready = False
+    agent_present = False
+    participant_count = 0
+
+    dispatches = await lk.agent_dispatch.list_dispatch(room_name=room_name)
+    if not agent_name:
+        dispatch_ready = len(dispatches or []) > 0
+    else:
+        dispatch_ready = any(getattr(item, "agent_name", "") == agent_name for item in dispatches or [])
+
+    participants_resp = await lk.room.list_participants(
+        room.ListParticipantsRequest(room=room_name)
+    )
+    participants = list(getattr(participants_resp, "participants", []) or [])
+    participant_count = len(participants)
+    agent_present = any(
+        str(getattr(participant, "identity", "") or "").startswith("agent-")
+        or (agent_name and agent_name in str(getattr(participant, "identity", "") or ""))
+        for participant in participants
+    )
+
+    return (
+        dispatch_ready and agent_present,
+        {
+            "dispatch_ready": dispatch_ready,
+            "agent_present": agent_present,
+            "participant_count": participant_count,
+            "agent_name": agent_name or "",
+        },
+    )
+
+
+async def _wait_for_room_session_ready(
+    lk: LiveKitAPI,
+    room_name: str,
+    *,
+    attempts: int = 5,
+    interval_s: float = 0.2,
+) -> tuple[bool, dict[str, object]]:
+    status: dict[str, object] = {
+        "dispatch_ready": False,
+        "agent_present": False,
+        "participant_count": 0,
+        "attempts": attempts,
+    }
+    for _ in range(max(1, attempts)):
+        ready, status = await _check_room_session_ready(lk, room_name)
+        if ready:
+            status["attempts"] = attempts
+            return True, status
+        await asyncio.sleep(max(0.05, interval_s))
+    status["attempts"] = attempts
+    return False, status
+
 async def handle_token(request):
     """Integrated token generation endpoint"""
     try:
@@ -682,6 +748,32 @@ async def handle_send_message(request):
             api_secret=livekit_api_secret,
         )
         try:
+            ready, readiness = await _wait_for_room_session_ready(
+                lk,
+                room_name,
+                attempts=5,
+                interval_s=0.2,
+            )
+            if not ready:
+                logger.warning(
+                    "send_message_rejected_session_not_ready room=%s user_id=%s run_id=%s dispatch_ready=%s agent_present=%s participant_count=%s",
+                    room_name,
+                    user_id,
+                    run_id or "-",
+                    readiness.get("dispatch_ready"),
+                    readiness.get("agent_present"),
+                    readiness.get("participant_count"),
+                )
+                return web.json_response(
+                    {
+                        "error": "session_not_ready",
+                        "retry_after_ms": 500,
+                        "room": room_name,
+                        "details": readiness,
+                    },
+                    status=503,
+                )
+
             payload = message.encode("utf-8")
             await lk.room.send_data(
                 room.SendDataRequest(
@@ -1463,6 +1555,8 @@ async def _execute_ide_action(*, envelope, session_id: str, user_id: str, timeou
                 "cancel": "task_cancel_requested",
                 "approve": "task_approval_requested",
                 "deny": "task_denial_requested",
+                "spawn": "agent_spawn_requested",
+                "agent_spawn": "agent_spawn_requested",
             }.get(operation, "task_action_requested")
             await state_bus.emit(
                 event_type,
@@ -1474,6 +1568,65 @@ async def _execute_ide_action(*, envelope, session_id: str, user_id: str, timeou
                     "payload": {"operation": operation, "arguments": arguments, "user_id": user_id},
                 },
             )
+
+            if operation in {"spawn", "agent_spawn"}:
+                from core.tools.agent_tools import spawn_subagent
+
+                agent_type = str(arguments.get("agent_type") or "").strip().lower()
+                task = str(arguments.get("task") or "").strip()
+                use_worktree = bool(arguments.get("use_worktree", False))
+                if not agent_type:
+                    raise ValueError("agent_type is required for spawn action")
+                if not task:
+                    raise ValueError("task is required for spawn action")
+
+                await state_bus.emit(
+                    "agent_spawn_executing",
+                    {
+                        "session_id": session_id,
+                        "task_id": str(arguments.get("task_id") or ""),
+                        "agent_id": "approval-center",
+                        "status": "executing",
+                        "payload": {
+                            "operation": operation,
+                            "agent_type": agent_type,
+                            "task": task,
+                            "use_worktree": use_worktree,
+                            "user_id": user_id,
+                        },
+                    },
+                )
+                spawn_result = await spawn_subagent(
+                    agent_type=agent_type,
+                    task=task,
+                    wait=False,
+                    use_worktree=use_worktree,
+                )
+                success = not str(spawn_result).startswith("Error:")
+                await state_bus.emit(
+                    "agent_spawn_finished",
+                    {
+                        "session_id": session_id,
+                        "task_id": str(arguments.get("task_id") or ""),
+                        "agent_id": "approval-center",
+                        "status": "success" if success else "failed",
+                        "payload": {
+                            "operation": operation,
+                            "agent_type": agent_type,
+                            "task": task,
+                            "use_worktree": use_worktree,
+                            "spawn_result": spawn_result,
+                            "user_id": user_id,
+                        },
+                    },
+                )
+                return {
+                    "executed": success,
+                    "target": target,
+                    "operation": operation,
+                    "result": spawn_result,
+                }
+
             return {"executed": True, "target": target, "operation": operation}
 
         if target == "terminal" and operation == "exec":

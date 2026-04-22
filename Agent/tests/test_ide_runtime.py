@@ -143,6 +143,23 @@ def test_action_guard_traversal_denied():
     assert decision.requires_approval is False
 
 
+def test_action_guard_spawn_requires_approval():
+    guard = ActionGuard()
+    decision = guard.check(
+        ActionEnvelope(
+            type="ide_action",
+            target="agent",
+            operation="spawn",
+            arguments={"agent_type": "coder", "task": "create tests"},
+            confidence=0.82,
+            reason="spawn specialist",
+        )
+    )
+    assert decision.risk == "high"
+    assert decision.allowed is True
+    assert decision.requires_approval is True
+
+
 @pytest.mark.asyncio
 async def test_state_bus_emits_on_file_write():
     bus = IDEStateBus()
