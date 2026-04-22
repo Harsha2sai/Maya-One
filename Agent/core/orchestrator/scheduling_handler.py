@@ -5,6 +5,7 @@ Extracted from ChatResponseMixin (Phase 24).
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Any
 
@@ -96,6 +97,36 @@ class SchedulingHandler:
                 tool_name,
                 invocation.status,
             )
+            if (
+                invocation.status == "success"
+                and str(scheduling_payload.get("action_type") or "").strip().lower() == "set_reminder"
+            ):
+                params = scheduling_payload.get("parameters")
+                if not isinstance(params, dict):
+                    params = {}
+                task_text = str(params.get("text") or "").strip()
+                reminder_time = str(params.get("time") or "").strip()
+                action_payload = {
+                    "type": "set_reminder",
+                    "domain": "scheduling",
+                    "summary": summary_text,
+                    "data": {
+                        "task": task_text,
+                        "time": reminder_time,
+                    },
+                    "written_at_ts": time.time(),
+                    "written_at_turn": int(self._owner._current_action_state_turn(tool_context)),
+                }
+                state_written = self._owner._set_last_action_for_context(
+                    action=action_payload,
+                    tool_context=tool_context,
+                )
+                if state_written:
+                    session_key = self._owner._session_key_for_context(tool_context)
+                    logger.info(
+                        "last_action_written type=set_reminder session=%s",
+                        session_key,
+                    )
             response = ResponseFormatter.build_response(
                 display_text=summary_text,
                 voice_text=summary_text,

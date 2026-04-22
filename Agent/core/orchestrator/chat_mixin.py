@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 import re
@@ -25,6 +26,7 @@ class ChatResponseMixin:
         user_id: str,
         tool_context: Any = None,
         origin: str = "chat",
+        turn_decision: Any = None,
     ) -> AgentResponse:
         """Serialize per-session chat handling to prevent concurrent dispatch races."""
         session_key = self._resolve_session_queue_key(tool_context)
@@ -33,10 +35,10 @@ class ChatResponseMixin:
 
         loop = asyncio.get_running_loop()
         result_future: asyncio.Future[AgentResponse] = loop.create_future()
-        queue.append((message, user_id, tool_context, origin, result_future))
+        queue.append((message, user_id, tool_context, origin, turn_decision, result_future))
 
         if len(queue) > self._session_queue_limit:
-            dropped_message, _, _, _, dropped_future = queue.popleft()
+            dropped_message, _, _, _, _, dropped_future = queue.popleft()
             if not dropped_future.done():
                 dropped_future.set_result(self._queue_rejection_response())
             logger.warning(
@@ -49,16 +51,27 @@ class ChatResponseMixin:
         if not lock.locked():
             async with lock:
                 while queue:
-                    queued_message, queued_user_id, queued_tool_ctx, queued_origin, queued_future = queue.popleft()
+                    queued_message, queued_user_id, queued_tool_ctx, queued_origin, queued_turn_decision, queued_future = queue.popleft()
                     if queued_future.done():
                         continue
                     try:
-                        response = await self._handle_chat_response_core(
-                            queued_message,
-                            queued_user_id,
-                            tool_context=queued_tool_ctx,
-                            origin=queued_origin,
-                        )
+                        core_handler = self._handle_chat_response_core
+                        supports_turn_decision = "turn_decision" in inspect.signature(core_handler).parameters
+                        if supports_turn_decision:
+                            response = await core_handler(
+                                queued_message,
+                                queued_user_id,
+                                tool_context=queued_tool_ctx,
+                                origin=queued_origin,
+                                turn_decision=queued_turn_decision,
+                            )
+                        else:
+                            response = await core_handler(
+                                queued_message,
+                                queued_user_id,
+                                tool_context=queued_tool_ctx,
+                                origin=queued_origin,
+                            )
                     except Exception as e:
                         logger.error("session_queue_dispatch_failed session_id=%s error=%s", session_key, e, exc_info=True)
                         response = self._tag_response_with_routing_type(
@@ -89,6 +102,7 @@ class ChatResponseMixin:
         user_id: str,
         tool_context: Any = None,
         origin: str = "chat",
+        turn_decision: Any = None,
     ) -> AgentResponse:
         """Execute Casual Chat flow using CHAT role."""
         from core.llm.llm_roles import LLMRole
@@ -247,6 +261,14 @@ class ChatResponseMixin:
             )
             return self._tag_response_with_routing_type(response, "informational")
 
+        followup_response = self._resolve_last_action_followup(
+            message=message,
+            tool_context=tool_context,
+        )
+        if followup_response is not None:
+            logger.info("last_action_followup_interceptor_hit origin=%s", origin)
+            return followup_response
+
         routing_text = self._extract_user_message_segment(message) or message
         chat_ctx_messages = self._chat_ctx_messages(getattr(self.agent, "chat_ctx", None))
         utterance_state = self._voice_utterance_state(
@@ -309,7 +331,15 @@ class ChatResponseMixin:
             )
 
         route_started = time.monotonic()
-        agent_key = await self._router.route(routing_text, user_id, chat_ctx=chat_ctx_messages)
+        active_subject = self._resolve_research_subject_from_context(tool_context)
+        recent_history = list(self._conversation_history)[-8:]
+        agent_key = await self._router.route(
+            routing_text,
+            user_id,
+            chat_ctx=chat_ctx_messages,
+            recent_history=recent_history,
+            active_subject=active_subject,
+        )
         route_elapsed_ms = int(max(0.0, (time.monotonic() - route_started) * 1000.0))
         logger.info(
             "route_decision_timing route=%s elapsed_ms=%s origin=%s",
@@ -574,6 +604,7 @@ class ChatResponseMixin:
             )
 
         has_memory_message = False
+        memory_message_count = 0
         for msg in builder_messages:
             if isinstance(msg, dict):
                 src = str(msg.get("source", "")).lower()
@@ -583,7 +614,27 @@ class ChatResponseMixin:
                 content = str(getattr(msg, "content", ""))
             if src == "memory" or "[memory from previous conversations" in content.lower():
                 has_memory_message = True
-                break
+                memory_message_count += 1
+
+        tool_outputs_preserved = sum(
+            1
+            for item in history
+            if isinstance(item, dict) and str(item.get("source") or "").strip().lower() == "tool_output"
+        )
+        logger.info(
+            "context_assembled turns=%s memory_items=%s tool_outputs_preserved=%s origin=%s",
+            len(history),
+            memory_message_count,
+            tool_outputs_preserved,
+            origin,
+        )
+
+        if turn_decision is not None:
+            try:
+                turn_decision.memory_hit_count = int(memory_message_count)
+                turn_decision.context_turns = len(history)
+            except Exception:
+                pass
 
         if self._is_user_name_recall_query(message) and not has_memory_message:
             fallback_memory = await self._retrieve_memory_context_async(

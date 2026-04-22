@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional, List
 from core.tasks.planning_engine import PlanningEngine
 from core.tasks.task_store import TaskStore
+from core.action.constants import ActionStateConfig
+from core.action.state_store import ActionStateStore
 from core.context.context_guard import ContextGuard
 from core.memory.hybrid_memory_manager import HybridMemoryManager
 from core.memory.preference_manager import PreferenceManager
@@ -227,6 +229,44 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         self._current_user_id: Optional[str] = None
         self._current_session_id: Optional[str] = None
         self._attached_session_identity: Optional[str] = None
+        self._action_state_enabled = self._is_truthy_env(
+            os.getenv("ACTION_STATE_ENABLED", "true")
+        )
+        self._last_action_followup_enabled = self._is_truthy_env(
+            os.getenv("LAST_ACTION_FOLLOWUP_ENABLED", "true")
+        )
+        self._action_state_carryover_enabled = (
+            self._is_truthy_env(os.getenv("ACTION_STATE_CARRYOVER_ENABLED", "true"))
+            and self._action_state_enabled
+        )
+        ttl_raw = os.getenv("LAST_ACTION_TTL_SECONDS", "1800")
+        max_turns_raw = os.getenv("LAST_ACTION_MAX_TURNS", "5")
+        try:
+            last_action_ttl_seconds = max(1, int(str(ttl_raw).strip()))
+        except Exception:
+            last_action_ttl_seconds = 1800
+        try:
+            last_action_max_turns = max(1, int(str(max_turns_raw).strip()))
+        except Exception:
+            last_action_max_turns = 5
+        self._action_state_store = (
+            ActionStateStore(
+                ActionStateConfig(
+                    last_action_ttl_seconds=last_action_ttl_seconds,
+                    last_action_max_turns=last_action_max_turns,
+                )
+            )
+            if self._action_state_enabled
+            else None
+        )
+        logger.info(
+            "action_state_initialized enabled=%s followup_enabled=%s carryover_enabled=%s ttl_s=%s max_turns=%s",
+            self._action_state_enabled,
+            self._last_action_followup_enabled,
+            self._action_state_carryover_enabled,
+            last_action_ttl_seconds,
+            last_action_max_turns,
+        )
 
         # Planning & task infrastructure
         smart_llm = getattr(agent, "smart_llm", None)
@@ -549,6 +589,39 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
 
     def _session_key_for_context(self, tool_context: Any = None) -> str:
         return self._session_lifecycle.resolve_session_queue_key(tool_context)
+
+    def _set_last_action_for_context(
+        self,
+        *,
+        action: Dict[str, Any],
+        tool_context: Any = None,
+    ) -> bool:
+        if not self._action_state_enabled:
+            return False
+        store = self._action_state_store
+        if store is None:
+            return False
+        session_key = self._session_key_for_context(tool_context)
+        store.set_last_action(session_key, action)
+        return True
+
+    def _get_last_action_for_context(self, tool_context: Any = None) -> Optional[Dict[str, Any]]:
+        if not self._action_state_enabled:
+            return None
+        store = self._action_state_store
+        if store is None:
+            return None
+        session_key = self._session_key_for_context(tool_context)
+        return store.get_last_action(session_key)
+
+    def _current_action_state_turn(self, tool_context: Any = None) -> int:
+        if not self._action_state_enabled:
+            return 0
+        store = self._action_state_store
+        if store is None:
+            return 0
+        session_key = self._session_key_for_context(tool_context)
+        return store.current_turn(session_key)
 
     def _extract_summary_sentence(self, summary: str) -> str:
         return self._research_handler._extract_summary_sentence(summary)
@@ -1227,6 +1300,17 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
     async def _apply_action_state_carryover(self, message: str) -> str:
         return await self._interaction_manager.apply_action_state_carryover(message)
 
+    def _resolve_last_action_followup(
+        self,
+        message: str,
+        *,
+        tool_context: Any = None,
+    ) -> Optional[AgentResponse]:
+        return self._interaction_manager.resolve_last_action_followup(
+            message=message,
+            tool_context=tool_context,
+        )
+
     def _is_user_name_recall_query(self, message: str) -> bool:
         return self._interaction_manager.is_user_name_recall_query(message)
 
@@ -1486,15 +1570,30 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             return
 
         try:
-            asyncio.create_task(
-                store_turn(
+            async def _write_memory() -> None:
+                write_ok = await store_turn(
                     user_msg=user_text,
                     assistant_msg=response_text,
                     metadata={"source": "conversation", "role": "chat"},
                     user_id=user_id,
                     session_id=session_id,
                 )
-            )
+                if write_ok:
+                    logger.info(
+                        "memory_write_confirmed user_id=%s session_id=%s origin=%s",
+                        user_id,
+                        session_id or "none",
+                        origin or "unknown",
+                    )
+                else:
+                    logger.warning(
+                        "memory_write_failed user_id=%s session_id=%s origin=%s",
+                        user_id,
+                        session_id or "none",
+                        origin or "unknown",
+                    )
+
+            asyncio.create_task(_write_memory())
         except Exception as mem_err:
             logger.warning(f"⚠️ Failed to queue chat memory write: {mem_err}")
             return

@@ -8,6 +8,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from core.response.response_formatter import ResponseFormatter
+from core.telemetry.runtime_metrics import RuntimeMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,174 @@ class InteractionManager:
             return f"open youtube and search for {continuation}"
 
         return text
+
+    def resolve_last_action_followup(
+        self,
+        *,
+        message: str,
+        tool_context: Any = None,
+    ) -> Optional[Any]:
+        text = re.sub(r"\s+", " ", str(message or "")).strip()
+        if not text:
+            return None
+
+        if not bool(getattr(self._owner, "_action_state_enabled", False)):
+            return None
+        if not bool(getattr(self._owner, "_last_action_followup_enabled", False)):
+            return None
+
+        store = getattr(self._owner, "_action_state_store", None)
+        session_key = self._owner._session_key_for_context(tool_context)
+        if store is None:
+            self._record_last_action_miss("no_state", session_key=session_key, message=text)
+            return None
+
+        action: Optional[Dict[str, Any]]
+        miss_reason = "no_state"
+        if hasattr(store, "get_last_action_with_reason"):
+            action, reason = store.get_last_action_with_reason(session_key)
+            if action is None:
+                self._record_last_action_miss(
+                    str(reason or "no_state"),
+                    session_key=session_key,
+                    message=text,
+                )
+                return None
+        else:
+            action = store.get_last_action(session_key)
+            if action is None:
+                self._record_last_action_miss(miss_reason, session_key=session_key, message=text)
+                return None
+
+        domain = str((action or {}).get("domain") or "").strip().lower()
+        if domain != "scheduling":
+            self._record_last_action_miss("domain_mismatch", session_key=session_key, message=text)
+            return None
+
+        lowered = text.lower()
+        if self._is_non_scheduling_conflict(lowered):
+            self._record_last_action_miss("conflict_guard", session_key=session_key, message=text)
+            return None
+        if self._is_explicit_new_scheduling_command(lowered):
+            self._record_last_action_miss("no_intent_match", session_key=session_key, message=text)
+            return None
+        if not self._is_followup_intent(lowered):
+            self._record_last_action_miss("no_intent_match", session_key=session_key, message=text)
+            return None
+
+        intent = self._classify_followup_intent(lowered)
+        response_text = self._render_last_action_response(intent=intent, query=lowered, action=action or {})
+        RuntimeMetrics.increment("last_action_hits_total")
+        logger.info(
+            "last_action_followup_hit intent=%s action_type=%s session=%s",
+            intent,
+            str((action or {}).get("type") or ""),
+            session_key,
+        )
+        return self._owner._tag_response_with_routing_type(
+            ResponseFormatter.build_response(
+                display_text=response_text,
+                voice_text=response_text,
+                mode="normal",
+                confidence=0.92,
+                structured_data={
+                    "_last_action_followup": {
+                        "intent": intent,
+                        "action_type": str((action or {}).get("type") or ""),
+                        "domain": "scheduling",
+                    }
+                },
+            ),
+            "direct_action",
+        )
+
+    @staticmethod
+    def _is_non_scheduling_conflict(text: str) -> bool:
+        patterns = (
+            r"\bwhat(?:'s| is)\s+(?:the\s+)?(?:time|date)\b",
+            r"\b(weather|temperature|forecast)\b",
+            r"\b(who are you|what is your name|who made you)\b",
+            r"\b(play|pause|resume|next track|previous track)\b",
+            r"\bopen\s+[a-z0-9]",
+            r"\bsearch\b",
+        )
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    @staticmethod
+    def _is_explicit_new_scheduling_command(text: str) -> bool:
+        return bool(
+            re.search(
+                r"\b(remind me to|set (?:a )?reminder|list reminders|show reminders|delete reminder|set (?:an )?alarm|list alarms|show alarms|calendar event)\b",
+                text,
+            )
+        )
+
+    @staticmethod
+    def _is_followup_intent(text: str) -> bool:
+        word_count = len(re.findall(r"\b[\w']+\b", text))
+        if word_count > 8:
+            return False
+        patterns = (
+            r"\bwhat\b",
+            r"\bwhen\b",
+            r"\bwhich\b",
+            r"\bwhat did you set\b",
+            r"\bwhen is it\b",
+            r"\bwhat(?:'s| is) it for\b",
+            r"\btell me about (?:that|the) reminder\b",
+            r"\b(change|edit|modify|reschedule)\s+(?:it|that|the reminder)\b",
+        )
+        return any(re.search(pattern, text) for pattern in patterns)
+
+    @staticmethod
+    def _classify_followup_intent(text: str) -> str:
+        if re.search(r"\b(change|edit|modify|reschedule)\b", text):
+            return "modify"
+        if re.search(r"\b(when|what time)\b", text):
+            return "when"
+        if re.search(r"\b(what|which|for|tell me)\b", text):
+            return "what"
+        return "fallback"
+
+    @staticmethod
+    def _render_last_action_response(
+        *,
+        intent: str,
+        query: str,
+        action: Dict[str, Any],
+    ) -> str:
+        data = action.get("data") if isinstance(action.get("data"), dict) else {}
+        task = str(data.get("task") or "").strip()
+        when = str(data.get("time") or "").strip()
+        summary = str(action.get("summary") or "").strip()
+
+        if intent == "modify":
+            return "Sure, what would you like to change about that reminder?"
+        if intent == "when":
+            if when:
+                return f"It's set for {when}."
+            return summary or "It is set."
+        if intent == "what":
+            if task and (("reminder" in query) or ("did you set" in query)):
+                if when:
+                    return f"You asked me to remind you to {task} at {when}."
+                return f"You asked me to remind you to {task}."
+            if task:
+                return f"You asked me to remind you to {task}."
+            if when:
+                return f"It's set for {when}."
+            return summary or "You asked me to set a reminder."
+        return summary or "You asked me to set a reminder."
+
+    @staticmethod
+    def _record_last_action_miss(reason: str, *, session_key: str, message: str) -> None:
+        RuntimeMetrics.increment("last_action_misses_total")
+        logger.info(
+            "last_action_miss_reason=%s session=%s text=%s",
+            reason,
+            session_key,
+            str(message or "")[:80],
+        )
 
     @staticmethod
     def is_user_name_recall_query(message: str) -> bool:

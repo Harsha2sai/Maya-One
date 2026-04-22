@@ -18,6 +18,9 @@ class _SessionState:
     recent_closed_apps: Deque[dict[str, Any]]
     recent_searches: Deque[dict[str, Any]]
     action_history: Deque[dict[str, Any]]
+    last_action: Optional[Dict[str, Any]] = None
+    last_action_expiry_reason: Optional[str] = None
+    turn_index: int = 0
     last_touch: float = field(default_factory=time.time)
 
 
@@ -63,11 +66,109 @@ class ActionStateStore:
         while state.recent_closed_apps and (now - float(state.recent_closed_apps[0].get("ts", now))) > self.config.default_ttl_seconds:
             state.recent_closed_apps.popleft()
 
+        if state.last_action is not None:
+            _action, reason = self._resolve_last_action_locked(state, now=now)
+            if reason in {"expired_ttl", "expired_turns"}:
+                state.last_action_expiry_reason = reason
+
         if now - float(state.last_touch or now) > self.config.search_query_ttl_seconds and not (
-            state.recent_opened_apps or state.recent_closed_apps or state.recent_searches or state.action_history
+            state.recent_opened_apps
+            or state.recent_closed_apps
+            or state.recent_searches
+            or state.action_history
+            or state.last_action is not None
+            or state.last_action_expiry_reason is not None
         ):
             self._sessions.pop(session_key, None)
             self._locks.pop(session_key, None)
+
+    def _resolve_last_action_locked(
+        self,
+        state: _SessionState,
+        *,
+        now: Optional[float] = None,
+    ) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+        if state.last_action is None:
+            return None, "no_state"
+        if not isinstance(state.last_action, dict):
+            state.last_action = None
+            return None, "no_state"
+
+        now_ts = float(now if now is not None else time.time())
+        written_at_ts = float(
+            state.last_action.get("written_at_ts")
+            or state.last_action.get("ts")
+            or 0.0
+        )
+        if written_at_ts > 0 and (now_ts - written_at_ts) > float(self.config.last_action_ttl_seconds):
+            state.last_action = None
+            return None, "expired_ttl"
+
+        written_turn = int(
+            state.last_action.get("written_at_turn")
+            or state.last_action.get("turn_index")
+            or 0
+        )
+        if (state.turn_index - written_turn) > int(self.config.last_action_max_turns):
+            state.last_action = None
+            return None, "expired_turns"
+
+        return dict(state.last_action), None
+
+    def increment_turn(self, session_id: str) -> int:
+        session_key = self._session_key(session_id)
+        state = self._state_for(session_key)
+        state.turn_index += 1
+        state.last_touch = time.time()
+        self._prune_expired_locked(session_key)
+        return state.turn_index
+
+    def current_turn(self, session_id: str) -> int:
+        session_key = self._session_key(session_id)
+        state = self._state_for(session_key)
+        return int(state.turn_index)
+
+    def set_last_action(self, session_id: str, action: Dict[str, Any]) -> None:
+        session_key = self._session_key(session_id)
+        state = self._state_for(session_key)
+        now = time.time()
+        payload = dict(action or {})
+        payload.setdefault("written_at_ts", now)
+        payload.setdefault("written_at_turn", state.turn_index)
+        state.last_action = payload
+        state.last_action_expiry_reason = None
+        state.last_touch = now
+        self._prune_expired_locked(session_key)
+
+    def get_last_action(self, session_id: str) -> Optional[Dict[str, Any]]:
+        action, _reason = self.get_last_action_with_reason(session_id)
+        return action
+
+    def get_last_action_with_reason(self, session_id: str) -> tuple[Optional[Dict[str, Any]], str]:
+        session_key = self._session_key(session_id)
+        state = self._sessions.get(session_key)
+        if state is None:
+            return None, "no_state"
+        if state.last_action is None and state.last_action_expiry_reason:
+            reason = str(state.last_action_expiry_reason)
+            state.last_action_expiry_reason = None
+            self._prune_expired_locked(session_key)
+            return None, reason
+        action, reason = self._resolve_last_action_locked(state, now=time.time())
+        self._prune_expired_locked(session_key)
+        if action is None:
+            return None, str(reason or "no_state")
+        return action, "active"
+
+    def clear_last_action(self, session_id: str) -> None:
+        session_key = self._session_key(session_id)
+        state = self._sessions.get(session_key)
+        if state is None:
+            return
+        state.last_action = None
+        state.last_action_expiry_reason = None
+        state.last_touch = time.time()
+        self._prune_expired_locked(session_key)
 
     async def record_intent(self, session_id: str, intent: ActionIntent) -> None:
         session_key = self._session_key(session_id)

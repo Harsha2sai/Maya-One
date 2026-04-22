@@ -1012,6 +1012,11 @@ async def test_scheduling_route_uses_handoff_manager_and_executes_tool():
     orchestrator._execute_tool_call.assert_awaited_once()
     assert "drink water" in response.display_text.lower()
     assert response.structured_data["_scheduling_result"]["tool_name"] == "set_reminder"
+    session_key = orchestrator._session_key_for_context()
+    last_action = orchestrator._action_state_store.get_last_action(session_key)
+    assert last_action is not None
+    assert last_action["type"] == "set_reminder"
+    assert last_action["data"]["task"] == "drink water"
 
 
 @pytest.mark.asyncio

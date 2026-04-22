@@ -20,6 +20,8 @@ class ActionStateConfig:
     max_actions: int = 10
     default_ttl_seconds: int = 300
     search_query_ttl_seconds: int = 600
+    last_action_ttl_seconds: int = 1800
+    last_action_max_turns: int = 5
 
 
 @dataclass(frozen=True)
@@ -27,4 +29,3 @@ class VerificationPolicy:
     max_retries: int = 1
     retry_delay_ms: int = 500
     strong_only_success_claim: bool = True
-

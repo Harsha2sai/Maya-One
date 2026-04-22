@@ -22,7 +22,10 @@ class RuntimeMetrics:
         "worker_step_failures_total": 0,
         "memory_stores_total": 0,
         "memory_queries_total": 0,
-        "memory_hits_total": 0
+        "memory_hits_total": 0,
+        "vector_store_errors_total": 0,
+        "last_action_hits_total": 0,
+        "last_action_misses_total": 0,
     }
     
     _log_file: Path = Path("verification/runtime_validation/runtime_metrics.json")
@@ -69,6 +72,12 @@ class RuntimeMetrics:
              "task_steps_executed_total": 0,
              "task_retries_total": 0,
              "llm_calls_total": 0,
-             "worker_step_failures_total": 0
+             "worker_step_failures_total": 0,
+             "memory_stores_total": 0,
+             "memory_queries_total": 0,
+             "memory_hits_total": 0,
+             "vector_store_errors_total": 0,
+             "last_action_hits_total": 0,
+             "last_action_misses_total": 0,
         }
         cls._flush()

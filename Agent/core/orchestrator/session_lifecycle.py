@@ -122,6 +122,15 @@ class SessionLifecycle:
         turn_state["current_turn_id"] = resolved_turn_id
         turn_state["user_message"] = str(user_message or "")
 
+        store = getattr(self._owner, "_action_state_store", None)
+        action_state_enabled = bool(getattr(self._owner, "_action_state_enabled", False))
+        if action_state_enabled and store is not None:
+            try:
+                session_key = self.resolve_session_queue_key()
+                store.increment_turn(session_key)
+            except Exception as exc:
+                logger.debug("action_state_turn_increment_failed error=%s", exc)
+
         if hasattr(self._owner.agent, "current_turn_id"):
             self._owner.agent.current_turn_id = resolved_turn_id
         return resolved_turn_id
