@@ -66,21 +66,43 @@ class ActionStateStore:
         while state.recent_closed_apps and (now - float(state.recent_closed_apps[0].get("ts", now))) > self.config.default_ttl_seconds:
             state.recent_closed_apps.popleft()
 
-        if state.last_action is not None:
-            _action, reason = self._resolve_last_action_locked(state, now=now)
-            if reason in {"expired_ttl", "expired_turns"}:
-                state.last_action_expiry_reason = reason
+        last_action_expired = self._is_last_action_expired_locked(state, now=now)
 
         if now - float(state.last_touch or now) > self.config.search_query_ttl_seconds and not (
             state.recent_opened_apps
             or state.recent_closed_apps
             or state.recent_searches
             or state.action_history
-            or state.last_action is not None
+            or (state.last_action is not None and not last_action_expired)
             or state.last_action_expiry_reason is not None
         ):
             self._sessions.pop(session_key, None)
             self._locks.pop(session_key, None)
+
+    def _is_last_action_expired_locked(
+        self,
+        state: _SessionState,
+        *,
+        now: Optional[float] = None,
+    ) -> bool:
+        if state.last_action is None or not isinstance(state.last_action, dict):
+            return False
+
+        now_ts = float(now if now is not None else time.time())
+        written_at_ts = float(
+            state.last_action.get("written_at_ts")
+            or state.last_action.get("ts")
+            or 0.0
+        )
+        if written_at_ts > 0 and (now_ts - written_at_ts) > float(self.config.last_action_ttl_seconds):
+            return True
+
+        written_turn = int(
+            state.last_action.get("written_at_turn")
+            or state.last_action.get("turn_index")
+            or 0
+        )
+        return (state.turn_index - written_turn) > int(self.config.last_action_max_turns)
 
     def _resolve_last_action_locked(
         self,

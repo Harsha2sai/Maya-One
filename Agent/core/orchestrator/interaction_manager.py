@@ -312,6 +312,14 @@ class InteractionManager:
         if not bool(getattr(self._owner, "_last_action_followup_enabled", False)):
             return None
 
+        lowered = text.lower()
+        if self._is_non_scheduling_conflict(lowered):
+            return None
+        if self._is_explicit_new_scheduling_command(lowered):
+            return None
+        if not self._may_be_last_action_followup(lowered):
+            return None
+
         store = getattr(self._owner, "_action_state_store", None)
         session_key = self._owner._session_key_for_context(tool_context)
         if store is None:
@@ -323,6 +331,13 @@ class InteractionManager:
         if hasattr(store, "get_last_action_with_reason"):
             action, reason = store.get_last_action_with_reason(session_key)
             if action is None:
+                if str(reason or "") in {"expired_ttl", "expired_turns"}:
+                    self._record_last_action_miss(
+                        str(reason),
+                        session_key=session_key,
+                        message=text,
+                    )
+                    return self._build_stale_last_action_response(reason=str(reason))
                 self._record_last_action_miss(
                     str(reason or "no_state"),
                     session_key=session_key,
@@ -340,13 +355,6 @@ class InteractionManager:
             self._record_last_action_miss("domain_mismatch", session_key=session_key, message=text)
             return None
 
-        lowered = text.lower()
-        if self._is_non_scheduling_conflict(lowered):
-            self._record_last_action_miss("conflict_guard", session_key=session_key, message=text)
-            return None
-        if self._is_explicit_new_scheduling_command(lowered):
-            self._record_last_action_miss("no_intent_match", session_key=session_key, message=text)
-            return None
         if not self._is_followup_intent(lowered):
             self._record_last_action_miss("no_intent_match", session_key=session_key, message=text)
             return None
@@ -383,6 +391,8 @@ class InteractionManager:
             r"\bwhat(?:'s| is)\s+(?:the\s+)?(?:time|date)\b",
             r"\b(weather|temperature|forecast)\b",
             r"\b(who are you|what is your name|who made you)\b",
+            r"\bwhat can you do\b",
+            r"\bhow can you help\b",
             r"\b(play|pause|resume|next track|previous track)\b",
             r"\bopen\s+[a-z0-9]",
             r"\bsearch\b",
@@ -398,22 +408,35 @@ class InteractionManager:
             )
         )
 
+    @classmethod
+    def _may_be_last_action_followup(cls, text: str) -> bool:
+        return cls._is_followup_intent(text) or bool(
+            re.search(
+                r"\b(reminder|what did you set|when is it|what(?:'s| is) it for|change it|edit it|modify it)\b",
+                text,
+            )
+        )
+
     @staticmethod
     def _is_followup_intent(text: str) -> bool:
         word_count = len(re.findall(r"\b[\w']+\b", text))
         if word_count > 8:
             return False
-        patterns = (
-            r"\bwhat\b",
-            r"\bwhen\b",
-            r"\bwhich\b",
+        explicit_patterns = (
             r"\bwhat did you set\b",
             r"\bwhen is it\b",
             r"\bwhat(?:'s| is) it for\b",
             r"\btell me about (?:that|the) reminder\b",
             r"\b(change|edit|modify|reschedule)\s+(?:it|that|the reminder)\b",
+            r"\b(which|what)\s+reminder\b",
+            r"\bwhat\s+was\s+that\b",
         )
-        return any(re.search(pattern, text) for pattern in patterns)
+        if any(re.search(pattern, text) for pattern in explicit_patterns):
+            return True
+
+        has_question_intent = bool(re.search(r"\b(what|when|which|did you|tell me|change|edit|modify)\b", text))
+        has_action_reference = bool(re.search(r"\b(reminder|it|that|set|for|time)\b", text))
+        return has_question_intent and has_action_reference
 
     @staticmethod
     def _classify_followup_intent(text: str) -> str:
@@ -454,6 +477,29 @@ class InteractionManager:
                 return f"It's set for {when}."
             return summary or "You asked me to set a reminder."
         return summary or "You asked me to set a reminder."
+
+    def _build_stale_last_action_response(self, *, reason: str) -> Any:
+        if reason == "expired_turns":
+            response_text = "I don't have that recent reminder in context anymore. You can ask me to list your reminders."
+        else:
+            response_text = "I don't have that reminder in recent context anymore. You can ask me to list your reminders."
+        return self._owner._tag_response_with_routing_type(
+            ResponseFormatter.build_response(
+                display_text=response_text,
+                voice_text=response_text,
+                mode="normal",
+                confidence=0.85,
+                structured_data={
+                    "_last_action_followup": {
+                        "intent": "stale",
+                        "action_type": "set_reminder",
+                        "domain": "scheduling",
+                        "reason": reason,
+                    }
+                },
+            ),
+            "direct_action",
+        )
 
     @staticmethod
     def _record_last_action_miss(reason: str, *, session_key: str, message: str) -> None:

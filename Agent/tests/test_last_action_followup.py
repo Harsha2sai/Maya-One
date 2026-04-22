@@ -85,6 +85,27 @@ async def test_unrelated_query_does_not_trigger_followup_interceptor() -> None:
 
 
 @pytest.mark.asyncio
+async def test_identity_help_query_does_not_trigger_followup_interceptor() -> None:
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="s1")
+    _seed_reminder_action(orchestrator, session.session_id)
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="identity")
+
+    response = await orchestrator._handle_chat_response(
+        "what can you do",
+        user_id="u1",
+        tool_context=session,
+        origin="chat",
+    )
+
+    assert response.display_text
+    assert orchestrator._router.route.await_count == 1
+    if isinstance(response.structured_data, dict):
+        assert "_last_action_followup" not in response.structured_data
+
+
+@pytest.mark.asyncio
 async def test_stale_last_action_does_not_intercept_followup() -> None:
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
     session = SimpleNamespace(session_id="s1")
@@ -103,10 +124,10 @@ async def test_stale_last_action_does_not_intercept_followup() -> None:
         origin="chat",
     )
 
-    assert response.display_text
-    assert orchestrator._router.route.await_count == 1
-    if isinstance(response.structured_data, dict):
-        assert "_last_action_followup" not in response.structured_data
+    assert "don't have that recent reminder in context anymore" in response.display_text.lower()
+    assert orchestrator._router.route.await_count == 0
+    assert isinstance(response.structured_data, dict)
+    assert response.structured_data["_last_action_followup"]["reason"] == "expired_turns"
 
 
 @pytest.mark.asyncio

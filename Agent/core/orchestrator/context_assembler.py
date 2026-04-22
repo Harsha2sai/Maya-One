@@ -7,6 +7,9 @@ from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
+HISTORY_WINDOW_TURNS = 8
+CONTENT_TRUNCATION_CHARS = 400
+
 
 class ContextAssembler:
     """Owns context slicing and memory helper plumbing."""
@@ -23,33 +26,59 @@ class ContextAssembler:
         tool_context: Any = None,
         host_profile: Dict[str, Any] | None = None,
     ) -> str:
+        tool_output_items_in_input = sum(
+            1
+            for item in self._owner._conversation_history
+            if isinstance(item, dict) and str(item.get("source") or "").strip().lower() == "tool_output"
+        )
+        logger.debug(
+            "context_assembler_input turns=%s tool_output_items_in_input=%s",
+            len(self._owner._conversation_history),
+            tool_output_items_in_input,
+        )
         lines = [f"User request: {str(message or '').strip()}"]
         if self._owner._current_session_id:
             lines.append(f"Session: {self._owner._current_session_id}")
         if getattr(tool_context, "conversation_id", None):
             lines.append(f"Conversation ID: {getattr(tool_context, 'conversation_id')}")
         if self._owner._conversation_history:
-            recent = self._owner._conversation_history[-3:]
-            summarized = " | ".join(
-                f"{item.get('role', 'unknown')}: {str(item.get('content') or '')[:120]}"
-                for item in recent
-            )
+            summarized = self._build_router_context_string(self._owner._conversation_history)
             lines.append(f"Recent context: {summarized}")
+        last_action = self._owner._get_last_action_for_context(tool_context)
+        if isinstance(last_action, dict):
+            summary = str(last_action.get("summary") or "").strip()
+            if summary:
+                lines.append(f"Recent action: {summary}")
         memory_context = ""
+        memory_count = 0
         try:
-            memory_context = self.retrieve_memory_context(
+            memories = self.retrieve_memories(
                 str(message or ""),
                 user_id=user_id,
                 session_id=self._owner._current_session_id,
                 origin="chat",
             )
+            memory_count = len(memories)
+            memory_context = self.format_memory_context(memories)
         except Exception as exc:
             logger.debug("context_slice_memory_skipped target=%s error=%s", target_agent, exc)
         if memory_context:
             lines.append(memory_context.strip())
         if target_agent in {"system_operator", "planner"} and host_profile:
             lines.append(self._owner._host_profile_to_text(host_profile))
-        return "\n".join([line for line in lines if line]).strip()
+        assembled = "\n".join([line for line in lines if line]).strip()
+        tool_outputs_preserved = sum(
+            1
+            for item in self._owner._conversation_history[-HISTORY_WINDOW_TURNS:]
+            if isinstance(item, dict) and str(item.get("source") or "").strip().lower() == "tool_output"
+        )
+        logger.info(
+            "context_assembled turns=%s memory_items=%s tool_outputs_preserved=%s origin=chat",
+            min(len(self._owner._conversation_history), HISTORY_WINDOW_TURNS),
+            memory_count,
+            tool_outputs_preserved,
+        )
+        return assembled
 
     def filter_chat_history_for_fallthrough(self, history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         filtered: List[Dict[str, Any]] = []
@@ -60,7 +89,7 @@ class ContextAssembler:
             role = str(entry.get("role") or "").strip().lower()
             content = str(entry.get("content") or "").strip()
             source = str(entry.get("source") or "").strip().lower()
-            if role == "assistant" and source in {"tool_output", "task_step", "direct_action"}:
+            if source in {"internal_debug", "system_trace", "heartbeat"}:
                 continue
             if role == "assistant" and any(
                 re.search(pattern, content, flags=re.IGNORECASE)
@@ -69,6 +98,26 @@ class ContextAssembler:
                 continue
             filtered.append(entry)
         return filtered
+
+    def _build_router_context_string(self, history: List[Dict[str, Any]]) -> str:
+        recent = history[-HISTORY_WINDOW_TURNS:]
+        parts: List[str] = []
+        for item in recent:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("role") or "unknown")
+            route = str(item.get("route") or "")
+            source = str(item.get("source") or "").strip().lower()
+            content = str(item.get("content") or "")
+            if source == "tool_output":
+                content = f"[Tool result] {content[:200]}"
+            else:
+                content = content[:CONTENT_TRUNCATION_CHARS]
+            if route:
+                parts.append(f"{role}({route}): {content}")
+            else:
+                parts.append(f"{role}: {content}")
+        return " | ".join(parts)
 
     def context_message_tokens(self, messages: List[Any]) -> int:
         guard = self._owner.context_guard or self._owner._phase6_context_guard
