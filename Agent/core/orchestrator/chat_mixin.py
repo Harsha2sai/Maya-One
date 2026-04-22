@@ -557,6 +557,66 @@ class ChatResponseMixin:
             or getattr(getattr(self, "room", None), "name", None)
             or "console_session"
         )
+        memory_query_type = "general"
+        if agent_key == "chat":
+            memory_query_type = await self._classify_memory_query_type_async(
+                message,
+                route_hint=agent_key,
+                session_id=memory_session_id,
+            )
+            active_entity = self._get_active_entity_for_context(tool_context)
+            if (
+                memory_query_type == "user_profile_recall"
+                and active_entity
+                and self._pronoun_rewriter.has_pronoun(message)
+            ):
+                logger.info(
+                    "memory_query_domain=entity_followup active_entity=%s",
+                    str(active_entity.get("value") or "")[:80],
+                )
+                memory_query_type = "general"
+            if memory_query_type == "user_profile_recall":
+                recalled_name, recall_source, miss_reason = await self._resolve_profile_recall(
+                    message,
+                    user_id=user_id,
+                    session_id=memory_session_id,
+                    origin=origin,
+                )
+                if recalled_name:
+                    response_text = f"Your name is {recalled_name}."
+                    response = ResponseFormatter.build_response(
+                        display_text=response_text,
+                        voice_text=response_text,
+                        mode="normal",
+                        confidence=0.9,
+                        structured_data={
+                            "_profile_recall": {
+                                "source": recall_source,
+                                "query_type": memory_query_type,
+                            }
+                        },
+                    )
+                    return self._tag_response_with_routing_type(response, "informational")
+                logger.info(
+                    "profile_recall_miss reason=%s session=%s",
+                    miss_reason or "profile_lookup_empty",
+                    memory_session_id,
+                )
+                fallback = "I don't have your name in memory yet. Tell me your name and I'll remember it for this session."
+                response = ResponseFormatter.build_response(
+                    display_text=fallback,
+                    voice_text=fallback,
+                    mode="normal",
+                    confidence=0.82,
+                    structured_data={
+                        "_profile_recall": {
+                            "source": "none",
+                            "query_type": memory_query_type,
+                            "miss_reason": miss_reason or "profile_lookup_empty",
+                        }
+                    },
+                )
+                return self._tag_response_with_routing_type(response, "informational")
         history = self._get_conversation_tape_history(
             session_id=memory_session_id,
             limit=max(40, int(os.getenv("CONTEXT_TAPE_HISTORY_LIMIT", "120"))),
@@ -636,28 +696,6 @@ class ChatResponseMixin:
             except Exception:
                 pass
 
-        if self._is_user_name_recall_query(message) and not has_memory_message:
-            fallback_memory = await self._retrieve_memory_context_async(
-                message,
-                origin=origin,
-                routing_mode_type="informational",
-                user_id=user_id,
-                session_id=memory_session_id,
-            )
-            if fallback_memory:
-                builder_messages.insert(
-                    1,
-                    {
-                        "role": "system",
-                        "content": f"[Memory from previous conversations:]\n{fallback_memory}",
-                        "source": "memory",
-                    },
-                )
-                logger.info(
-                    "memory_context_fallback_injected query_type=user_name_recall origin=%s",
-                    origin,
-                )
-
         chat_ctx = ChatContext(builder_messages)
         logger.info(
             "🧩 context_builder_path=phase6 origin=%s messages=%s tokens=%s",
@@ -665,23 +703,6 @@ class ChatResponseMixin:
             len(builder_messages),
             self._context_message_tokens(builder_messages),
         )
-
-        if self._is_user_name_recall_query(message):
-            recalled_name = self._extract_name_from_memory_messages(builder_messages)
-            if not recalled_name:
-                recalled_name = await self._lookup_profile_name_from_memory(
-                    user_id=user_id,
-                    session_id=memory_session_id,
-                    origin=origin,
-                )
-            if recalled_name:
-                response = ResponseFormatter.build_response(
-                    display_text=f"Your name is {recalled_name}.",
-                    voice_text=f"Your name is {recalled_name}.",
-                    mode="normal",
-                    confidence=0.9,
-                )
-                return self._tag_response_with_routing_type(response, "informational")
 
         # Use RoleLLM
         # We need access to the underlying LLM. 

@@ -2,6 +2,7 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from types import SimpleNamespace
+import time
 from config.settings import settings
 from core.orchestrator.agent_orchestrator import AgentOrchestrator
 from core.tasks.task_models import TaskStep
@@ -495,6 +496,75 @@ def test_research_subject_resolution_ignores_non_research_filesystem_turns():
     assert "downloads" not in rewritten.lower()
 
 
+def test_research_query_rewrite_prefers_active_entity_over_history_fallback():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="voice-session-entity")
+    orchestrator._conversation_history = [
+        {
+            "role": "user",
+            "content": "tell me about India",
+            "source": "history",
+            "route": "research",
+            "session_id": session.session_id,
+        },
+        {
+            "role": "assistant",
+            "content": "India is a country in South Asia.",
+            "source": "history",
+            "route": "research",
+            "session_id": session.session_id,
+        },
+    ]
+    orchestrator._set_active_entity_for_context(
+        {
+            "domain": "research",
+            "value": "Narendra Modi",
+            "entity_type": "person",
+            "source_query": "tell me about Narendra Modi",
+            "written_at_ts": time.time(),
+            "written_at_turn": 1,
+            "non_research_turns": 0,
+        },
+        tool_context=session,
+    )
+
+    rewritten, changed, ambiguous = orchestrator.rewrite_research_query_for_context(
+        "tell me more about him",
+        tool_context=session,
+    )
+
+    assert changed is True
+    assert ambiguous is False
+    assert "narendra modi" in rewritten.lower()
+    assert "india" not in rewritten.lower()
+
+
+def test_research_query_rewrite_clarifies_when_active_entity_drifted():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="voice-session-drift")
+    orchestrator._set_active_entity_for_context(
+        {
+            "domain": "research",
+            "value": "Narendra Modi",
+            "entity_type": "person",
+            "source_query": "tell me about Narendra Modi",
+            "written_at_ts": time.time(),
+            "written_at_turn": 1,
+            "non_research_turns": 4,
+        },
+        tool_context=session,
+    )
+
+    rewritten, changed, ambiguous = orchestrator.rewrite_research_query_for_context(
+        "tell me more about him",
+        tool_context=session,
+    )
+
+    assert changed is False
+    assert ambiguous is True
+    assert rewritten == "tell me more about him"
+
+
 @pytest.mark.asyncio
 async def test_research_completion_stores_context_and_history_summary():
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
@@ -530,6 +600,82 @@ async def test_research_completion_stores_context_and_history_summary():
     stored = orchestrator._last_research_contexts["voice-session-ctx"]
     assert "prime minister" in str(stored.get("subject") or "").lower() or "modi" in str(stored.get("subject") or "").lower()
     assert any(item.get("source") == "research_summary" for item in orchestrator._conversation_history)
+
+
+@pytest.mark.asyncio
+async def test_research_completion_writes_active_entity_for_high_confidence_query():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._run_inline_research_pipeline = AsyncMock(
+        return_value=ResearchResult(
+            summary="Narendra Modi is the prime minister of India.",
+            voice_summary="Narendra Modi is the prime minister of India.",
+            sources=[
+                SourceItem.from_values(
+                    title="Source A",
+                    url="https://example.com/a",
+                    snippet="Snippet A",
+                    provider="tavily",
+                )
+            ],
+            query="Tell me about Narendra Modi",
+            trace_id="trace-entity",
+            duration_ms=12,
+        )
+    )
+
+    await orchestrator._run_research_background(
+        query="Tell me about Narendra Modi",
+        user_id="u1",
+        session_id="voice-session-entity-write",
+        trace_id="trace-entity",
+        turn_id="turn-entity",
+        room=None,
+        session=None,
+    )
+
+    entity = orchestrator._get_active_entity_for_context(
+        SimpleNamespace(session_id="voice-session-entity-write")
+    )
+    assert entity is not None
+    assert entity["value"].lower() == "narendra modi"
+    assert entity["entity_type"] == "person"
+
+
+@pytest.mark.asyncio
+async def test_research_completion_does_not_write_active_entity_for_title_only_query():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._run_inline_research_pipeline = AsyncMock(
+        return_value=ResearchResult(
+            summary="Narendra Modi is the prime minister of India.",
+            voice_summary="Narendra Modi is the prime minister of India.",
+            sources=[
+                SourceItem.from_values(
+                    title="Source A",
+                    url="https://example.com/a",
+                    snippet="Snippet A",
+                    provider="tavily",
+                )
+            ],
+            query="Tell me about the prime minister of India",
+            trace_id="trace-ambiguous",
+            duration_ms=12,
+        )
+    )
+
+    await orchestrator._run_research_background(
+        query="Tell me about the prime minister of India",
+        user_id="u1",
+        session_id="voice-session-ambiguous",
+        trace_id="trace-ambiguous",
+        turn_id="turn-ambiguous",
+        room=None,
+        session=None,
+    )
+
+    entity = orchestrator._get_active_entity_for_context(
+        SimpleNamespace(session_id="voice-session-ambiguous")
+    )
+    assert entity is None
 
 
 @pytest.mark.asyncio
@@ -1099,6 +1245,109 @@ async def test_lookup_profile_name_from_memory_prefers_metadata_value():
     )
 
     assert name == "Harsha"
+
+
+@pytest.mark.asyncio
+async def test_profile_recall_short_circuits_chat_with_name_response():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._classify_memory_query_type_async = AsyncMock(return_value="user_profile_recall")
+    orchestrator._resolve_profile_recall = AsyncMock(return_value=("Harsha", "profile", ""))
+
+    response = await orchestrator._handle_chat_response_core(
+        "what is my name",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert response.display_text == "Your name is Harsha."
+    assert response.structured_data["_profile_recall"]["source"] == "profile"
+
+
+@pytest.mark.asyncio
+async def test_profile_recall_miss_returns_deterministic_fallback():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._classify_memory_query_type_async = AsyncMock(return_value="user_profile_recall")
+    orchestrator._resolve_profile_recall = AsyncMock(return_value=(None, "", "profile_lookup_empty"))
+
+    response = await orchestrator._handle_chat_response_core(
+        "what is my name",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "don't have your name in memory yet" in response.display_text.lower()
+    assert response.structured_data["_profile_recall"]["miss_reason"] == "profile_lookup_empty"
+
+
+@pytest.mark.asyncio
+async def test_profile_recall_does_not_hijack_pronoun_when_active_entity_present():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._classify_memory_query_type_async = AsyncMock(return_value="user_profile_recall")
+    orchestrator._resolve_profile_recall = AsyncMock(return_value=("Harsha", "profile", ""))
+    orchestrator._is_phase6_context_builder_active = MagicMock(return_value=False)
+    orchestrator._set_active_entity_for_context(
+        {"value": "Narendra Modi", "entity_type": "person"},
+        tool_context=None,
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "tell me more about him",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "Your name is" not in response.display_text
+    orchestrator._resolve_profile_recall.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_maya_identity_query_stays_on_identity_fast_path():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="identity")
+    orchestrator._classify_memory_query_type_async = AsyncMock(return_value="user_profile_recall")
+
+    response = await orchestrator._handle_chat_response_core(
+        "what is your name",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "maya" in response.display_text.lower()
+    orchestrator._classify_memory_query_type_async.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_store_chat_turn_memory_awaits_profile_write(monkeypatch):
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    profile_write_called = False
+
+    async def _store_turn(**_kwargs):
+        nonlocal profile_write_called
+        profile_write_called = True
+        return True
+
+    orchestrator.memory = SimpleNamespace(store_conversation_turn=_store_turn)
+    orchestrator.preference_manager = None
+    create_task_spy = MagicMock()
+    monkeypatch.setattr("core.orchestrator.agent_orchestrator.asyncio.create_task", create_task_spy)
+
+    await orchestrator._store_chat_turn_memory(
+        "my name is Harsha",
+        AgentResponse(display_text="Noted.", voice_text="Noted."),
+        user_id="u1",
+        session_id="s1",
+        origin="chat",
+    )
+
+    assert profile_write_called is True
+    create_task_spy.assert_not_called()
 
 
 @pytest.mark.asyncio

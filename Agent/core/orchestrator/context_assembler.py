@@ -260,6 +260,7 @@ class ContextAssembler:
         routing_mode_type: str = "informational",
         user_id: str | None = None,
         session_id: str | None = None,
+        query_type: str = "general",
     ) -> str:
         return await self._owner._memory_context_service.retrieve_memory_context_async(
             user_input,
@@ -267,6 +268,35 @@ class ContextAssembler:
             routing_mode_type=routing_mode_type,
             user_id=user_id,
             session_id=session_id,
+            query_type=query_type,
+        )
+
+    async def classify_memory_query_type_async(
+        self,
+        user_input: str,
+        *,
+        route_hint: str = "",
+        session_id: str | None = None,
+    ) -> str:
+        return await self._owner._memory_context_service.classify_memory_query_type_async(
+            user_input,
+            route_hint=route_hint,
+            session_id=session_id,
+        )
+
+    async def resolve_profile_recall(
+        self,
+        user_input: str,
+        *,
+        user_id: str | None,
+        session_id: str | None,
+        origin: str = "chat",
+    ) -> tuple[str | None, str, str]:
+        return await self._owner._memory_context_service.resolve_profile_recall(
+            user_input,
+            user_id=user_id,
+            session_id=session_id,
+            origin=origin,
         )
 
     @staticmethod

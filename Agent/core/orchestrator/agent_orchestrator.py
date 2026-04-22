@@ -77,6 +77,7 @@ from core.observability.trace_context import (
     set_trace_context,
     start_trace,
 )
+from core.telemetry.runtime_metrics import RuntimeMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +242,9 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         )
         ttl_raw = os.getenv("LAST_ACTION_TTL_SECONDS", "1800")
         max_turns_raw = os.getenv("LAST_ACTION_MAX_TURNS", "5")
+        active_entity_ttl_raw = os.getenv("ACTIVE_ENTITY_TTL_SECONDS", "1800")
+        active_entity_max_turns_raw = os.getenv("ACTIVE_ENTITY_MAX_TURNS", "8")
+        active_entity_max_non_research_turns_raw = os.getenv("ACTIVE_ENTITY_MAX_NON_RESEARCH_TURNS", "3")
         try:
             last_action_ttl_seconds = max(1, int(str(ttl_raw).strip()))
         except Exception:
@@ -249,23 +253,41 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             last_action_max_turns = max(1, int(str(max_turns_raw).strip()))
         except Exception:
             last_action_max_turns = 5
+        try:
+            active_entity_ttl_seconds = max(1, int(str(active_entity_ttl_raw).strip()))
+        except Exception:
+            active_entity_ttl_seconds = 1800
+        try:
+            active_entity_max_turns = max(1, int(str(active_entity_max_turns_raw).strip()))
+        except Exception:
+            active_entity_max_turns = 8
+        try:
+            active_entity_max_non_research_turns = max(0, int(str(active_entity_max_non_research_turns_raw).strip()))
+        except Exception:
+            active_entity_max_non_research_turns = 3
         self._action_state_store = (
             ActionStateStore(
                 ActionStateConfig(
                     last_action_ttl_seconds=last_action_ttl_seconds,
                     last_action_max_turns=last_action_max_turns,
+                    active_entity_ttl_seconds=active_entity_ttl_seconds,
+                    active_entity_max_turns=active_entity_max_turns,
+                    active_entity_max_non_research_turns=active_entity_max_non_research_turns,
                 )
             )
             if self._action_state_enabled
             else None
         )
         logger.info(
-            "action_state_initialized enabled=%s followup_enabled=%s carryover_enabled=%s ttl_s=%s max_turns=%s",
+            "action_state_initialized enabled=%s followup_enabled=%s carryover_enabled=%s ttl_s=%s max_turns=%s active_entity_ttl_s=%s active_entity_max_turns=%s active_entity_max_non_research_turns=%s",
             self._action_state_enabled,
             self._last_action_followup_enabled,
             self._action_state_carryover_enabled,
             last_action_ttl_seconds,
             last_action_max_turns,
+            active_entity_ttl_seconds,
+            active_entity_max_turns,
+            active_entity_max_non_research_turns,
         )
 
         # Planning & task infrastructure
@@ -614,6 +636,49 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_key = self._session_key_for_context(tool_context)
         return store.get_last_action(session_key)
 
+    def _set_active_entity_for_context(
+        self,
+        entity: Dict[str, Any],
+        *,
+        tool_context: Any = None,
+    ) -> bool:
+        if not self._action_state_enabled:
+            return False
+        store = self._action_state_store
+        if store is None:
+            return False
+        session_key = self._session_key_for_context(tool_context)
+        store.set_active_entity(session_key, entity)
+        RuntimeMetrics.increment("active_entity_written")
+        logger.info(
+            "active_entity_written session=%s value=%s entity_type=%s",
+            session_key,
+            str(entity.get("value") or "")[:80],
+            str(entity.get("entity_type") or "unknown"),
+        )
+        return True
+
+    def _get_active_entity_for_context(self, tool_context: Any = None) -> Optional[Dict[str, Any]]:
+        if not self._action_state_enabled:
+            return None
+        store = self._action_state_store
+        if store is None:
+            return None
+        session_key = self._session_key_for_context(tool_context)
+        return store.get_active_entity(session_key)
+
+    def _get_active_entity_with_reason_for_context(
+        self,
+        tool_context: Any = None,
+    ) -> tuple[Optional[Dict[str, Any]], str]:
+        if not self._action_state_enabled:
+            return None, "no_state"
+        store = self._action_state_store
+        if store is None:
+            return None, "no_state"
+        session_key = self._session_key_for_context(tool_context)
+        return store.get_active_entity_with_reason(session_key)
+
     def _current_action_state_turn(self, tool_context: Any = None) -> int:
         if not self._action_state_enabled:
             return 0
@@ -645,18 +710,53 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             return None
         return context
 
-    def _resolve_research_subject_from_context(self, tool_context: Any = None) -> str:
+    def _resolve_active_subject(
+        self,
+        current_query: str = "",
+        *,
+        tool_context: Any = None,
+        history_route_filter: Optional[str] = None,
+    ) -> tuple[str, str]:
         session_key = self._session_key_for_context(tool_context)
         payload = self._session_bootstrap_contexts.get(str(session_key or "").strip()) or {}
         tape_history = self._session_lifecycle.get_tape_history(
             session_id=session_key,
             limit=max(40, int(os.getenv("PRONOUN_RESOLUTION_HISTORY_EVENTS", "120"))),
         )
-        return self._research_handler.resolve_research_subject_from_context(
+        explicit = self._research_handler.extract_explicit_entity(current_query)
+        if explicit:
+            return str(explicit.get("value") or "").strip(), "explicit_entity_present"
+
+        pronoun_query = self._pronoun_rewriter.has_pronoun(current_query)
+        entity, entity_reason = self._get_active_entity_with_reason_for_context(tool_context)
+        if isinstance(entity, dict):
+            candidate = str(entity.get("value") or "").strip()
+            if candidate:
+                return candidate, "active_entity"
+        if pronoun_query and entity_reason in {"expired_ttl", "expired_turns", "drifted_context"}:
+            return "", entity_reason
+
+        fallback = self._research_handler.resolve_research_subject_from_context(
             research_context=self._get_active_research_context(tool_context),
             conversation_history=tape_history or self._conversation_history,
             bootstrap_payload=payload,
+            history_route_filter=history_route_filter,
         )
+        if fallback:
+            return fallback, "history_fallback"
+        return "", entity_reason
+
+    def _resolve_research_subject_from_context(
+        self,
+        tool_context: Any = None,
+        current_query: str = "",
+    ) -> str:
+        subject, _reason = self._resolve_active_subject(
+            current_query,
+            tool_context=tool_context,
+            history_route_filter="research",
+        )
+        return subject
 
     def _resolve_active_subject_for_fast_path(self) -> str:
         return self._research_handler.resolve_active_subject_for_fast_path(
@@ -675,12 +775,26 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             session_id=session_key,
             limit=max(40, int(os.getenv("PRONOUN_RESOLUTION_HISTORY_EVENTS", "120"))),
         )
-        return self._pronoun_rewriter.rewrite(
+        resolved_subject, resolution_reason = self._resolve_active_subject(
+            query,
+            tool_context=tool_context,
+        )
+        rewritten = self._pronoun_rewriter.rewrite(
             query,
             conversation_history=history or self._conversation_history,
             research_context=self._get_active_research_context(tool_context),
             tool_context=tool_context,
+            resolved_subject=resolved_subject,
+            resolution_reason=resolution_reason,
         )
+        self._record_pronoun_resolution_metrics(
+            query=query,
+            changed=rewritten[1],
+            ambiguous=rewritten[2],
+            resolution_reason=resolution_reason,
+            resolved_subject=resolved_subject,
+        )
+        return rewritten
 
     def _rewrite_pronoun_followup_pre_router(
         self,
@@ -698,13 +812,57 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             session_id=session_key,
             limit=max(40, int(os.getenv("PRONOUN_RESOLUTION_HISTORY_EVENTS", "120"))),
         )
-        return self._pronoun_rewriter.rewrite(
+        resolved_subject, resolution_reason = self._resolve_active_subject(
+            query,
+            tool_context=tool_context,
+            history_route_filter="research",
+        )
+        rewritten = self._pronoun_rewriter.rewrite(
             query,
             conversation_history=history or self._conversation_history,
             research_context=self._get_active_research_context(tool_context),
             tool_context=tool_context,
             history_route_filter="research",
+            resolved_subject=resolved_subject,
+            resolution_reason=resolution_reason,
         )
+        self._record_pronoun_resolution_metrics(
+            query=query,
+            changed=rewritten[1],
+            ambiguous=rewritten[2],
+            resolution_reason=resolution_reason,
+            resolved_subject=resolved_subject,
+        )
+        return rewritten
+
+    def _record_pronoun_resolution_metrics(
+        self,
+        *,
+        query: str,
+        changed: bool,
+        ambiguous: bool,
+        resolution_reason: str,
+        resolved_subject: str,
+    ) -> None:
+        if changed:
+            RuntimeMetrics.increment("pronoun_resolution_success_total")
+            if resolution_reason in {"active_entity", "explicit_entity_present"}:
+                RuntimeMetrics.increment("active_entity_followup_hit")
+                logger.info(
+                    "active_entity_followup_hit reason=%s query=%s resolved_subject=%s",
+                    resolution_reason,
+                    str(query or "")[:120],
+                    str(resolved_subject or "")[:80],
+                )
+            return
+        if ambiguous:
+            RuntimeMetrics.increment("pronoun_resolution_ambiguous_total")
+            miss_reason = resolution_reason or "ambiguous_entity"
+            logger.info(
+                "active_entity_miss_reason=%s query=%s",
+                miss_reason,
+                str(query or "")[:120],
+            )
 
     def _normalize_voice_transcription_for_routing(self, message: str) -> tuple[str, bool]:
         text = str(message or "")
@@ -1270,6 +1428,7 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         routing_mode_type: str = "informational",
         user_id: str | None = None,
         session_id: str | None = None,
+        query_type: str = "general",
     ) -> str:
         return await self._context_assembler.retrieve_memory_context_async(
             user_input,
@@ -1277,6 +1436,35 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
             routing_mode_type=routing_mode_type,
             user_id=user_id,
             session_id=session_id,
+            query_type=query_type,
+        )
+
+    async def _classify_memory_query_type_async(
+        self,
+        user_input: str,
+        *,
+        route_hint: str = "",
+        session_id: str | None = None,
+    ) -> str:
+        return await self._context_assembler.classify_memory_query_type_async(
+            user_input,
+            route_hint=route_hint,
+            session_id=session_id,
+        )
+
+    async def _resolve_profile_recall(
+        self,
+        user_input: str,
+        *,
+        user_id: str | None,
+        session_id: str | None,
+        origin: str = "chat",
+    ) -> tuple[str | None, str, str]:
+        return await self._context_assembler.resolve_profile_recall(
+            user_input,
+            user_id=user_id,
+            session_id=session_id,
+            origin=origin,
         )
 
     def _is_malformed_short_request(self, message: str) -> bool:
@@ -1593,7 +1781,13 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
                         origin or "unknown",
                     )
 
-            asyncio.create_task(_write_memory())
+            profile_write_required = bool(
+                re.search(r"\bmy name is\s+[A-Za-z][A-Za-z0-9' -]{0,40}\b", str(user_text or ""), re.IGNORECASE)
+            )
+            if profile_write_required:
+                await _write_memory()
+            else:
+                asyncio.create_task(_write_memory())
         except Exception as mem_err:
             logger.warning(f"⚠️ Failed to queue chat memory write: {mem_err}")
             return
