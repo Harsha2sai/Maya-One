@@ -116,6 +116,15 @@ class ChatResponseMixin:
                 "informational",
             )
 
+        arbiter = self._ensure_state_arbiter()
+        arbiter_decision = await arbiter.arbitrate_turn(
+            message=message,
+            origin=origin,
+            tool_context=tool_context,
+            user_id=user_id,
+        )
+        arbiter_enforce = bool(getattr(arbiter, "enforce_enabled", False))
+
         fast_path_input = self._extract_user_message_segment(message) or message
         direct_tool = self._detect_direct_tool_intent(fast_path_input, origin=origin)
         if direct_tool:
@@ -260,22 +269,167 @@ class ChatResponseMixin:
                 display_text=small_talk_response,
                 voice_text=small_talk_response,
             )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="general_chat",
+                final_handler="general_chat",
+            )
             return self._tag_response_with_routing_type(response, "informational")
 
-        followup_response = self._resolve_last_action_followup(
-            message=message,
-            tool_context=tool_context,
-        )
-        if followup_response is not None:
-            logger.info("last_action_followup_interceptor_hit origin=%s", origin)
-            return followup_response
+        if arbiter_enforce and arbiter_decision.owner == "clarify":
+            clarification = (
+                arbiter_decision.clarify_message
+                or "I'm not fully sure which context you mean. Can you clarify?"
+            )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="clarify",
+                final_handler="clarify",
+            )
+            return self._tag_response_with_routing_type(
+                ResponseFormatter.build_response(
+                    display_text=clarification,
+                    voice_text=clarification,
+                    mode="normal",
+                    confidence=arbiter_decision.confidence,
+                    structured_data={
+                        "_state_arbiter": {
+                            "owner": arbiter_decision.owner,
+                            "reason": arbiter_decision.reason,
+                            "clarify_reason": arbiter_decision.clarify_reason,
+                        }
+                    },
+                ),
+                "informational",
+            )
+
+        if arbiter_enforce and arbiter_decision.owner == "identity":
+            identity_response = await self._handle_identity_fast_path(
+                message=message,
+                user_id=user_id,
+                origin=origin,
+            )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="identity",
+                final_handler="identity",
+            )
+            return identity_response
+
+        if arbiter_enforce and arbiter_decision.owner == "profile_recall":
+            memory_session_id = (
+                getattr(tool_context, "session_id", None)
+                or self._current_session_id
+                or getattr(getattr(self, "room", None), "name", None)
+                or "console_session"
+            )
+            recalled_name, recall_source, miss_reason = await self._resolve_profile_recall(
+                message,
+                user_id=user_id,
+                session_id=memory_session_id,
+                origin=origin,
+            )
+            if recalled_name:
+                response_text = f"Your name is {recalled_name}."
+                response = ResponseFormatter.build_response(
+                    display_text=response_text,
+                    voice_text=response_text,
+                    mode="normal",
+                    confidence=0.9,
+                    structured_data={
+                        "_profile_recall": {
+                            "source": recall_source,
+                            "query_type": "user_profile_recall",
+                        }
+                    },
+                )
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="profile_recall",
+                    final_handler="profile_recall",
+                )
+                return self._tag_response_with_routing_type(response, "informational")
+            fallback = "I don't have your name in memory yet. Tell me your name and I'll remember it for this session."
+            response = ResponseFormatter.build_response(
+                display_text=fallback,
+                voice_text=fallback,
+                mode="normal",
+                confidence=0.82,
+                structured_data={
+                    "_profile_recall": {
+                        "source": "none",
+                        "query_type": "user_profile_recall",
+                        "miss_reason": miss_reason or "profile_lookup_empty",
+                    }
+                },
+            )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="profile_recall",
+                final_handler="profile_recall",
+            )
+            return self._tag_response_with_routing_type(response, "informational")
+
+        if arbiter_enforce and arbiter_decision.owner == "entity_followup":
+            rewritten_followup, forced_research, ambiguous_followup = self._rewrite_pronoun_followup_pre_router(
+                message,
+                tool_context=tool_context,
+            )
+            if ambiguous_followup or not forced_research:
+                clarification = (
+                    arbiter_decision.clarify_message
+                    or "Could you clarify who you mean before I research that?"
+                )
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="entity_followup",
+                    final_handler="clarify",
+                )
+                return self._tag_response_with_routing_type(
+                    ResponseFormatter.build_response(
+                        display_text=clarification,
+                        voice_text=clarification,
+                    ),
+                    "informational",
+                )
+            response = await self._handle_research_route(
+                message=rewritten_followup,
+                user_id=user_id,
+                tool_context=tool_context,
+                query_rewritten=True,
+                query_ambiguous=False,
+            )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="entity_followup",
+                final_handler="research",
+            )
+            return response
+
+        if (not arbiter_enforce) or arbiter_decision.owner == "action_followup":
+            followup_response = self._resolve_last_action_followup(
+                message=message,
+                tool_context=tool_context,
+            )
+            if followup_response is not None:
+                logger.info("last_action_followup_interceptor_hit origin=%s", origin)
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="action_followup",
+                    final_handler="action_followup",
+                )
+                return followup_response
 
         pending_action, pending_reason = self._get_pending_scheduling_action_with_reason_for_context(
             tool_context
         )
         if pending_action is None and pending_reason in {"expired_ttl", "expired_turns"}:
             RuntimeMetrics.increment("pending_scheduling_expired_total")
-        if pending_action and self._is_pending_scheduling_task_followup(message):
+        if (
+            pending_action
+            and self._is_pending_scheduling_task_followup(message)
+            and ((not arbiter_enforce) or arbiter_decision.owner in {"action_followup", "scheduling_command"})
+        ):
             pending_data = pending_action.get("data") if isinstance(pending_action.get("data"), dict) else {}
             pending_time = str(pending_data.get("time") or "").strip()
             if pending_time:
@@ -287,11 +441,17 @@ class ChatResponseMixin:
                     pending_time,
                 )
                 RuntimeMetrics.increment("pending_scheduling_resume_total")
-                return await self._handle_scheduling_route(
+                response = await self._handle_scheduling_route(
                     message=resumed_message,
                     user_id=user_id,
                     tool_context=tool_context,
                 )
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="action_followup",
+                    final_handler="scheduling",
+                )
+                return response
 
         routing_text = self._extract_user_message_segment(message) or message
         chat_ctx_messages = self._chat_ctx_messages(getattr(self.agent, "chat_ctx", None))
@@ -334,6 +494,11 @@ class ChatResponseMixin:
                 rewritten_followup[:120],
             )
             clarification = "Could you clarify who you mean before I research that?"
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="entity_followup",
+                final_handler="clarify",
+            )
             return self._tag_response_with_routing_type(
                 ResponseFormatter.build_response(
                     display_text=clarification,
@@ -346,13 +511,19 @@ class ChatResponseMixin:
                 "research_pronoun_override forced=true ambiguous=false rewritten=%s",
                 rewritten_followup[:120],
             )
-            return await self._handle_research_route(
+            response = await self._handle_research_route(
                 message=rewritten_followup,
                 user_id=user_id,
                 tool_context=tool_context,
                 query_rewritten=True,
                 query_ambiguous=False,
             )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="entity_followup",
+                final_handler="research",
+            )
+            return response
 
         route_started = time.monotonic()
         active_subject = self._resolve_research_subject_from_context(tool_context)
@@ -373,25 +544,43 @@ class ChatResponseMixin:
         )
 
         if agent_key == "identity":
-            return await self._handle_identity_fast_path(
+            response = await self._handle_identity_fast_path(
                 message=message,
                 user_id=user_id,
                 origin=origin,
             )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="identity",
+                final_handler="identity",
+            )
+            return response
 
         if agent_key == "media_play":
-            return await self._handle_media_route(
+            response = await self._handle_media_route(
                 message=message,
                 user_id=user_id,
                 tool_context=tool_context,
             )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="media_play",
+                final_handler="media_play",
+            )
+            return response
 
         if agent_key == "scheduling":
-            return await self._handle_scheduling_route(
+            response = await self._handle_scheduling_route(
                 message=message,
                 user_id=user_id,
                 tool_context=tool_context,
             )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="scheduling",
+                final_handler="scheduling",
+            )
+            return response
 
         if agent_key == "research":
             research_query = (self._extract_user_message_segment(message) or message).strip()
@@ -436,6 +625,11 @@ class ChatResponseMixin:
                 )
                 if query_ambiguous:
                     clarification = "Could you clarify who you mean before I research that?"
+                    self._record_state_arbiter_outcome(
+                        decision=arbiter_decision,
+                        legacy_owner="entity_followup",
+                        final_handler="clarify",
+                    )
                     return self._tag_response_with_routing_type(
                         ResponseFormatter.build_response(
                             display_text=clarification,
@@ -443,13 +637,19 @@ class ChatResponseMixin:
                         ),
                         "informational",
                     )
-                return await self._handle_research_route(
+                response = await self._handle_research_route(
                     message=rewritten_query,
                     user_id=user_id,
                     tool_context=tool_context,
                     query_rewritten=query_rewritten,
                     query_ambiguous=query_ambiguous,
                 )
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="research",
+                    final_handler="research",
+                )
+                return response
 
         if agent_key == "system":
             try:
@@ -620,6 +820,11 @@ class ChatResponseMixin:
                             }
                         },
                     )
+                    self._record_state_arbiter_outcome(
+                        decision=arbiter_decision,
+                        legacy_owner="profile_recall",
+                        final_handler="profile_recall",
+                    )
                     return self._tag_response_with_routing_type(response, "informational")
                 logger.info(
                     "profile_recall_miss reason=%s session=%s",
@@ -639,6 +844,11 @@ class ChatResponseMixin:
                             "miss_reason": miss_reason or "profile_lookup_empty",
                         }
                     },
+                )
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="profile_recall",
+                    final_handler="profile_recall",
                 )
                 return self._tag_response_with_routing_type(response, "informational")
         history = self._get_conversation_tape_history(
@@ -1010,10 +1220,49 @@ class ChatResponseMixin:
                     intent_type="informational",
                 ),
             )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="general_chat",
+                final_handler="general_chat",
+            )
             return self._tag_response_with_routing_type(response, "informational")
 
         response = await self._build_agent_response(role_llm, full_response, mode="normal")
+        self._record_state_arbiter_outcome(
+            decision=arbiter_decision,
+            legacy_owner="general_chat",
+            final_handler="general_chat",
+        )
         return self._tag_response_with_routing_type(response, "informational")
+
+    def _ensure_state_arbiter(self) -> Any:
+        arbiter = getattr(self, "_state_arbiter", None)
+        if arbiter is not None:
+            return arbiter
+        from core.orchestrator.state_arbiter import StateArbiter
+
+        arbiter = StateArbiter(owner=self)
+        self._state_arbiter = arbiter
+        return arbiter
+
+    def _record_state_arbiter_outcome(
+        self,
+        *,
+        decision: Any,
+        legacy_owner: str,
+        final_handler: str = "",
+    ) -> None:
+        if decision is None:
+            return
+        try:
+            arbiter = self._ensure_state_arbiter()
+            arbiter.record_outcome(
+                decision=decision,
+                legacy_owner=legacy_owner,
+                final_handler=final_handler,
+            )
+        except Exception as exc:
+            logger.debug("state_arbiter_outcome_record_failed error=%s", exc)
 
     @staticmethod
     def _is_pending_scheduling_task_followup(message: str) -> bool:

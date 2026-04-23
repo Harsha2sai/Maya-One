@@ -36,6 +36,10 @@ class RuntimeMetrics:
         "scheduling_missing_task_followup_total": 0,
         "pending_scheduling_resume_total": 0,
         "pending_scheduling_expired_total": 0,
+        "state_arbiter_decision_total": 0,
+        "state_arbiter_ambiguity_total": 0,
+        "state_arbiter_clarify_total": 0,
+        "state_arbiter_outcome_mismatch_total": 0,
     }
     
     _log_file: Path = Path("verification/runtime_validation/runtime_metrics.json")
@@ -99,5 +103,9 @@ class RuntimeMetrics:
              "scheduling_missing_task_followup_total": 0,
              "pending_scheduling_resume_total": 0,
              "pending_scheduling_expired_total": 0,
+             "state_arbiter_decision_total": 0,
+             "state_arbiter_ambiguity_total": 0,
+             "state_arbiter_clarify_total": 0,
+             "state_arbiter_outcome_mismatch_total": 0,
         }
         cls._flush()

@@ -1357,6 +1357,54 @@ async def test_pending_scheduling_followup_short_text_bypasses_router():
     assert routed_message == "set a reminder to call John tomorrow at 5 pm"
 
 
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_profile_recall_short_circuits_router(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._resolve_profile_recall = AsyncMock(return_value=("Harsha", "profile", ""))
+
+    response = await orchestrator._handle_chat_response_core(
+        "what is my name",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert response.display_text == "Your name is Harsha."
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_clarifies_entity_action_ambiguity(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="s-ambiguous")
+    orchestrator._set_active_entity_for_context(
+        {"value": "Narendra Modi", "entity_type": "person"},
+        tool_context=session,
+    )
+    orchestrator._set_last_action_for_context(
+        action={
+            "type": "set_reminder",
+            "domain": "scheduling",
+            "summary": "Reminder: call John tomorrow at 5 pm",
+            "data": {"task": "call John", "time": "tomorrow at 5 pm"},
+        },
+        tool_context=session,
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "what about him",
+        user_id="u1",
+        tool_context=session,
+        origin="chat",
+    )
+
+    assert "reminder" in response.display_text.lower()
+    assert "person" in response.display_text.lower() or "discussing" in response.display_text.lower()
+
+
 def test_pending_scheduling_followup_does_not_intercept_research_pronoun_query():
     assert AgentOrchestrator._is_pending_scheduling_task_followup("tell me more about him") is False
 
