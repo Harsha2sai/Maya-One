@@ -25,6 +25,12 @@ class _AsyncCallRecorder:
         return self.return_value
 
 
+def test_scheduling_task_followup_matcher_rejects_conversational_queries():
+    assert SchedulingHandler._looks_like_reminder_task_followup("tell me more about him") is False
+    assert SchedulingHandler._looks_like_reminder_task_followup("what is my name") is False
+    assert SchedulingHandler._looks_like_reminder_task_followup("call John") is True
+
+
 @pytest.mark.asyncio
 async def test_handle_message_chat_contract_returns_agent_response():
     orchestrator = AgentOrchestrator(MagicMock(), SimpleNamespace(smart_llm=None))
@@ -139,6 +145,92 @@ async def test_scheduling_handler_followup_returns_agent_response():
 
     assert isinstance(response, AgentResponse)
     assert "When would you like to be reminded?" in response.display_text
+
+
+@pytest.mark.asyncio
+async def test_scheduling_handler_missing_task_followup_writes_pending_state():
+    owner = MagicMock()
+    owner._action_state_enabled = True
+    owner._consume_handoff_signal.return_value = "scheduling"
+    owner._build_handoff_request.return_value = SimpleNamespace(trace_id="trace-1")
+    owner._handoff_manager.delegate = AsyncMock(
+        return_value=SimpleNamespace(
+            status="needs_followup",
+            structured_payload={
+                "action_type": "set_reminder",
+                "missing_slot": "task",
+                "parameters": {"time": "tomorrow"},
+                "clarification": "What should I remind you about?",
+            },
+            user_visible_text="",
+            error_code=None,
+        )
+    )
+    owner._session_key_for_context.return_value = "sess-1"
+    owner._current_action_state_turn.return_value = 2
+    owner._set_pending_scheduling_action_for_context.return_value = True
+    owner._tag_response_with_routing_type.side_effect = lambda response, _kind: response
+
+    handler = SchedulingHandler(owner=owner)
+    response = await handler.handle_scheduling_route(
+        message="set a reminder for tomorrow",
+        user_id="u1",
+        tool_context=SimpleNamespace(trace_id="trace-1"),
+    )
+
+    assert isinstance(response, AgentResponse)
+    assert "What should I remind you about?" in response.display_text
+    owner._set_pending_scheduling_action_for_context.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scheduling_handler_resumes_pending_task_followup():
+    owner = MagicMock()
+    owner._action_state_enabled = True
+    owner._consume_handoff_signal.return_value = "scheduling"
+    owner._build_handoff_request.return_value = SimpleNamespace(trace_id="trace-1")
+    owner._handoff_manager.delegate = AsyncMock(
+        return_value=SimpleNamespace(
+            status="completed",
+            structured_payload={
+                "action_type": "set_reminder",
+                "tool_name": "set_reminder",
+                "parameters": {"text": "call John", "time": "tomorrow"},
+                "confirmation_text": "I've set a reminder to call John tomorrow.",
+            },
+            user_visible_text="I've set a reminder to call John tomorrow.",
+            error_code=None,
+        )
+    )
+    owner._get_pending_scheduling_action_with_reason_for_context.return_value = (
+        {"type": "set_reminder", "data": {"time": "tomorrow"}},
+        "active",
+    )
+    owner._execute_tool_call = AsyncMock(
+        return_value=(
+            {"message": "I've set a reminder to call John tomorrow."},
+            SimpleNamespace(status="success"),
+        )
+    )
+    owner._set_last_action_for_context.return_value = True
+    owner._clear_pending_scheduling_action_for_context.return_value = True
+    owner._session_key_for_context.return_value = "sess-1"
+    owner._current_action_state_turn.return_value = 3
+    owner._tag_response_with_routing_type.side_effect = lambda response, _kind: response
+    owner.turn_state = {}
+
+    handler = SchedulingHandler(owner=owner)
+    response = await handler.handle_scheduling_route(
+        message="call John",
+        user_id="u1",
+        tool_context=SimpleNamespace(trace_id="trace-1"),
+    )
+
+    assert isinstance(response, AgentResponse)
+    assert "set a reminder" in response.display_text.lower()
+    kwargs = owner._build_handoff_request.call_args.kwargs
+    assert kwargs["message"] == "set a reminder to call John tomorrow"
+    owner._clear_pending_scheduling_action_for_context.assert_called()
 
 
 @pytest.mark.asyncio

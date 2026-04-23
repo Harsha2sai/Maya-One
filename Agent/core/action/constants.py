@@ -22,6 +22,11 @@ class ActionStateConfig:
     search_query_ttl_seconds: int = 600
     last_action_ttl_seconds: int = 1800
     last_action_max_turns: int = 5
+    active_entity_ttl_seconds: int = 1800
+    active_entity_max_turns: int = 8
+    active_entity_max_non_research_turns: int = 3
+    pending_scheduling_ttl_seconds: int = 600
+    pending_scheduling_max_turns: int = 2
 
 
 @dataclass(frozen=True)

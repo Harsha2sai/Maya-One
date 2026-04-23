@@ -1324,6 +1324,48 @@ async def test_maya_identity_query_stays_on_identity_fast_path():
 
 
 @pytest.mark.asyncio
+async def test_pending_scheduling_followup_short_text_bypasses_router():
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="s1")
+    orchestrator._set_pending_scheduling_action_for_context(
+        action={
+            "type": "set_reminder",
+            "domain": "scheduling",
+            "data": {"time": "tomorrow at 5 pm"},
+        },
+        tool_context=session,
+    )
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._handle_scheduling_route = AsyncMock(
+        return_value=AgentResponse(
+            display_text="I've set a reminder to call John tomorrow at 5 pm.",
+            voice_text="I've set a reminder to call John tomorrow at 5 pm.",
+        )
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "call John",
+        user_id="u1",
+        tool_context=session,
+        origin="chat",
+    )
+
+    assert "set a reminder" in response.display_text.lower()
+    orchestrator._router.route.assert_not_awaited()
+    routed_message = orchestrator._handle_scheduling_route.await_args.kwargs["message"]
+    assert routed_message == "set a reminder to call John tomorrow at 5 pm"
+
+
+def test_pending_scheduling_followup_does_not_intercept_research_pronoun_query():
+    assert AgentOrchestrator._is_pending_scheduling_task_followup("tell me more about him") is False
+
+
+def test_pending_scheduling_followup_does_not_intercept_profile_recall_query():
+    assert AgentOrchestrator._is_pending_scheduling_task_followup("what is my name") is False
+
+
+@pytest.mark.asyncio
 async def test_store_chat_turn_memory_awaits_profile_write(monkeypatch):
     orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
     profile_write_called = False

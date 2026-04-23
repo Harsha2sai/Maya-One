@@ -343,12 +343,14 @@ class InteractionManager:
                     session_key=session_key,
                     message=text,
                 )
+                if str(reason or "") == "no_state":
+                    return self._build_no_last_action_response(query=lowered)
                 return None
         else:
             action = store.get_last_action(session_key)
             if action is None:
                 self._record_last_action_miss(miss_reason, session_key=session_key, message=text)
-                return None
+                return self._build_no_last_action_response(query=lowered)
 
         domain = str((action or {}).get("domain") or "").strip().lower()
         if domain != "scheduling":
@@ -495,6 +497,30 @@ class InteractionManager:
                         "action_type": "set_reminder",
                         "domain": "scheduling",
                         "reason": reason,
+                    }
+                },
+            ),
+            "direct_action",
+        )
+
+    def _build_no_last_action_response(self, *, query: str) -> Any:
+        reminder_followup = bool(re.search(r"\b(reminder|did i set|did you set|when is it)\b", str(query or "")))
+        if reminder_followup:
+            response_text = "I don't see any reminder set yet. Tell me what and when, and I'll set it."
+        else:
+            response_text = "I don't have a recent action for that yet."
+        return self._owner._tag_response_with_routing_type(
+            ResponseFormatter.build_response(
+                display_text=response_text,
+                voice_text=response_text,
+                mode="normal",
+                confidence=0.88,
+                structured_data={
+                    "_last_action_followup": {
+                        "intent": "missing",
+                        "action_type": "set_reminder",
+                        "domain": "scheduling",
+                        "reason": "no_state",
                     }
                 },
             ),

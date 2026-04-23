@@ -275,6 +275,21 @@ async def test_agent_router_task_list_routes_to_chat_not_scheduling(utterance: s
     assert result != "scheduling"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "what reminder did I set",
+        "what's my reminder",
+        "when is my reminder",
+    ],
+)
+async def test_agent_router_routes_reminder_status_queries_to_scheduling(utterance: str) -> None:
+    router = AgentRouter(_MappingLLM({utterance: "chat"}))
+    result = await router.route(utterance, "u1")
+    assert result == "scheduling"
+
+
 def test_input_guard_sanitizes_and_truncates() -> None:
     raw = (("ab" * 5000) + "\x01\x02")
     cleaned = InputGuard.sanitize(raw)

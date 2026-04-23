@@ -43,6 +43,7 @@ class AgentRouter:
     _RESEARCH_FRESHNESS_PATTERNS = (
         r"\bwho is (?:the )?(?:current )?(?:ceo|cto|cfo|president|founder|head|prime minister|chancellor|governor|mayor)\b",
         r"\bcurrent (?:ceo|cto|cfo|leader|president|head|prime minister|chancellor|governor|mayor)\b",
+        r"\b(?:do you know|tell me about|know about)\s+(?:the\s+)?(?:current\s+)?(?:ceo|cto|cfo|president|founder|head|prime minister|chancellor|governor|mayor)\b",
         r"\bwho (?:runs|leads|owns|heads)\b",
         r"\b(latest|recent|today|right now|this week)\b",
         r"\bnews\b",
@@ -85,10 +86,15 @@ class AgentRouter:
     _SCHEDULING_PATTERNS = (
         r"\bremind me\b",
         r"\bset (?:a )?reminder\b",
+        r"\bwhat(?:'s| is)\s+(?:my|the)\s+reminder\b",
+        r"\bwhat reminder did (?:i|you) set\b",
+        r"\bwhich reminder\b",
+        r"\bwhen is (?:my|the) reminder\b",
         r"\blist reminders\b",
         r"\bshow reminders\b",
         r"\bdelete reminder\b",
         r"\bset (?:an )?alarm\b",
+        r"\bwhat(?:'s| is)\s+(?:my|the)\s+alarm\b",
         r"\blist alarms\b",
         r"\bshow alarms\b",
         r"\bdelete alarm\b",
@@ -100,6 +106,11 @@ class AgentRouter:
         r"\bshow (?:my )?tasks\b",
         r"\bget (?:my )?tasks\b",
         r"\bmy tasks\b",
+    )
+    _PRONOUN_FOLLOWUP_PATTERNS = (
+        r"\btell me more about (him|her|them|it|that)\b",
+        r"\bmore about (him|her|them|it|that)\b",
+        r"\bwhat about (him|her|them|it|that)\b",
     )
 
     def __init__(self, llm_client: Any):
@@ -177,6 +188,36 @@ class AgentRouter:
             text = self._flatten_content(self._message_content(message))
             if text:
                 return text
+        return ""
+
+    @staticmethod
+    def _extract_subject_candidate(text: str) -> str:
+        content = str(text or "").strip()
+        if not content:
+            return ""
+        patterns = (
+            r"\b(?:about|regarding|on)\s+([A-Z][A-Za-z0-9 .'-]{2,80})",
+            r"\b(?:who is|what is)\s+([A-Z][A-Za-z0-9 .'-]{2,80})",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, content)
+            if match:
+                return match.group(1).strip(" .,!?:;\"'")
+        return ""
+
+    def _resolve_subject_from_history(self, recent_history: List[Any]) -> str:
+        for item in reversed(recent_history or []):
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "")
+            if not content:
+                continue
+            route = str(item.get("route") or "").strip().lower()
+            source = str(item.get("source") or "").strip().lower()
+            if route == "research" or source == "tool_output":
+                subject = self._extract_subject_candidate(content)
+                if subject:
+                    return subject
         return ""
 
     @staticmethod
@@ -307,6 +348,10 @@ class AgentRouter:
         user_key: str,
         route: str,
         chat_ctx: List[Any],
+        reason: str = "",
+        confidence: float = 0.5,
+        active_subject: str = "",
+        last_route: str = "",
     ) -> str:
         chosen_route = str(route or "chat").strip().lower() or "chat"
         if self._llm_router_shadow:
@@ -315,15 +360,32 @@ class AgentRouter:
                 chat_ctx=chat_ctx,
                 legacy_route=chosen_route,
             )
-        logger.info("agent_router_decision: '%s' -> %s", str(utterance or "")[:50], chosen_route)
+        effective_last_route = str(last_route or self._last_route.get(user_key) or "").strip().lower()
+        logger.info(
+            "agent_router_decision text='%s' route=%s confidence=%.2f reason=%s last_route=%s active_subject=%s",
+            str(utterance or "")[:60],
+            chosen_route,
+            max(0.0, min(1.0, float(confidence or 0.0))),
+            reason or "unspecified",
+            effective_last_route or "none",
+            str(active_subject or "")[:80] or "none",
+        )
         self._last_route[user_key] = chosen_route
         return chosen_route
 
-    async def route(self, utterance: str, user_id: str, chat_ctx: List[Any] | None = None) -> str:
+    async def route(
+        self,
+        utterance: str,
+        user_id: str,
+        chat_ctx: List[Any] | None = None,
+        recent_history: List[Any] | None = None,
+        active_subject: str | None = None,
+    ) -> str:
         user_key = str(user_id or "anonymous")
         self._pending_clarifications.pop(user_key, None)
         current = self._depth.get(user_key, 0)
         chat_ctx = list(chat_ctx or [])
+        recent_history = list(recent_history or [])
         if current >= self.MAX_DEPTH:
             logger.warning("agent_depth_exceeded: %s at depth %s", user_key, current)
             self._depth[user_key] = 0
@@ -332,6 +394,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="depth_guard",
+                confidence=1.0,
             )
 
         utterance_l = str(utterance or "").strip().lower()
@@ -345,6 +409,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="memory_query_pattern",
+                confidence=0.96,
             )
 
         # Note operations should stay in chat tool path and never map to identity.
@@ -354,6 +420,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="note_pattern",
+                confidence=0.95,
             )
 
         identity_hit = any(re.search(pattern, utterance_l) for pattern in self._IDENTITY_PATTERNS)
@@ -367,6 +435,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="identity",
                 chat_ctx=chat_ctx,
+                reason="identity_pattern",
+                confidence=0.95,
             )
 
         # Deterministic explicit research/system intents to avoid identity misrouting.
@@ -376,6 +446,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="research",
                 chat_ctx=chat_ctx,
+                reason="research_intent_pattern",
+                confidence=0.95,
             )
 
         if system_intent_hit:
@@ -384,6 +456,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="system",
                 chat_ctx=chat_ctx,
+                reason="system_intent_pattern",
+                confidence=0.95,
             )
 
         # Greeting/smalltalk patterns — third priority
@@ -398,6 +472,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="small_talk_pattern",
+                confidence=0.95,
             )
 
         # Deterministic media/scheduling controls
@@ -413,6 +489,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="media_scheduling_conflict",
+                confidence=0.90,
             )
         if media_play_hit:
             return await self._finalize_route(
@@ -420,6 +498,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="media_play",
                 chat_ctx=chat_ctx,
+                reason="media_pattern",
+                confidence=0.93,
             )
 
         task_list_hit = any(re.search(pattern, utterance_l) for pattern in self._TASK_LIST_PATTERNS)
@@ -429,6 +509,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="task_list_pattern",
+                confidence=0.90,
             )
 
         if scheduling_hit:
@@ -437,7 +519,35 @@ class AgentRouter:
                 user_key=user_key,
                 route="scheduling",
                 chat_ctx=chat_ctx,
+                reason="scheduling_pattern",
+                confidence=0.93,
             )
+
+        pronoun_followup_hit = any(
+            re.search(pattern, utterance_l) for pattern in self._PRONOUN_FOLLOWUP_PATTERNS
+        )
+        if pronoun_followup_hit:
+            resolved_subject = str(active_subject or "").strip() or self._resolve_subject_from_history(recent_history)
+            if resolved_subject:
+                return await self._finalize_route(
+                    utterance=utterance,
+                    user_key=user_key,
+                    route="research",
+                    chat_ctx=chat_ctx,
+                    reason=f"pronoun_followup resolved_subject={resolved_subject[:80]}",
+                    confidence=0.92,
+                    active_subject=resolved_subject,
+                )
+            previous_route = self._last_route.get(user_key)
+            if previous_route == "research":
+                return await self._finalize_route(
+                    utterance=utterance,
+                    user_key=user_key,
+                    route="research",
+                    chat_ctx=chat_ctx,
+                    reason="topic_continuation last_route=research",
+                    confidence=0.85,
+                )
 
         # Deterministic freshness/current-events research.
         # These queries should not block on the router LLM in console certification flows.
@@ -445,13 +555,24 @@ class AgentRouter:
         freshness_hit = any(re.search(pattern, utterance_l) for pattern in self._RESEARCH_FRESHNESS_PATTERNS)
         if freshness_hit:
             result = "research"
-            if await self._fact_classifier.is_simple_fact(utterance_l):
+            leadership_query = bool(
+                re.search(
+                    r"\b(prime minister|chancellor|governor|mayor|president)\b",
+                    utterance_l,
+                )
+            )
+            conversational_leadership_query = leadership_query and bool(
+                re.search(r"\b(do you know|tell me about|know about)\b", utterance_l)
+            )
+            if (not conversational_leadership_query) and await self._fact_classifier.is_simple_fact(utterance_l):
                 result = "chat"
             return await self._finalize_route(
                 utterance=utterance,
                 user_key=user_key,
                 route=result,
                 chat_ctx=chat_ctx,
+                reason="freshness_rule" if result == "research" else "simple_fact_override",
+                confidence=0.90,
             )
 
         previous_route = self._last_route.get(user_key)
@@ -466,6 +587,9 @@ class AgentRouter:
                 user_key=user_key,
                 route=previous_route,
                 chat_ctx=chat_ctx,
+                reason="ambiguous_followup_inherit",
+                confidence=0.88,
+                last_route=previous_route,
             )
 
         if self._context_suggests_chat_followup(utterance_l, chat_ctx):
@@ -475,6 +599,8 @@ class AgentRouter:
                 user_key=user_key,
                 route="chat",
                 chat_ctx=chat_ctx,
+                reason="chat_followup_context",
+                confidence=0.84,
             )
 
         # 2. LLM handles everything else — research, system, media, ambiguous chat
@@ -513,7 +639,16 @@ Reply with ONLY one word: identity / media_play / research / system / scheduling
             ):
                 result = "research"
             if result == "research":
-                if await self._fact_classifier.is_simple_fact(utterance_l):
+                leadership_query = bool(
+                    re.search(
+                        r"\b(prime minister|chancellor|governor|mayor|president)\b",
+                        utterance_l,
+                    )
+                )
+                conversational_leadership_query = leadership_query and bool(
+                    re.search(r"\b(do you know|tell me about|know about)\b", utterance_l)
+                )
+                if (not conversational_leadership_query) and await self._fact_classifier.is_simple_fact(utterance_l):
                     result = "chat"
         except Exception:
             result = "chat"
@@ -525,4 +660,7 @@ Reply with ONLY one word: identity / media_play / research / system / scheduling
             user_key=user_key,
             route=result,
             chat_ctx=chat_ctx,
+            reason="llm_router",
+            confidence=0.70 if result != "chat" else 0.60,
+            active_subject=str(active_subject or "").strip(),
         )

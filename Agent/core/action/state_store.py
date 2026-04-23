@@ -20,6 +20,11 @@ class _SessionState:
     action_history: Deque[dict[str, Any]]
     last_action: Optional[Dict[str, Any]] = None
     last_action_expiry_reason: Optional[str] = None
+    active_entity: Optional[Dict[str, Any]] = None
+    active_entity_expiry_reason: Optional[str] = None
+    pending_scheduling_action: Optional[Dict[str, Any]] = None
+    pending_scheduling_expiry_reason: Optional[str] = None
+    last_completed_route: str = ""
     turn_index: int = 0
     last_touch: float = field(default_factory=time.time)
 
@@ -67,6 +72,8 @@ class ActionStateStore:
             state.recent_closed_apps.popleft()
 
         last_action_expired = self._is_last_action_expired_locked(state, now=now)
+        active_entity_expired = self._active_entity_status_locked(state, now=now) is not None
+        pending_scheduling_expired = self._pending_scheduling_status_locked(state, now=now) is not None
 
         if now - float(state.last_touch or now) > self.config.search_query_ttl_seconds and not (
             state.recent_opened_apps
@@ -74,7 +81,11 @@ class ActionStateStore:
             or state.recent_searches
             or state.action_history
             or (state.last_action is not None and not last_action_expired)
+            or (state.active_entity is not None and not active_entity_expired)
+            or (state.pending_scheduling_action is not None and not pending_scheduling_expired)
             or state.last_action_expiry_reason is not None
+            or state.active_entity_expiry_reason is not None
+            or state.pending_scheduling_expiry_reason is not None
         ):
             self._sessions.pop(session_key, None)
             self._locks.pop(session_key, None)
@@ -103,6 +114,52 @@ class ActionStateStore:
             or 0
         )
         return (state.turn_index - written_turn) > int(self.config.last_action_max_turns)
+
+    def _active_entity_status_locked(
+        self,
+        state: _SessionState,
+        *,
+        now: Optional[float] = None,
+    ) -> Optional[str]:
+        entity = state.active_entity
+        if entity is None or not isinstance(entity, dict):
+            return None
+
+        now_ts = float(now if now is not None else time.time())
+        written_at_ts = float(entity.get("written_at_ts") or 0.0)
+        if written_at_ts > 0 and (now_ts - written_at_ts) > float(self.config.active_entity_ttl_seconds):
+            return "expired_ttl"
+
+        written_turn = int(entity.get("written_at_turn") or 0)
+        if (state.turn_index - written_turn) > int(self.config.active_entity_max_turns):
+            return "expired_turns"
+
+        non_research_turns = int(entity.get("non_research_turns") or 0)
+        if non_research_turns > int(self.config.active_entity_max_non_research_turns):
+            return "drifted_context"
+
+        return None
+
+    def _pending_scheduling_status_locked(
+        self,
+        state: _SessionState,
+        *,
+        now: Optional[float] = None,
+    ) -> Optional[str]:
+        pending = state.pending_scheduling_action
+        if pending is None or not isinstance(pending, dict):
+            return None
+
+        now_ts = float(now if now is not None else time.time())
+        written_at_ts = float(pending.get("written_at_ts") or 0.0)
+        if written_at_ts > 0 and (now_ts - written_at_ts) > float(self.config.pending_scheduling_ttl_seconds):
+            return "expired_ttl"
+
+        written_turn = int(pending.get("written_at_turn") or 0)
+        if (state.turn_index - written_turn) > int(self.config.pending_scheduling_max_turns):
+            return "expired_turns"
+
+        return None
 
     def _resolve_last_action_locked(
         self,
@@ -140,6 +197,13 @@ class ActionStateStore:
     def increment_turn(self, session_id: str) -> int:
         session_key = self._session_key(session_id)
         state = self._state_for(session_key)
+        if isinstance(state.active_entity, dict):
+            if str(state.last_completed_route or "").strip().lower() == "research":
+                state.active_entity["non_research_turns"] = 0
+            elif state.last_completed_route:
+                state.active_entity["non_research_turns"] = int(
+                    state.active_entity.get("non_research_turns") or 0
+                ) + 1
         state.turn_index += 1
         state.last_touch = time.time()
         self._prune_expired_locked(session_key)
@@ -159,6 +223,9 @@ class ActionStateStore:
         payload.setdefault("written_at_turn", state.turn_index)
         state.last_action = payload
         state.last_action_expiry_reason = None
+        if str(payload.get("domain") or "").strip().lower() == "scheduling":
+            state.pending_scheduling_action = None
+            state.pending_scheduling_expiry_reason = None
         state.last_touch = now
         self._prune_expired_locked(session_key)
 
@@ -190,6 +257,122 @@ class ActionStateStore:
         state.last_action = None
         state.last_action_expiry_reason = None
         state.last_touch = time.time()
+        self._prune_expired_locked(session_key)
+
+    def set_pending_scheduling_action(self, session_id: str, action: Dict[str, Any]) -> None:
+        session_key = self._session_key(session_id)
+        state = self._state_for(session_key)
+        now = time.time()
+        payload = dict(action or {})
+        payload.setdefault("written_at_ts", now)
+        payload.setdefault("written_at_turn", state.turn_index)
+        state.pending_scheduling_action = payload
+        state.pending_scheduling_expiry_reason = None
+        state.last_touch = now
+        self._prune_expired_locked(session_key)
+
+    def get_pending_scheduling_action(self, session_id: str) -> Optional[Dict[str, Any]]:
+        pending, _reason = self.get_pending_scheduling_action_with_reason(session_id)
+        return pending
+
+    def get_pending_scheduling_action_with_reason(
+        self,
+        session_id: str,
+    ) -> tuple[Optional[Dict[str, Any]], str]:
+        session_key = self._session_key(session_id)
+        state = self._sessions.get(session_key)
+        if state is None:
+            return None, "no_state"
+        if state.pending_scheduling_action is None and state.pending_scheduling_expiry_reason:
+            reason = str(state.pending_scheduling_expiry_reason)
+            state.pending_scheduling_expiry_reason = None
+            self._prune_expired_locked(session_key)
+            return None, reason
+        reason = self._pending_scheduling_status_locked(state, now=time.time())
+        if reason:
+            state.pending_scheduling_action = None
+            state.pending_scheduling_expiry_reason = reason
+            self._prune_expired_locked(session_key)
+            return None, reason
+        pending = dict(state.pending_scheduling_action or {})
+        self._prune_expired_locked(session_key)
+        if not pending:
+            return None, "no_state"
+        return pending, "active"
+
+    def clear_pending_scheduling_action(self, session_id: str) -> None:
+        session_key = self._session_key(session_id)
+        state = self._sessions.get(session_key)
+        if state is None:
+            return
+        state.pending_scheduling_action = None
+        state.pending_scheduling_expiry_reason = None
+        state.last_touch = time.time()
+        self._prune_expired_locked(session_key)
+
+    def set_active_entity(self, session_id: str, entity: Dict[str, Any]) -> None:
+        session_key = self._session_key(session_id)
+        state = self._state_for(session_key)
+        now = time.time()
+        payload = dict(entity or {})
+        payload.setdefault("written_at_ts", now)
+        payload.setdefault("written_at_turn", state.turn_index)
+        payload.setdefault("non_research_turns", 0)
+        state.active_entity = payload
+        state.active_entity_expiry_reason = None
+        state.last_touch = now
+        self._prune_expired_locked(session_key)
+
+    def get_active_entity(self, session_id: str) -> Optional[Dict[str, Any]]:
+        entity, _reason = self.get_active_entity_with_reason(session_id)
+        return entity
+
+    def get_active_entity_with_reason(self, session_id: str) -> tuple[Optional[Dict[str, Any]], str]:
+        session_key = self._session_key(session_id)
+        state = self._sessions.get(session_key)
+        if state is None:
+            return None, "no_state"
+        if state.active_entity is None and state.active_entity_expiry_reason:
+            reason = str(state.active_entity_expiry_reason)
+            state.active_entity_expiry_reason = None
+            self._prune_expired_locked(session_key)
+            return None, reason
+        reason = self._active_entity_status_locked(state, now=time.time())
+        if reason:
+            state.active_entity = None
+            state.active_entity_expiry_reason = reason
+            self._prune_expired_locked(session_key)
+            return None, reason
+        entity = dict(state.active_entity or {})
+        self._prune_expired_locked(session_key)
+        if not entity:
+            return None, "no_state"
+        return entity, "active"
+
+    def clear_active_entity(self, session_id: str) -> None:
+        session_key = self._session_key(session_id)
+        state = self._sessions.get(session_key)
+        if state is None:
+            return
+        state.active_entity = None
+        state.active_entity_expiry_reason = None
+        state.last_touch = time.time()
+        self._prune_expired_locked(session_key)
+
+    def mark_route_turn_sync(self, session_id: str, route: str) -> None:
+        session_key = self._session_key(session_id)
+        state = self._state_for(session_key)
+        now = time.time()
+        state.last_touch = now
+        normalized_route = str(route or "").strip().lower()
+        state.last_completed_route = normalized_route
+        if isinstance(state.active_entity, dict):
+            if normalized_route == "research":
+                state.active_entity["non_research_turns"] = 0
+            else:
+                state.active_entity["non_research_turns"] = int(
+                    state.active_entity.get("non_research_turns") or 0
+                ) + 1
         self._prune_expired_locked(session_key)
 
     async def record_intent(self, session_id: str, intent: ActionIntent) -> None:
@@ -242,6 +425,14 @@ class ActionStateStore:
                     "ts": now,
                 }
             )
+            state.last_completed_route = str(route or "").strip().lower()
+            if isinstance(state.active_entity, dict):
+                if str(route or "").strip().lower() == "research":
+                    state.active_entity["non_research_turns"] = 0
+                else:
+                    state.active_entity["non_research_turns"] = int(
+                        state.active_entity.get("non_research_turns") or 0
+                    ) + 1
             self._prune_expired_locked(session_key)
 
     async def record_receipt(self, session_id: str, receipt: ToolReceipt) -> None:
@@ -314,6 +505,10 @@ class ActionStateStore:
         async with lock:
             state = self._state_for(session_key)
             self._prune_expired_locked(session_key)
+            if isinstance(state.active_entity, dict):
+                entity_value = str(state.active_entity.get("value") or "").strip()
+                if entity_value:
+                    return entity_value
             for entry in reversed(state.recent_searches):
                 subject = str(entry.get("subject") or entry.get("query") or "").strip()
                 if subject:
@@ -330,6 +525,10 @@ class ActionStateStore:
         state = self._sessions.get(session_key)
         if not state:
             return ""
+        if isinstance(state.active_entity, dict):
+            entity_value = str(state.active_entity.get("value") or "").strip()
+            if entity_value:
+                return entity_value
         for entry in reversed(state.recent_searches):
             subject = str(entry.get("subject") or entry.get("query") or "").strip()
             if subject:

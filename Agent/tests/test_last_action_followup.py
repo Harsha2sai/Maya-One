@@ -144,5 +144,5 @@ async def test_no_last_action_routes_normally() -> None:
         origin="chat",
     )
 
-    assert response.display_text
-    assert orchestrator._router.route.await_count == 1
+    assert "don't see any reminder set yet" in response.display_text.lower()
+    assert orchestrator._router.route.await_count == 0

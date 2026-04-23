@@ -636,6 +636,55 @@ class AgentOrchestrator(OrchestrationFlow, ChatResponseMixin):
         session_key = self._session_key_for_context(tool_context)
         return store.get_last_action(session_key)
 
+    def _set_pending_scheduling_action_for_context(
+        self,
+        *,
+        action: Dict[str, Any],
+        tool_context: Any = None,
+    ) -> bool:
+        if not self._action_state_enabled:
+            return False
+        store = self._action_state_store
+        if store is None:
+            return False
+        session_key = self._session_key_for_context(tool_context)
+        store.set_pending_scheduling_action(session_key, action)
+        return True
+
+    def _get_pending_scheduling_action_for_context(
+        self,
+        tool_context: Any = None,
+    ) -> Optional[Dict[str, Any]]:
+        if not self._action_state_enabled:
+            return None
+        store = self._action_state_store
+        if store is None:
+            return None
+        session_key = self._session_key_for_context(tool_context)
+        return store.get_pending_scheduling_action(session_key)
+
+    def _get_pending_scheduling_action_with_reason_for_context(
+        self,
+        tool_context: Any = None,
+    ) -> tuple[Optional[Dict[str, Any]], str]:
+        if not self._action_state_enabled:
+            return None, "no_state"
+        store = self._action_state_store
+        if store is None:
+            return None, "no_state"
+        session_key = self._session_key_for_context(tool_context)
+        return store.get_pending_scheduling_action_with_reason(session_key)
+
+    def _clear_pending_scheduling_action_for_context(self, tool_context: Any = None) -> bool:
+        if not self._action_state_enabled:
+            return False
+        store = self._action_state_store
+        if store is None:
+            return False
+        session_key = self._session_key_for_context(tool_context)
+        store.clear_pending_scheduling_action(session_key)
+        return True
+
     def _set_active_entity_for_context(
         self,
         entity: Dict[str, Any],

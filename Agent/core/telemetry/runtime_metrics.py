@@ -32,6 +32,10 @@ class RuntimeMetrics:
         "active_entity_followup_hit": 0,
         "pronoun_resolution_success_total": 0,
         "pronoun_resolution_ambiguous_total": 0,
+        "scheduling_clarification_requested": 0,
+        "scheduling_missing_task_followup_total": 0,
+        "pending_scheduling_resume_total": 0,
+        "pending_scheduling_expired_total": 0,
     }
     
     _log_file: Path = Path("verification/runtime_validation/runtime_metrics.json")
@@ -91,5 +95,9 @@ class RuntimeMetrics:
              "active_entity_followup_hit": 0,
              "pronoun_resolution_success_total": 0,
              "pronoun_resolution_ambiguous_total": 0,
+             "scheduling_clarification_requested": 0,
+             "scheduling_missing_task_followup_total": 0,
+             "pending_scheduling_resume_total": 0,
+             "pending_scheduling_expired_total": 0,
         }
         cls._flush()

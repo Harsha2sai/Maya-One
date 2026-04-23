@@ -122,8 +122,27 @@ class SchedulingAgentHandler(SpecializedAgent):
                 "action_type": "set_reminder",
                 "tool_name": "set_reminder",
                 "parameters": {"text": reminder_text},
+                "missing_slot": "time",
                 "clarification": "When would you like to be reminded?",
                 "message": "When would you like to be reminded?",
+            }
+
+        reminder_missing_task = re.search(
+            r"(?:set (?:a )?reminder(?:\s+(?:for|at|on))|remind me(?:\s+(?:for|at|on)))\s+"
+            r"(?P<time>(?:in\s+\d+\s+\w+|tomorrow(?:\s+at\s+.+)?|today(?:\s+at\s+.+)?|at\s+.+|on\s+.+))[\.\!\?]?$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if reminder_missing_task:
+            time_text = reminder_missing_task.group("time").strip().rstrip(".!?")
+            return {
+                "status": "needs_followup",
+                "action_type": "set_reminder",
+                "tool_name": "set_reminder",
+                "parameters": {"time": time_text},
+                "missing_slot": "task",
+                "clarification": "What should I remind you about?",
+                "message": "What should I remind you about?",
             }
 
         alarm_match = re.search(

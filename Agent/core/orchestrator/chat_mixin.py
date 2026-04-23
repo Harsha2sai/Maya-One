@@ -15,6 +15,7 @@ from core.observability.trace_context import current_trace_id
 from core.response.agent_response import AgentResponse, ToolInvocation
 from core.response.response_formatter import ResponseFormatter
 from core.security.input_guard import InputGuard
+from core.telemetry.runtime_metrics import RuntimeMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -268,6 +269,29 @@ class ChatResponseMixin:
         if followup_response is not None:
             logger.info("last_action_followup_interceptor_hit origin=%s", origin)
             return followup_response
+
+        pending_action, pending_reason = self._get_pending_scheduling_action_with_reason_for_context(
+            tool_context
+        )
+        if pending_action is None and pending_reason in {"expired_ttl", "expired_turns"}:
+            RuntimeMetrics.increment("pending_scheduling_expired_total")
+        if pending_action and self._is_pending_scheduling_task_followup(message):
+            pending_data = pending_action.get("data") if isinstance(pending_action.get("data"), dict) else {}
+            pending_time = str(pending_data.get("time") or "").strip()
+            if pending_time:
+                resumed_message = f"set a reminder to {str(message or '').strip()} {pending_time}"
+                logger.info(
+                    "pending_scheduling_resume_intercept origin=%s task=%s time=%s",
+                    origin,
+                    str(message or "")[:80],
+                    pending_time,
+                )
+                RuntimeMetrics.increment("pending_scheduling_resume_total")
+                return await self._handle_scheduling_route(
+                    message=resumed_message,
+                    user_id=user_id,
+                    tool_context=tool_context,
+                )
 
         routing_text = self._extract_user_message_segment(message) or message
         chat_ctx_messages = self._chat_ctx_messages(getattr(self.agent, "chat_ctx", None))
@@ -990,3 +1014,24 @@ class ChatResponseMixin:
 
         response = await self._build_agent_response(role_llm, full_response, mode="normal")
         return self._tag_response_with_routing_type(response, "informational")
+
+    @staticmethod
+    def _is_pending_scheduling_task_followup(message: str) -> bool:
+        text = re.sub(r"\s+", " ", str(message or "")).strip().lower()
+        if not text:
+            return False
+        if "?" in text:
+            return False
+        # Guardrail: do not steal conversational follow-ups (research/profile/identity)
+        # while pending scheduling clarification is active.
+        if re.search(r"\b(what|when|who|why|how|which|tell|about|him|her|them|his|hers|their)\b", text):
+            return False
+        if re.search(
+            r"\b(remind me|set (?:a )?reminder|set (?:an )?alarm|list reminders|show reminders|delete reminder|cancel|never mind|what reminder|when is it)\b",
+            text,
+        ):
+            return False
+        if re.search(r"\b(time|date|weather|who are you|what is your name|search|open)\b", text):
+            return False
+        words = re.findall(r"\b[\w'-]+\b", text)
+        return 1 <= len(words) <= 8

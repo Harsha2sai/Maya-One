@@ -64,6 +64,16 @@ async def test_scheduling_handler_missing_time_returns_needs_followup(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_scheduling_handler_missing_task_returns_needs_followup():
+    handler = SchedulingAgentHandler()
+    result = await handler.handle(_request(user_text="set a reminder for tomorrow"))
+    assert result.status == "needs_followup"
+    assert result.structured_payload["missing_slot"] == "task"
+    assert result.structured_payload["parameters"]["time"] == "tomorrow"
+    assert result.structured_payload["clarification"] == "What should I remind you about?"
+
+
+@pytest.mark.asyncio
 async def test_scheduling_handler_set_alarm_returns_correct_parameters():
     handler = SchedulingAgentHandler()
     result = await handler.handle(_request(user_text="set an alarm for 7 am", target_agent="scheduling"))
