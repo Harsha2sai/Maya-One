@@ -412,33 +412,49 @@ class InteractionManager:
 
     @classmethod
     def _may_be_last_action_followup(cls, text: str) -> bool:
-        return cls._is_followup_intent(text) or bool(
+        normalized = cls._normalize_followup_text(text)
+        return cls._is_followup_intent(normalized) or bool(
             re.search(
-                r"\b(reminder|what did you set|when is it|what(?:'s| is) it for|change it|edit it|modify it)\b",
-                text,
+                r"\b(reminder|what did (?:you|i) set|what was that reminder|reminder again|when is it|what(?:'s| is) it for|change it|edit it|modify it)\b",
+                normalized,
             )
         )
 
     @staticmethod
     def _is_followup_intent(text: str) -> bool:
-        word_count = len(re.findall(r"\b[\w']+\b", text))
+        normalized = InteractionManager._normalize_followup_text(text)
+        word_count = len(re.findall(r"\b[\w']+\b", normalized))
         if word_count > 8:
             return False
         explicit_patterns = (
             r"\bwhat did you set\b",
+            r"\bwhat did i set\b",
             r"\bwhen is it\b",
             r"\bwhat(?:'s| is) it for\b",
             r"\btell me about (?:that|the) reminder\b",
             r"\b(change|edit|modify|reschedule)\s+(?:it|that|the reminder)\b",
             r"\b(which|what)\s+reminder\b",
+            r"\bwhat was that reminder\b",
+            r"\breminder again\b",
             r"\bwhat\s+was\s+that\b",
         )
-        if any(re.search(pattern, text) for pattern in explicit_patterns):
+        if any(re.search(pattern, normalized) for pattern in explicit_patterns):
             return True
 
-        has_question_intent = bool(re.search(r"\b(what|when|which|did you|tell me|change|edit|modify)\b", text))
-        has_action_reference = bool(re.search(r"\b(reminder|it|that|set|for|time)\b", text))
+        has_question_intent = bool(
+            re.search(r"\b(what|when|which|did you|did i|tell me|change|edit|modify|again)\b", normalized)
+        )
+        has_action_reference = bool(re.search(r"\b(reminder|it|that|set|for|time)\b", normalized))
         return has_question_intent and has_action_reference
+
+    @staticmethod
+    def _normalize_followup_text(text: str) -> str:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return ""
+        lowered = re.sub(r"\b(?:uh|um|hmm|huh|please|again|just|yeah|ok|okay)\b", " ", lowered)
+        lowered = re.sub(r"\s+", " ", lowered).strip()
+        return lowered
 
     @staticmethod
     def _classify_followup_intent(text: str) -> str:
@@ -504,7 +520,13 @@ class InteractionManager:
         )
 
     def _build_no_last_action_response(self, *, query: str) -> Any:
-        reminder_followup = bool(re.search(r"\b(reminder|did i set|did you set|when is it)\b", str(query or "")))
+        normalized = self._normalize_followup_text(query)
+        reminder_followup = bool(
+            re.search(
+                r"\b(reminder|did i set|did you set|what did i set|what was that reminder|reminder again|when is it)\b",
+                normalized,
+            )
+        )
         if reminder_followup:
             response_text = "I don't see any reminder set yet. Tell me what and when, and I'll set it."
         else:

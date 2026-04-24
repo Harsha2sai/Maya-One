@@ -27,6 +27,18 @@ class SchedulingAgentHandler(SpecializedAgent):
         "list_calendar_events",
         "delete_calendar_event",
     }
+    _REMINDER_FOLLOWUP_QUERY_PATTERNS = (
+        r"\bwhat reminder did i set\b",
+        r"\bwhen is my reminder\b",
+        r"\bwhat did i set\b",
+        r"\bwhat did i say\b",
+        r"\bwhich reminder\b",
+        r"\bwhen is it\b",
+        r"\bwhat(?:'s| is)\s+it\s+for\b",
+        r"\bwhat was that reminder\b",
+        r"\breminder again\b",
+        r"\breminder\b.+\bwhat did i set\b",
+    )
 
     def __init__(self) -> None:
         super().__init__("scheduling")
@@ -94,9 +106,31 @@ class SchedulingAgentHandler(SpecializedAgent):
     def _parse_request(self, message: str) -> dict[str, Any]:
         text = message.strip()
         lowered = text.lower()
+        normalized = self._normalize_followup_text(lowered)
+        time_fragment = (
+            r"(?:in\s+\d+\s+\w+"
+            r"|tomorrow(?:\s+at\s+.+)?"
+            r"|today(?:\s+at\s+.+)?"
+            r"|at\s+.+"
+            r"|on\s+.+"
+            r"|\d{1,2}(?::\d{2})?\s*(?:am|pm)"
+            r"|(?:[01]?\d|2[0-3]):[0-5]\d"
+            r"|tonight"
+            r"|this\s+evening"
+            r"|this\s+afternoon)"
+        )
+
+        if self._is_reminder_followup_query(normalized):
+            return {
+                "status": "completed",
+                "action_type": "list_reminders",
+                "tool_name": "list_reminders",
+                "parameters": {},
+                "confirmation_text": "",
+            }
 
         reminder_match = re.search(
-            r"(?:set (?:a )?reminder to|remind me to)\s+(?P<text>.+?)\s+(?P<time>(?:in\s+\d+\s+\w+|tomorrow(?:\s+at\s+.+)?|today(?:\s+at\s+.+)?|at\s+.+|on\s+.+))[\.\!\?]?$",
+            rf"(?:set (?:a )?reminder to|remind me to)\s+(?P<text>.+?)\s+(?P<time>{time_fragment})[\.\!\?]?$",
             text,
             flags=re.IGNORECASE,
         )
@@ -129,7 +163,7 @@ class SchedulingAgentHandler(SpecializedAgent):
 
         reminder_missing_task = re.search(
             r"(?:set (?:a )?reminder(?:\s+(?:for|at|on))|remind me(?:\s+(?:for|at|on)))\s+"
-            r"(?P<time>(?:in\s+\d+\s+\w+|tomorrow(?:\s+at\s+.+)?|today(?:\s+at\s+.+)?|at\s+.+|on\s+.+))[\.\!\?]?$",
+            rf"(?P<time>{time_fragment})[\.\!\?]?$",
             text,
             flags=re.IGNORECASE,
         )
@@ -317,6 +351,18 @@ class SchedulingAgentHandler(SpecializedAgent):
             }
 
         return {"status": "rejected"}
+
+    @staticmethod
+    def _normalize_followup_text(text: str) -> str:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return ""
+        lowered = re.sub(r"\b(?:uh|um|hmm|huh|please|again|just|yeah|ok|okay)\b", " ", lowered)
+        lowered = re.sub(r"\s+", " ", lowered).strip()
+        return lowered
+
+    def _is_reminder_followup_query(self, text: str) -> bool:
+        return any(re.search(pattern, text) for pattern in self._REMINDER_FOLLOWUP_QUERY_PATTERNS)
 
     async def _enhance_with_memory_context(self, clarification_msg: str, reminder_text: str, request: AgentHandoffRequest) -> str:
         """

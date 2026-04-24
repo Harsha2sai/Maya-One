@@ -19,6 +19,7 @@ class ArbitrationDecision:
     confidence: float
     reason: str
     scores: Dict[str, float] = field(default_factory=dict)
+    meta: Dict[str, Any] = field(default_factory=dict)
     clarify_reason: str = ""
     clarify_message: str = ""
     explicit_intent: str = ""
@@ -41,6 +42,11 @@ class StateArbiter:
         r"\bwho\s+are\s+you\b",
         r"\btell\s+me\s+about\s+yourself\b",
     )
+    _PROFILE_SELF_STATEMENT_PATTERNS = (
+        r"\bmy\s+name\s+is\s+[a-z][\w'-]*(?:\s+[a-z][\w'-]*){0,3}\b",
+        r"\bi\s+am\s+[a-z][\w'-]*(?:\s+[a-z][\w'-]*){0,3}\b",
+        r"\bcall\s+me\s+[a-z][\w'-]*(?:\s+[a-z][\w'-]*){0,3}\b",
+    )
     _SYSTEM_PATTERNS = (
         r"\bopen\s+(?:the\s+)?(?:app|application|browser|folder|file|settings|terminal)\b",
         r"\bclose\s+(?:the\s+)?(?:app|application|window|browser)\b",
@@ -55,8 +61,6 @@ class StateArbiter:
         r"\blist reminders\b",
         r"\bshow reminders\b",
         r"\bdelete reminder\b",
-        r"\bwhat reminder did\b",
-        r"\bwhen is (?:my|the) reminder\b",
     )
     _REMINDER_FOLLOWUP_HINTS = (
         r"\breminder\b",
@@ -65,6 +69,9 @@ class StateArbiter:
         r"\bwhen is it\b",
         r"\bwhat(?:'s| is)\s+it\s+for\b",
         r"\bwhich reminder\b",
+        r"\bwhat reminder did i set\b",
+        r"\bwhen is my reminder\b",
+        r"\bwhat did i set\b",
     )
     _FOLLOWUP_HINTS = (
         r"\btell me more\b",
@@ -75,12 +82,81 @@ class StateArbiter:
         r"\babout them\b",
         r"\babout it\b",
     )
+    _NON_FOLLOWUP_COMMAND_PATTERNS = (
+        r"\bopen\b",
+        r"\bsearch\b",
+        r"\bplay\b",
+        r"\bclick\b",
+        r"\btype\b",
+        r"\blaunch\b",
+        r"\bstart\b",
+    )
+    _RESEARCH_ENTRY_PATTERNS = (
+        r"\btell me about\s+.+",
+        r"\bwho is\s+.+",
+        r"\bwhat is\s+.+",
+        r"\bdo you know about\s+.+",
+    )
+    _PROGRAMMING_SYNTAX_PATTERNS = (
+        r"\bdef\s+\w+",
+        r"\bclass\s+\w+",
+        r"\bimport\s+\w+",
+        r"\bfn\s+\w+",
+        r"\bfunc\s+\w+",
+        r"\blet\s+\w+",
+        r"\bconst\s+\w+",
+        r"\bvar\s+\w+",
+    )
+    _PROGRAMMING_CONTEXT_PATTERNS = (
+        r"\bin\s+python\b",
+        r"\bin\s+javascript\b",
+        r"\bin\s+java\b",
+        r"\bfunction\b",
+        r"\bclass\b",
+        r"\bvariable\b",
+        r"\bcode\b",
+        r"\bsyntax\b",
+    )
+    _INTERROGATIVE_MARKERS = (
+        r"\?",
+        r"\bwhat\b",
+        r"\bwho\b",
+        r"\bwhen\b",
+        r"\bwhy\b",
+        r"\bhow\b",
+        r"\bdo you\b",
+        r"\btell me\b",
+    )
+    _SCHEDULING_QUERY_PATTERNS = (
+        r"\bwhat reminder did i set\b",
+        r"\bwhen is my reminder\b",
+        r"\bwhat did i set\b",
+        r"\bwhat did i say\b",
+        r"\bwhich reminder\b",
+        r"\bwhen is it\b",
+        r"\bwhat(?:'s| is)\s+it\s+for\b",
+        r"\bwhat was that reminder\b",
+        r"\breminder again\b",
+        r"\breminder\b.+\bwhat did i set\b",
+    )
+    _NOISY_FILLERS_PATTERN = re.compile(
+        r"\b(?:uh|um|hmm|huh|please|again|just|yeah|ok|okay)\b",
+        re.IGNORECASE,
+    )
+    _MULTI_ENTITY_PATTERNS = (
+        r"\b.+\s+and\s+.+\b",
+        r"\b.+\s+or\s+.+\b",
+        r"\b.+\s+vs\.?\s+.+\b",
+        r"\bbetween\s+.+\s+and\s+.+\b",
+        r"\bcompare\s+.+\s+and\s+.+\b",
+        r"\bboth\s+.+\s+and\s+.+\b",
+    )
 
     def __init__(self, *, owner: Any):
         self._owner = owner
         self._shadow = self._truthy_env("STATE_ARBITER_SHADOW", True)
         self._enforce = self._truthy_env("STATE_ARBITER_ENFORCE", False)
-        self._ambiguity_delta = self._float_env("STATE_ARBITER_AMBIGUITY_DELTA", 0.15)
+        self._ambiguity_delta = self._float_env("STATE_ARBITER_AMBIGUITY_DELTA", 0.10)
         self._min_confidence = self._float_env("STATE_ARBITER_MIN_CONFIDENCE", 0.60)
         self._clarify_fallback_conf = self._float_env("STATE_ARBITER_CLARIFY_FALLBACK_CONF", 0.70)
         self._clarify_memory_turns = max(1, self._int_env("STATE_ARBITER_CLARIFY_MEMORY_TURNS", 2))
@@ -127,6 +203,65 @@ class StateArbiter:
             self._clear_clarify_context(session_key)
             return decision
 
+        # Deterministic precedence order:
+        # 1. programming syntax guard
+        # 2. reminder follow-up with valid action state
+        # 3. declarative self-profile updates
+        # 4. explicit research entry
+        deterministic = self._check_programming_context_determinism(text=lowered)
+        if deterministic:
+            self._clear_clarify_context(session_key)
+            self._log_decision(
+                decision=deterministic,
+                session_key=session_key,
+                runner_up="",
+                margin=deterministic.confidence,
+            )
+            RuntimeMetrics.increment("state_arbiter_decision_total")
+            return deterministic
+
+        deterministic = self._check_reminder_followup_determinism(
+            text=lowered,
+            state=state,
+        )
+        if deterministic:
+            self._clear_clarify_context(session_key)
+            self._log_decision(
+                decision=deterministic,
+                session_key=session_key,
+                runner_up="",
+                margin=deterministic.confidence,
+            )
+            RuntimeMetrics.increment("state_arbiter_decision_total")
+            return deterministic
+
+        deterministic = self._check_profile_statement_determinism(text=lowered)
+        if deterministic:
+            self._clear_clarify_context(session_key)
+            self._log_decision(
+                decision=deterministic,
+                session_key=session_key,
+                runner_up="",
+                margin=deterministic.confidence,
+            )
+            RuntimeMetrics.increment("state_arbiter_decision_total")
+            return deterministic
+
+        deterministic = self._check_research_entry_determinism(
+            text=lowered,
+            state=state,
+        )
+        if deterministic:
+            self._clear_clarify_context(session_key)
+            self._log_decision(
+                decision=deterministic,
+                session_key=session_key,
+                runner_up="general_chat",
+                margin=0.50,
+            )
+            RuntimeMetrics.increment("state_arbiter_decision_total")
+            return deterministic
+
         clarify_ctx = self._get_clarify_context(session_key=session_key, turn_index=turn_index)
 
         query_type = "general"
@@ -158,14 +293,43 @@ class StateArbiter:
             winner_owner, winner_score = winner
             second_owner, second_score = second
 
+        margin = round(float(winner_score) - float(second_score), 4)
         ambiguous = self._is_ambiguous_pair(
             winner_owner=winner_owner,
             winner_score=winner_score,
             second_owner=second_owner,
             second_score=second_score,
         )
+        cross_domain_pronoun_conflict = self._is_cross_domain_pronoun_conflict(
+            text=lowered,
+            state=state,
+        )
+        multi_entity_pronoun_conflict = self._is_multi_entity_pronoun_conflict(
+            text=lowered,
+            state=state,
+        )
+        both_strong = winner_score >= 0.45 and second_score >= 0.45
+        should_clarify = ambiguous and both_strong
+        should_clarify = should_clarify or cross_domain_pronoun_conflict
+        should_clarify = should_clarify or multi_entity_pronoun_conflict
+        should_clarify = should_clarify or self._should_force_pronoun_clarify(
+            text=lowered,
+            state=state,
+            winner_owner=winner_owner,
+        )
 
-        if ambiguous or winner_score < self._min_confidence:
+        if should_clarify:
+            deterministic_signal = self._detect_deterministic_false_clarify_signal(
+                text=lowered,
+                state=state,
+            )
+            if deterministic_signal:
+                logger.warning(
+                    "false_clarify_deterministic signal=%s session=%s text=%s",
+                    deterministic_signal,
+                    session_key,
+                    lowered[:160],
+                )
             decision = self._build_clarify_or_fallback(
                 session_key=session_key,
                 turn_index=turn_index,
@@ -176,18 +340,20 @@ class StateArbiter:
                 query_type=query_type,
                 scores=scores,
                 ambiguous=ambiguous,
+                forced_reason=(
+                    "cross_domain_pronoun_conflict"
+                    if cross_domain_pronoun_conflict
+                    else ("multi_entity_pronoun_conflict" if multi_entity_pronoun_conflict else "")
+                ),
             )
             RuntimeMetrics.increment("state_arbiter_decision_total")
             RuntimeMetrics.increment("state_arbiter_ambiguity_total")
             RuntimeMetrics.increment("state_arbiter_clarify_total")
-            logger.info(
-                "state_arbiter_decision owner=%s confidence=%.2f reason=%s clarify_reason=%s scores=%s session=%s",
-                decision.owner,
-                decision.confidence,
-                decision.reason,
-                decision.clarify_reason,
-                self._short_scores(scores),
-                session_key,
+            self._log_decision(
+                decision=decision,
+                session_key=session_key,
+                runner_up=second_owner,
+                margin=margin,
             )
             return decision
 
@@ -200,13 +366,11 @@ class StateArbiter:
             query_type=query_type,
         )
         RuntimeMetrics.increment("state_arbiter_decision_total")
-        logger.info(
-            "state_arbiter_decision owner=%s confidence=%.2f reason=%s scores=%s session=%s",
-            decision.owner,
-            decision.confidence,
-            decision.reason,
-            self._short_scores(scores),
-            session_key,
+        self._log_decision(
+            decision=decision,
+            session_key=session_key,
+            runner_up=second_owner,
+            margin=margin,
         )
         return decision
 
@@ -221,7 +385,7 @@ class StateArbiter:
             return
         legacy = str(legacy_owner or "").strip().lower()
         final = str(final_handler or legacy_owner or "").strip().lower()
-        chosen = str(decision.owner or "").strip().lower()
+        chosen = self._normalize_owner_for_outcome(decision)
         if not legacy:
             return
         if self._shadow and chosen and chosen != legacy:
@@ -243,12 +407,20 @@ class StateArbiter:
                 decision.reason,
             )
 
+    def _normalize_owner_for_outcome(self, decision: ArbitrationDecision) -> str:
+        chosen = str(decision.owner or "").strip().lower()
+        if chosen == "entity_followup" and bool((decision.meta or {}).get("is_research_entry")):
+            return "research"
+        return chosen
+
     def _clean_state(self, *, tool_context: Any, session_key: str) -> Dict[str, Any]:
         state: Dict[str, Any] = {
             "active_entity": None,
+            "active_entity_status": "",
             "last_action": None,
             "pending_scheduling_action": None,
             "recent_research": False,
+            "recent_multi_entity": False,
         }
         store = getattr(self._owner, "_action_state_store", None)
         if store is not None:
@@ -260,6 +432,7 @@ class StateArbiter:
                 if active_status is None and isinstance(session_state.active_entity, dict):
                     state["active_entity"] = dict(session_state.active_entity)
                 elif active_status in {"expired_ttl", "expired_turns", "drifted_context"}:
+                    state["active_entity_status"] = active_status
                     logger.info(
                         "state_arbiter_state_sanitized state=active_entity reason=%s session=%s",
                         active_status,
@@ -308,6 +481,12 @@ class StateArbiter:
                 continue
             if str(item.get("route") or "").strip().lower() == "research":
                 state["recent_research"] = True
+            if (
+                str(item.get("role") or "").strip().lower() == "user"
+                and self._has_multi_entity_shape(str(item.get("content") or ""))
+            ):
+                state["recent_multi_entity"] = True
+            if state["recent_research"] and state["recent_multi_entity"]:
                 break
         return state
 
@@ -318,6 +497,8 @@ class StateArbiter:
             if re.search(r"\b(python|javascript|java|function|class|variable|code)\b", lowered):
                 return ""
             return "profile_self_reference"
+        if any(re.search(pattern, lowered) for pattern in self._SCHEDULING_QUERY_PATTERNS):
+            return ""
         if any(re.search(pattern, lowered) for pattern in self._SCHEDULING_PATTERNS):
             return "scheduling_command"
         if any(re.search(pattern, lowered) for pattern in self._SYSTEM_PATTERNS):
@@ -344,6 +525,79 @@ class StateArbiter:
             scores={owner: confidence},
         )
 
+    def _check_programming_context_determinism(self, *, text: str) -> Optional[ArbitrationDecision]:
+        if any(re.search(pattern, text) for pattern in self._PROGRAMMING_SYNTAX_PATTERNS):
+            return ArbitrationDecision(
+                owner="general_chat",
+                confidence=0.92,
+                reason="programming_syntax_guard",
+                scores={"general_chat": 0.92},
+            )
+        return None
+
+    def _check_reminder_followup_determinism(
+        self,
+        *,
+        text: str,
+        state: Dict[str, Any],
+    ) -> Optional[ArbitrationDecision]:
+        has_last_action = isinstance(state.get("last_action"), dict) and str(
+            (state.get("last_action") or {}).get("domain") or ""
+        ).strip().lower() == "scheduling"
+        has_pending_scheduling = isinstance(state.get("pending_scheduling_action"), dict)
+        if not (has_last_action or has_pending_scheduling):
+            return None
+        if self._looks_like_new_scheduling_command(text):
+            return None
+        if not self._is_reminder_followup_query(text):
+            return None
+        return ArbitrationDecision(
+            owner="action_followup",
+            confidence=0.95,
+            reason="context_dominant_action_followup",
+            scores={"action_followup": 0.95},
+        )
+
+    def _check_profile_statement_determinism(self, *, text: str) -> Optional[ArbitrationDecision]:
+        if self._has_programming_context(text):
+            return None
+        if any(re.search(pattern, text) for pattern in self._INTERROGATIVE_MARKERS):
+            return None
+        if not any(re.search(pattern, text) for pattern in self._PROFILE_SELF_STATEMENT_PATTERNS):
+            return None
+        if len(re.findall(r"\b[\w'-]+\b", text)) > 12:
+            return None
+        return ArbitrationDecision(
+            owner="general_chat",
+            confidence=0.90,
+            reason="declarative_profile_update",
+            scores={"general_chat": 0.90},
+        )
+
+    def _check_research_entry_determinism(
+        self,
+        *,
+        text: str,
+        state: Dict[str, Any],
+    ) -> Optional[ArbitrationDecision]:
+        if self._has_programming_context(text):
+            return None
+        if self._is_profile_self_reference(text):
+            return None
+        if self._check_profile_statement_determinism(text=text):
+            return None
+        if self._has_multi_entity_shape(text):
+            return None
+        if not any(re.search(pattern, text) for pattern in self._RESEARCH_ENTRY_PATTERNS):
+            return None
+        return ArbitrationDecision(
+            owner="entity_followup",
+            confidence=0.85,
+            reason="explicit_research_entry",
+            scores={"entity_followup": 0.85, "general_chat": 0.35},
+            meta={"is_research_entry": True},
+        )
+
     def _score_candidates(
         self,
         *,
@@ -352,6 +606,7 @@ class StateArbiter:
         query_type: str,
         clarify_ctx: Optional[Dict[str, Any]],
     ) -> Dict[str, float]:
+        normalized_text = self._normalize_followup_text(text)
         scores: Dict[str, float] = {
             "entity_followup": 0.0,
             "action_followup": 0.0,
@@ -362,7 +617,7 @@ class StateArbiter:
 
         pronoun = bool(getattr(self._owner, "_pronoun_rewriter", None) and self._owner._pronoun_rewriter.has_pronoun(text))
         followup_hint = any(re.search(pattern, text) for pattern in self._FOLLOWUP_HINTS)
-        reminder_hint = any(re.search(pattern, text) for pattern in self._REMINDER_FOLLOWUP_HINTS)
+        reminder_hint = any(re.search(pattern, normalized_text) for pattern in self._REMINDER_FOLLOWUP_HINTS)
         self_ref = self._is_profile_self_reference(text)
         short_query = len(re.findall(r"\b[\w'-]+\b", text)) <= 10
 
@@ -374,15 +629,29 @@ class StateArbiter:
         ).strip().lower() == "scheduling"
         has_pending_scheduling = isinstance(state.get("pending_scheduling_action"), dict)
         recent_research = bool(state.get("recent_research"))
+        active_entity_status = str(state.get("active_entity_status") or "").strip().lower()
+        recent_multi_entity = bool(state.get("recent_multi_entity"))
+        programming_context = self._has_programming_context(text)
+        research_entry = any(re.search(pattern, text) for pattern in self._RESEARCH_ENTRY_PATTERNS)
+        explicit_non_followup_command = self._is_explicit_non_followup_command(
+            text=text,
+            pronoun=pronoun,
+            followup_hint=followup_hint,
+        )
 
         if pronoun:
             scores["entity_followup"] += 0.4
         if has_active_entity:
             scores["entity_followup"] += 0.3
-        if recent_research:
+        if recent_research and not research_entry:
             scores["entity_followup"] += 0.2
         if followup_hint:
             scores["entity_followup"] += 0.1
+        if research_entry:
+            scores["entity_followup"] += 0.75
+
+        if explicit_non_followup_command:
+            scores["entity_followup"] = 0.0
 
         if reminder_hint:
             scores["action_followup"] += 0.5
@@ -410,7 +679,12 @@ class StateArbiter:
         if not any(scores[key] >= 0.6 for key in ("entity_followup", "action_followup", "profile_recall")):
             scores["general_chat"] += 0.15
 
-        if clarify_ctx:
+        if clarify_ctx and self._should_apply_clarify_bias(
+            text=text,
+            pronoun=pronoun,
+            reminder_hint=reminder_hint,
+            self_ref=self_ref,
+        ):
             # One-turn disambiguation bias.
             if reminder_hint:
                 scores["action_followup"] += 0.25
@@ -418,6 +692,19 @@ class StateArbiter:
                 scores["profile_recall"] += 0.25
             if pronoun:
                 scores["entity_followup"] += 0.20
+
+        if recent_multi_entity and pronoun:
+            scores["entity_followup"] = min(scores.get("entity_followup", 0.0), 0.35)
+            scores["general_chat"] = max(scores.get("general_chat", 0.0), 0.50)
+
+        if active_entity_status in {"drifted_context", "expired_ttl", "expired_turns"}:
+            scores["entity_followup"] = min(scores.get("entity_followup", 0.0), 0.40)
+
+        if programming_context:
+            scores["entity_followup"] = min(scores.get("entity_followup", 0.0), 0.15)
+            scores["action_followup"] = min(scores.get("action_followup", 0.0), 0.15)
+            scores["profile_recall"] = min(scores.get("profile_recall", 0.0), 0.15)
+            scores["general_chat"] = max(scores.get("general_chat", 0.0), 0.80)
 
         for key, value in list(scores.items()):
             scores[key] = max(0.0, min(1.0, round(float(value), 4)))
@@ -461,6 +748,35 @@ class StateArbiter:
             return False
         return True
 
+    def _should_force_pronoun_clarify(
+        self,
+        *,
+        text: str,
+        state: Dict[str, Any],
+        winner_owner: str,
+    ) -> bool:
+        if not getattr(self._owner, "_pronoun_rewriter", None):
+            return False
+        if not self._owner._pronoun_rewriter.has_pronoun(text):
+            return False
+        if re.search(r"\b(?:his|her|their)\s+\w+", text):
+            return False
+        if isinstance(state.get("active_entity"), dict):
+            return False
+        if isinstance(state.get("last_action"), dict):
+            return False
+        if isinstance(state.get("pending_scheduling_action"), dict):
+            return False
+        if self._is_profile_self_reference(text):
+            return False
+        if self._is_reminder_followup_query(text):
+            return False
+        if self._check_research_entry_determinism(text=text, state=state):
+            return False
+        if winner_owner not in {"general_chat", "general_memory", "entity_followup"}:
+            return False
+        return True
+
     def _build_clarify_or_fallback(
         self,
         *,
@@ -473,13 +789,19 @@ class StateArbiter:
         query_type: str,
         scores: Dict[str, float],
         ambiguous: bool,
+        forced_reason: str = "",
     ) -> ArbitrationDecision:
-        clarify_reason = "low_confidence"
-        if ambiguous:
-            clarify_reason = self._clarify_reason_from_owners(winner_owner, second_owner)
+        clarify_reason = str(forced_reason or "").strip()
+        if not clarify_reason:
+            clarify_reason = (
+                self._clarify_reason_from_owners(winner_owner, second_owner)
+                if ambiguous
+                else "low_confidence"
+            )
 
         existing = self._get_clarify_context(session_key=session_key, turn_index=turn_index)
-        if existing and int(existing.get("attempt_count") or 0) >= self._clarify_max_generic_attempts:
+        prior_attempts = int((existing or {}).get("attempt_count") or 0)
+        if prior_attempts >= self._clarify_max_generic_attempts + 1:
             if winner_score >= self._clarify_fallback_conf:
                 self._clear_clarify_context(session_key)
                 return ArbitrationDecision(
@@ -489,6 +811,37 @@ class StateArbiter:
                     scores=scores,
                     query_type=query_type,
                 )
+            self._set_clarify_context(
+                session_key=session_key,
+                payload={
+                    "reason": clarify_reason,
+                    "candidate_owners": [winner_owner, second_owner],
+                    "best_owner": winner_owner,
+                    "attempt_count": prior_attempts + 1,
+                    "written_turn": turn_index,
+                },
+            )
+            return ArbitrationDecision(
+                owner="clarify",
+                confidence=max(winner_score, second_score),
+                reason="clarify_loop_hard_prompt",
+                scores=scores,
+                query_type=query_type,
+                clarify_reason=clarify_reason,
+                clarify_message=self._hard_clarify_message(winner_owner, second_owner),
+            )
+
+        if prior_attempts >= self._clarify_max_generic_attempts:
+            self._set_clarify_context(
+                session_key=session_key,
+                payload={
+                    "reason": clarify_reason,
+                    "candidate_owners": [winner_owner, second_owner],
+                    "best_owner": winner_owner,
+                    "attempt_count": prior_attempts + 1,
+                    "written_turn": turn_index,
+                },
+            )
             return ArbitrationDecision(
                 owner="clarify",
                 confidence=max(winner_score, second_score),
@@ -505,7 +858,7 @@ class StateArbiter:
                 "reason": clarify_reason,
                 "candidate_owners": [winner_owner, second_owner],
                 "best_owner": winner_owner,
-                "attempt_count": 1 if not existing else int(existing.get("attempt_count") or 0) + 1,
+                "attempt_count": 1 if not existing else prior_attempts + 1,
                 "written_turn": turn_index,
             },
         )
@@ -546,6 +899,8 @@ class StateArbiter:
     def _clarify_message_for_reason(reason: str) -> str:
         mapping = {
             "ambiguous_entity_action": "Do you mean your reminder, or the person we were discussing?",
+            "cross_domain_pronoun_conflict": "I'm not sure if you mean your reminder or the person we were discussing. Can you clarify?",
+            "multi_entity_pronoun_conflict": "I'm not sure which person or topic you mean. Can you clarify?",
             "ambiguous_profile_entity": "Are you asking about your profile info or the research topic?",
             "ambiguous_action_memory": "Are you asking about your reminder or your profile info?",
             "state_expired": "I don't have enough recent context. Can you restate what you mean?",
@@ -555,6 +910,14 @@ class StateArbiter:
 
     @staticmethod
     def _hard_clarify_message(first_owner: str, second_owner: str) -> str:
+        owner_set = {str(first_owner or ""), str(second_owner or "")}
+        if owner_set & {"entity_followup"} and owner_set & {"action_followup", "scheduling_command"}:
+            return "Please choose one: your reminder, or the person/topic we were discussing."
+        if "entity_followup" in owner_set and "general_chat" in owner_set:
+            return "Please choose one: the person/topic we were discussing, or something else."
+        if owner_set & {"action_followup", "scheduling_command"} and "general_chat" in owner_set:
+            return "Please choose one: your reminder, or something else."
+
         labels = {
             "entity_followup": "the person/topic we were discussing",
             "action_followup": "your reminder/alarm",
@@ -566,6 +929,47 @@ class StateArbiter:
         first = labels.get(first_owner, first_owner)
         second = labels.get(second_owner, second_owner)
         return f"Please choose one: {first}, or {second}."
+
+    def _is_cross_domain_pronoun_conflict(
+        self,
+        *,
+        text: str,
+        state: Dict[str, Any],
+    ) -> bool:
+        if not getattr(self._owner, "_pronoun_rewriter", None):
+            return False
+        if not self._owner._pronoun_rewriter.has_pronoun(text):
+            return False
+        if self._classify_explicit_intent(text):
+            return False
+        if self._looks_like_new_scheduling_command(text):
+            return False
+        if any(re.search(pattern, text) for pattern in self._NON_FOLLOWUP_COMMAND_PATTERNS):
+            if not re.search(r"\bwhat about\b", text):
+                return False
+        has_active_entity = isinstance(state.get("active_entity"), dict) and bool(
+            str((state.get("active_entity") or {}).get("value") or "").strip()
+        )
+        has_last_action = isinstance(state.get("last_action"), dict) and str(
+            (state.get("last_action") or {}).get("domain") or ""
+        ).strip().lower() == "scheduling"
+        has_pending_scheduling = isinstance(state.get("pending_scheduling_action"), dict)
+        has_recent_scheduling = self._has_recent_scheduling_context_from_history()
+        if not has_active_entity or not (has_last_action or has_pending_scheduling or has_recent_scheduling):
+            return False
+        return True
+
+    def _is_multi_entity_pronoun_conflict(
+        self,
+        *,
+        text: str,
+        state: Dict[str, Any],
+    ) -> bool:
+        if not getattr(self._owner, "_pronoun_rewriter", None):
+            return False
+        if not self._owner._pronoun_rewriter.has_pronoun(text):
+            return False
+        return bool(state.get("recent_multi_entity"))
 
     def _get_clarify_context(self, *, session_key: str, turn_index: int) -> Optional[Dict[str, Any]]:
         payload = self._clarify_context.get(session_key)
@@ -586,6 +990,120 @@ class StateArbiter:
     @staticmethod
     def _short_scores(scores: Dict[str, float]) -> Dict[str, float]:
         return {k: round(float(v), 2) for k, v in scores.items() if v > 0}
+
+    def _log_decision(
+        self,
+        *,
+        decision: ArbitrationDecision,
+        session_key: str,
+        runner_up: str,
+        margin: float,
+    ) -> None:
+        logger.info(
+            "state_arbiter_decision owner=%s confidence=%.2f reason=%s clarify_reason=%s runner_up=%s winner_margin=%.3f scores=%s session=%s",
+            decision.owner,
+            decision.confidence,
+            decision.reason,
+            decision.clarify_reason,
+            runner_up or "none",
+            float(margin),
+            self._short_scores(decision.scores),
+            session_key,
+        )
+
+    def _is_reminder_followup_query(self, text: str) -> bool:
+        normalized = self._normalize_followup_text(text)
+        return any(re.search(pattern, normalized) for pattern in self._SCHEDULING_QUERY_PATTERNS)
+
+    def _looks_like_new_scheduling_command(self, text: str) -> bool:
+        if self._is_reminder_followup_query(text):
+            return False
+        return bool(
+            re.search(r"\b(remind me|set (?:a )?reminder|set (?:an )?alarm|delete reminder|cancel reminder)\b", text)
+        )
+
+    def _has_programming_context(self, text: str) -> bool:
+        return any(re.search(pattern, text) for pattern in self._PROGRAMMING_CONTEXT_PATTERNS)
+
+    def _has_multi_entity_shape(self, text: str) -> bool:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return False
+        return any(re.search(pattern, lowered) for pattern in self._MULTI_ENTITY_PATTERNS)
+
+    def _should_apply_clarify_bias(
+        self,
+        *,
+        text: str,
+        pronoun: bool,
+        reminder_hint: bool,
+        self_ref: bool,
+    ) -> bool:
+        words = re.findall(r"\b[\w'-]+\b", text)
+        if len(words) > 8:
+            return False
+        if self._looks_like_new_scheduling_command(text):
+            return False
+        if self._check_profile_statement_determinism(text=text):
+            return False
+        if self._check_research_entry_determinism(text=text, state={}):
+            return False
+        return pronoun or reminder_hint or self_ref
+
+    def _is_explicit_non_followup_command(
+        self,
+        *,
+        text: str,
+        pronoun: bool,
+        followup_hint: bool,
+    ) -> bool:
+        if pronoun or followup_hint:
+            return False
+        if self._is_reminder_followup_query(text):
+            return False
+        if self._looks_like_new_scheduling_command(text):
+            return False
+        return any(re.search(pattern, text) for pattern in self._NON_FOLLOWUP_COMMAND_PATTERNS)
+
+    def _detect_deterministic_false_clarify_signal(
+        self,
+        *,
+        text: str,
+        state: Dict[str, Any],
+    ) -> str:
+        if self._check_reminder_followup_determinism(text=text, state=state):
+            return "action_followup"
+        if self._check_profile_statement_determinism(text=text):
+            return "declarative_profile_update"
+        if self._check_research_entry_determinism(text=text, state=state):
+            return "explicit_research_entry"
+        return ""
+
+    def _has_recent_scheduling_context_from_history(self) -> bool:
+        history = getattr(self._owner, "_conversation_history", None)
+        if not isinstance(history, list) or not history:
+            return False
+        for item in reversed(history[-6:]):
+            if not isinstance(item, dict):
+                continue
+            route = str(item.get("route") or "").strip().lower()
+            content = str(item.get("content") or "").strip().lower()
+            if route in {"scheduling", "direct_action"} and re.search(r"\b(reminder|alarm)\b", content):
+                return True
+            if re.search(r"\bwhat should i remind you about\b", content):
+                return True
+            if re.search(r"\bwhen would you like to be reminded\b", content):
+                return True
+        return False
+
+    @classmethod
+    def _normalize_followup_text(cls, text: str) -> str:
+        lowered = str(text or "").strip().lower()
+        if not lowered:
+            return ""
+        lowered = cls._NOISY_FILLERS_PATTERN.sub(" ", lowered)
+        lowered = re.sub(r"\s+", " ", lowered).strip()
+        return lowered
 
     @staticmethod
     def _truthy_env(name: str, default: bool) -> bool:

@@ -74,6 +74,35 @@ async def test_scheduling_handler_missing_task_returns_needs_followup():
 
 
 @pytest.mark.asyncio
+async def test_scheduling_handler_time_only_12h_missing_task_returns_needs_followup():
+    handler = SchedulingAgentHandler()
+    result = await handler.handle(_request(user_text="set a reminder for 6pm"))
+    assert result.status == "needs_followup"
+    assert result.structured_payload["missing_slot"] == "task"
+    assert result.structured_payload["parameters"]["time"] == "6pm"
+    assert result.structured_payload["clarification"] == "What should I remind you about?"
+
+
+@pytest.mark.asyncio
+async def test_scheduling_handler_time_only_24h_missing_task_returns_needs_followup():
+    handler = SchedulingAgentHandler()
+    result = await handler.handle(_request(user_text="set a reminder at 18:00"))
+    assert result.status == "needs_followup"
+    assert result.structured_payload["missing_slot"] == "task"
+    assert result.structured_payload["parameters"]["time"] == "18:00"
+    assert result.structured_payload["clarification"] == "What should I remind you about?"
+
+
+@pytest.mark.asyncio
+async def test_scheduling_handler_followup_query_bypasses_create_parser():
+    handler = SchedulingAgentHandler()
+    result = await handler.handle(_request(user_text="reminder uh what did I set"))
+    assert result.status == "completed"
+    assert result.structured_payload["action_type"] == "list_reminders"
+    assert result.structured_payload["tool_name"] == "list_reminders"
+
+
+@pytest.mark.asyncio
 async def test_scheduling_handler_set_alarm_returns_correct_parameters():
     handler = SchedulingAgentHandler()
     result = await handler.handle(_request(user_text="set an alarm for 7 am", target_agent="scheduling"))

@@ -1405,6 +1405,171 @@ async def test_state_arbiter_enforce_clarifies_entity_action_ambiguity(monkeypat
     assert "person" in response.display_text.lower() or "discussing" in response.display_text.lower()
 
 
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_routes_first_turn_research_without_clarifying(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._handle_research_route = AsyncMock(
+        return_value=AgentResponse(
+            display_text="",
+            voice_text="",
+            structured_data={"_routing_mode_type": "research_pending"},
+        )
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "tell me about Elon Musk",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert response.structured_data["_routing_mode_type"] == "research_pending"
+    orchestrator._handle_research_route.assert_awaited_once()
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_reminder_followup_uses_action_path(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="s-reminder")
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._set_last_action_for_context(
+        action={
+            "type": "set_reminder",
+            "domain": "scheduling",
+            "summary": "Reminder: call John tomorrow at 5 pm",
+            "data": {"task": "call John", "time": "tomorrow at 5 pm"},
+        },
+        tool_context=session,
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "what reminder did I set",
+        user_id="u1",
+        tool_context=session,
+        origin="chat",
+    )
+
+    assert "remind you to call john" in response.display_text.lower()
+    assert "clearer scheduling instruction" not in response.display_text.lower()
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_noisy_reminder_followup_uses_action_path(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    session = SimpleNamespace(session_id="s-reminder-noisy")
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._set_last_action_for_context(
+        action={
+            "type": "set_reminder",
+            "domain": "scheduling",
+            "summary": "Reminder: call John tomorrow at 5 pm",
+            "data": {"task": "call John", "time": "tomorrow at 5 pm"},
+        },
+        tool_context=session,
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "reminder uh what did I set",
+        user_id="u1",
+        tool_context=session,
+        origin="chat",
+    )
+
+    assert "remind you to call john" in response.display_text.lower()
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_scheduling_command_routes_directly_to_scheduling_handler(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._handle_scheduling_route = AsyncMock(
+        return_value=AgentResponse(
+            display_text="What should I remind you about?",
+            voice_text="What should I remind you about?",
+        )
+    )
+
+    response = await orchestrator._handle_chat_response_core(
+        "set a reminder for 6pm",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "what should i remind you about" in response.display_text.lower()
+    orchestrator._handle_scheduling_route.assert_awaited_once()
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_programming_negative_bypasses_profile_recall(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._resolve_profile_recall = AsyncMock(return_value=("Harsha", "profile", ""))
+    orchestrator._is_phase6_context_builder_active = MagicMock(return_value=False)
+
+    response = await orchestrator._handle_chat_response_core(
+        "what is my name in python",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "your name is" not in response.display_text.lower()
+    orchestrator._resolve_profile_recall.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_multi_entity_followup_clarifies(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    orchestrator._router = MagicMock()
+    orchestrator._router.route = AsyncMock(return_value="chat")
+    orchestrator._conversation_history = [
+        {"role": "user", "content": "tell me about Modi and Elon Musk", "route": "research"},
+        {"role": "assistant", "content": "Research summary", "route": "research"},
+    ]
+
+    response = await orchestrator._handle_chat_response_core(
+        "what about him",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "clarify" in response.display_text.lower() or "who you mean" in response.display_text.lower()
+    orchestrator._router.route.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_state_arbiter_enforce_clarify_loop_second_turn_is_guided(monkeypatch):
+    monkeypatch.setenv("STATE_ARBITER_ENFORCE", "true")
+    orchestrator = AgentOrchestrator(MagicMock(), MagicMock())
+    first = await orchestrator._handle_chat_response_core(
+        "what about him",
+        user_id="u1",
+        origin="chat",
+    )
+    second = await orchestrator._handle_chat_response_core(
+        "him",
+        user_id="u1",
+        origin="chat",
+    )
+
+    assert "clarify" in first.display_text.lower() or "not fully sure" in first.display_text.lower()
+    assert "please choose one" in second.display_text.lower()
+
+
 def test_pending_scheduling_followup_does_not_intercept_research_pronoun_query():
     assert AgentOrchestrator._is_pending_scheduling_task_followup("tell me more about him") is False
 

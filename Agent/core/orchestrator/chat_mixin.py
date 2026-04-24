@@ -125,6 +125,14 @@ class ChatResponseMixin:
         )
         arbiter_enforce = bool(getattr(arbiter, "enforce_enabled", False))
 
+        def _log_arbiter_seam(handler_name: str) -> None:
+            logger.info(
+                "state_arbiter_seam_dispatch arbiter_owner=%s executed_handler=%s origin=%s",
+                str(getattr(arbiter_decision, "owner", "") or ""),
+                handler_name,
+                origin,
+            )
+
         fast_path_input = self._extract_user_message_segment(message) or message
         direct_tool = self._detect_direct_tool_intent(fast_path_input, origin=origin)
         if direct_tool:
@@ -277,6 +285,7 @@ class ChatResponseMixin:
             return self._tag_response_with_routing_type(response, "informational")
 
         if arbiter_enforce and arbiter_decision.owner == "clarify":
+            _log_arbiter_seam("clarify")
             clarification = (
                 arbiter_decision.clarify_message
                 or "I'm not fully sure which context you mean. Can you clarify?"
@@ -304,6 +313,7 @@ class ChatResponseMixin:
             )
 
         if arbiter_enforce and arbiter_decision.owner == "identity":
+            _log_arbiter_seam("identity")
             identity_response = await self._handle_identity_fast_path(
                 message=message,
                 user_id=user_id,
@@ -317,6 +327,7 @@ class ChatResponseMixin:
             return identity_response
 
         if arbiter_enforce and arbiter_decision.owner == "profile_recall":
+            _log_arbiter_seam("profile_recall")
             memory_session_id = (
                 getattr(tool_context, "session_id", None)
                 or self._current_session_id
@@ -371,11 +382,27 @@ class ChatResponseMixin:
             return self._tag_response_with_routing_type(response, "informational")
 
         if arbiter_enforce and arbiter_decision.owner == "entity_followup":
+            if bool((arbiter_decision.meta or {}).get("is_research_entry")):
+                _log_arbiter_seam("research")
+                response = await self._handle_research_route(
+                    message=message,
+                    user_id=user_id,
+                    tool_context=tool_context,
+                    query_rewritten=False,
+                    query_ambiguous=False,
+                )
+                self._record_state_arbiter_outcome(
+                    decision=arbiter_decision,
+                    legacy_owner="research",
+                    final_handler="research",
+                )
+                return response
             rewritten_followup, forced_research, ambiguous_followup = self._rewrite_pronoun_followup_pre_router(
                 message,
                 tool_context=tool_context,
             )
             if ambiguous_followup or not forced_research:
+                _log_arbiter_seam("clarify")
                 clarification = (
                     arbiter_decision.clarify_message
                     or "Could you clarify who you mean before I research that?"
@@ -399,6 +426,7 @@ class ChatResponseMixin:
                 query_rewritten=True,
                 query_ambiguous=False,
             )
+            _log_arbiter_seam("research")
             self._record_state_arbiter_outcome(
                 decision=arbiter_decision,
                 legacy_owner="entity_followup",
@@ -406,7 +434,36 @@ class ChatResponseMixin:
             )
             return response
 
-        if (not arbiter_enforce) or arbiter_decision.owner == "action_followup":
+        if arbiter_enforce and arbiter_decision.owner == "scheduling_command":
+            _log_arbiter_seam("scheduling")
+            response = await self._handle_scheduling_route(
+                message=message,
+                user_id=user_id,
+                tool_context=tool_context,
+            )
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="scheduling_command",
+                final_handler="scheduling",
+            )
+            return response
+
+        if arbiter_enforce and arbiter_decision.owner == "action_followup":
+            followup_response = self._resolve_last_action_followup(
+                message=message,
+                tool_context=tool_context,
+            )
+            if followup_response is None:
+                followup_response = self._build_no_last_action_response(query=message)
+            _log_arbiter_seam("action_followup")
+            self._record_state_arbiter_outcome(
+                decision=arbiter_decision,
+                legacy_owner="action_followup",
+                final_handler="action_followup",
+            )
+            return followup_response
+
+        if not arbiter_enforce:
             followup_response = self._resolve_last_action_followup(
                 message=message,
                 tool_context=tool_context,
