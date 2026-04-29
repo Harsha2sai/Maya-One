@@ -4,7 +4,7 @@ import logging
 import asyncio
 import re
 import time
-from aiohttp import web, WSMsgType
+from aiohttp import web, WSMsgType, client_exceptions
 from livekit.api import (
     AccessToken,
     VideoGrants,
@@ -13,11 +13,107 @@ from livekit.api import (
     CreateAgentDispatchRequest,
 )
 from livekit.protocol import models, room
+from core.runtime.readiness import ReadinessState, get_runtime_readiness_tracker
 
 logger = logging.getLogger(__name__)
 
+_room_context_generation = 0
 _latest_token_room_context: dict[str, object] = {}
-_last_room_by_run_id: dict[str, str] = {}
+_last_room_by_run_id: dict[str, dict[str, object]] = {}
+
+
+def _next_room_context_generation() -> int:
+    global _room_context_generation
+    _room_context_generation += 1
+    return _room_context_generation
+
+
+def _current_room_context_generation() -> int:
+    return int(_room_context_generation)
+
+
+def _set_room_context(context: dict[str, object]) -> dict[str, object]:
+    global _latest_token_room_context
+    _latest_token_room_context = dict(context)
+    return dict(_latest_token_room_context)
+
+
+def _room_context_snapshot() -> dict[str, object]:
+    return dict(_latest_token_room_context)
+
+
+def reset_room_context_state(*, reason: str) -> dict[str, object]:
+    global _last_room_by_run_id
+    generation = _next_room_context_generation()
+    _last_room_by_run_id = {}
+    return _set_room_context(
+        {
+            "generation": generation,
+            "context_state": "empty",
+            "reason": reason,
+            "room_name": "",
+            "participant_name": "",
+            "issued_at_ms": None,
+            "token_status": None,
+            "pid": os.getpid(),
+        }
+    )
+
+
+def _publish_token_room_context(
+    *,
+    room_name: str,
+    participant_name: str,
+    token_status: int,
+    context_state: str,
+    reason: str = "",
+) -> dict[str, object]:
+    generation = _current_room_context_generation() or _next_room_context_generation()
+    return _set_room_context(
+        {
+            "generation": generation,
+            "context_state": context_state,
+            "reason": reason,
+            "room_name": str(room_name),
+            "participant_name": str(participant_name),
+            "issued_at_ms": int(time.time() * 1000),
+            "token_status": int(token_status),
+            "pid": os.getpid(),
+        }
+    )
+
+
+def _room_context_error_payload(context: dict[str, object]) -> tuple[int, dict[str, object]]:
+    current_generation = _current_room_context_generation()
+    context_generation = int(context.get("generation") or 0)
+    context_state = str(context.get("context_state") or "")
+    room_name = str(context.get("room_name") or "")
+
+    if not context:
+        error = "room_context_missing"
+    elif context_generation != current_generation:
+        error = "room_context_stale_generation"
+    elif context_state == "token_failed":
+        error = "room_context_token_failed"
+    else:
+        error = "room_context_send_before_token"
+
+    return 409, {
+        "error": error,
+        "room": room_name,
+        "retry_after_ms": 500,
+        "details": {
+            "context_state": context_state or "missing",
+            "reason": str(context.get("reason") or error),
+            "generation": context_generation,
+            "current_generation": current_generation,
+            "room_name": room_name,
+            "participant_name": str(context.get("participant_name") or ""),
+            "issued_at_ms": context.get("issued_at_ms"),
+            "token_status": context.get("token_status"),
+            "pid": context.get("pid"),
+        },
+    }
 
 # Map provider IDs to environment variable names
 # Centralized to avoid duplication and inconsistencies
@@ -124,6 +220,221 @@ def _resolve_livekit_credentials() -> tuple[str, str, str]:
     if not (livekit_url and livekit_api_key and livekit_api_secret):
         raise RuntimeError("LiveKit credentials are missing; cannot complete request")
     return livekit_url, livekit_api_key, livekit_api_secret
+
+
+def _float_env(name: str, default: float, *, minimum: float) -> float:
+    raw = str(os.getenv(name, str(default)) or str(default)).strip()
+    try:
+        return max(minimum, float(raw))
+    except Exception:
+        return default
+
+
+def _send_message_poll_interval_s() -> float:
+    raw = os.getenv("MAYA_SEND_MESSAGE_ROOM_POLL_INTERVAL_S")
+    if raw is None:
+        raw = os.getenv("MAYA_SEND_MESSAGE_POLL_INTERVAL_S", "0.2")
+    try:
+        return max(0.05, float(str(raw).strip()))
+    except Exception:
+        return 0.2
+
+
+def _send_message_cold_room_wait_s() -> float:
+    return _float_env("MAYA_SEND_MESSAGE_COLD_ROOM_WAIT_S", 35.0, minimum=1.0)
+
+
+def _send_message_warm_room_wait_s() -> float:
+    return _float_env("MAYA_SEND_MESSAGE_WARM_ROOM_WAIT_S", 25.0, minimum=1.0)
+
+
+def _send_message_first_turn_grace_s() -> float:
+    return _float_env("MAYA_SEND_MESSAGE_FIRST_TURN_GRACE_S", 2.0, minimum=0.0)
+
+
+def _send_message_first_turn_grace_interval_s() -> float:
+    return _float_env("MAYA_SEND_MESSAGE_FIRST_TURN_GRACE_POLL_INTERVAL_S", 0.25, minimum=0.05)
+
+
+def _first_turn_ready_states() -> set[str]:
+    return {
+        ReadinessState.READY_SESSION_CAPABLE.value,
+        ReadinessState.READY_CAPABILITY.value,
+    }
+
+
+def _first_turn_route_gate_status(readiness_snapshot: dict[str, object]) -> dict[str, object]:
+    checks = readiness_snapshot.get("checks")
+    if not isinstance(checks, dict):
+        checks = {}
+    state = str(readiness_snapshot.get("state") or "")
+    worker_registered = bool(
+        checks.get("worker_registered")
+        or readiness_snapshot.get("worker_connected")
+        or readiness_snapshot.get("worker_registered")
+    )
+    dispatch_pipeline_ready = bool(
+        checks.get("dispatch_pipeline_ready")
+        or readiness_snapshot.get("dispatch_pipeline_ready")
+    )
+    dispatch_claimable_ready = bool(
+        checks.get("dispatch_claimable_ready")
+        or readiness_snapshot.get("dispatch_claimable_ready")
+        or readiness_snapshot.get("last_probe_ok")
+    )
+    state_ready = state in _first_turn_ready_states()
+    return {
+        "allowed": bool(
+            worker_registered
+            and dispatch_pipeline_ready
+            and dispatch_claimable_ready
+            and state_ready
+        ),
+        "state": state,
+        "worker_registered": worker_registered,
+        "dispatch_pipeline_ready": dispatch_pipeline_ready,
+        "dispatch_claimable_ready": dispatch_claimable_ready,
+        "state_ready": state_ready,
+    }
+
+
+async def _wait_for_first_turn_route_ready(
+    tracker: object,
+    *,
+    timeout_s: float = 1.0,
+    interval_s: float = 0.05,
+) -> tuple[bool, dict[str, object]]:
+    deadline = time.monotonic() + max(0.0, timeout_s)
+    last_snapshot = tracker.snapshot()
+    while True:
+        gate = _first_turn_route_gate_status(last_snapshot)
+        if gate["allowed"]:
+            return True, last_snapshot
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, last_snapshot
+        await asyncio.sleep(min(max(0.01, interval_s), remaining))
+        last_snapshot = tracker.snapshot()
+
+
+def _warming_up_payload(readiness_snapshot: dict[str, object], *, room_name: str = "") -> dict[str, object]:
+    return {
+        "error": "warming_up",
+        "retry_after_ms": 1000,
+        "room": room_name,
+        "details": {
+            "state": readiness_snapshot.get("state"),
+            "checks": readiness_snapshot.get("checks"),
+            "timing": readiness_snapshot.get("timing"),
+            "probe": readiness_snapshot.get("probe"),
+            "worker_alive": readiness_snapshot.get("worker_alive"),
+            "last_probe_ok": readiness_snapshot.get("last_probe_ok"),
+            "last_probe_age_ms": readiness_snapshot.get("last_probe_age_ms"),
+            "session": readiness_snapshot.get("session"),
+            "cycle_id": readiness_snapshot.get("cycle_id"),
+        },
+    }
+
+
+def _token_dispatch_retry_attempts() -> int:
+    raw = str(os.getenv("MAYA_TOKEN_DISPATCH_RETRY_ATTEMPTS", "2") or "2").strip()
+    try:
+        return max(1, int(raw))
+    except Exception:
+        return 2
+
+
+def _token_dispatch_retry_delay_s() -> float:
+    return _float_env("MAYA_TOKEN_DISPATCH_RETRY_DELAY_S", 0.25, minimum=0.0)
+
+
+def _token_credentials_present_for_slot(suffix: str) -> dict[str, bool]:
+    return {
+        "livekit_url_present": bool(str(os.getenv(f"LIVEKIT_URL{suffix}", "") or "").strip()),
+        "api_key_present": bool(str(os.getenv(f"LIVEKIT_API_KEY{suffix}", "") or "").strip()),
+        "secret_present": bool(str(os.getenv(f"LIVEKIT_API_SECRET{suffix}", "") or "").strip()),
+    }
+
+
+def _is_transient_token_dispatch_error(exc: Exception) -> bool:
+    if isinstance(
+        exc,
+        (
+            asyncio.TimeoutError,
+            TimeoutError,
+            client_exceptions.ClientConnectorDNSError,
+            client_exceptions.ClientConnectorError,
+            client_exceptions.ServerDisconnectedError,
+        ),
+    ):
+        return True
+    message = str(exc).lower()
+    transient_markers = (
+        "temporary failure in name resolution",
+        "name or service not known",
+        "nodename nor servname provided",
+        "server disconnected",
+        "connection reset by peer",
+        "timed out",
+    )
+    return any(marker in message for marker in transient_markers)
+
+
+def _static_send_message_wait_budget(tracker: object) -> dict[str, float | int | str]:
+    has_successful_room_join = False
+    getter = getattr(tracker, "has_successful_room_join", None)
+    if callable(getter):
+        try:
+            has_successful_room_join = bool(getter())
+        except Exception:
+            has_successful_room_join = False
+    wait_budget_s = _send_message_warm_room_wait_s() if has_successful_room_join else _send_message_cold_room_wait_s()
+    room_wait_budget_source = "warm_static" if has_successful_room_join else "cold_static"
+    return {
+        "wait_budget_s": wait_budget_s,
+        "room_wait_budget_source": room_wait_budget_source,
+        "successful_room_join_count": 1 if has_successful_room_join else 0,
+    }
+
+
+def _should_apply_first_turn_session_grace(status: dict[str, object]) -> bool:
+    room_stage = status.get("room_stage")
+    if not isinstance(room_stage, dict):
+        return False
+    return (
+        str(status.get("room_failure_class") or "") == "session_booting"
+        and bool(status.get("dispatch_ready"))
+        and bool(status.get("agent_present"))
+        and room_stage.get("worker_job_claimed_at_ms") is not None
+        and room_stage.get("room_joined_at_ms") is not None
+        and room_stage.get("session_started_at_ms") is not None
+        and room_stage.get("session_ready_at_ms") is None
+    )
+
+
+def _annotate_room_gate_status(
+    status: dict[str, object],
+    *,
+    first_request_arrived_at_ms: int,
+    first_request_released_at_ms: int | None = None,
+    grace_applied: bool = False,
+    grace_elapsed_ms: int = 0,
+    grace_attempts: int = 0,
+    grace_budget_ms: int = 0,
+) -> dict[str, object]:
+    room_stage = status.get("room_stage")
+    if isinstance(room_stage, dict):
+        status["worker_job_claimed_at_ms"] = room_stage.get("worker_job_claimed_at_ms")
+        status["room_joined_at_ms"] = room_stage.get("room_joined_at_ms")
+        status["session_started_at_ms"] = room_stage.get("session_started_at_ms")
+        status["session_ready_at_ms"] = room_stage.get("session_ready_at_ms")
+    status["first_request_arrived_at_ms"] = first_request_arrived_at_ms
+    status["first_request_released_at_ms"] = first_request_released_at_ms
+    status["first_turn_grace_applied"] = grace_applied
+    status["first_turn_grace_elapsed_ms"] = grace_elapsed_ms
+    status["first_turn_grace_attempts"] = grace_attempts
+    status["first_turn_grace_budget_ms"] = grace_budget_ms
+    return status
 
 
 def _provider_id_to_env_var(provider_id: str):
@@ -568,14 +879,82 @@ async def _ensure_room_dispatch(room_name: str) -> None:
         if already_exists:
             return
 
-        await lk.agent_dispatch.create_dispatch(
+        readiness = get_runtime_readiness_tracker()
+        readiness_snapshot = readiness.snapshot()
+        dispatch_metadata = json.dumps(
+            {
+                "source": "token_server",
+                "dispatch_kind": "real_room",
+                "cycle_id": str(readiness_snapshot.get("cycle_id") or ""),
+                "worker_attempt_id": str(readiness_snapshot.get("active_worker_attempt") or ""),
+                "room": room_name,
+                "agent_name": agent_name,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        dispatch_worker_snapshot = {
+            "workers_online": 1
+            if bool(
+                (readiness_snapshot.get("checks") or {}).get("worker_registered")
+                or readiness_snapshot.get("worker_connected")
+                or readiness_snapshot.get("worker_registered")
+            )
+            else 0,
+            "workers_claimable": 1
+            if bool(
+                (readiness_snapshot.get("checks") or {}).get("dispatch_claimable_ready")
+                or readiness_snapshot.get("dispatch_claimable_ready")
+                or readiness_snapshot.get("last_probe_ok")
+            )
+            else 0,
+            "worker_state": str(readiness_snapshot.get("state") or ""),
+            "configured_agent_name": agent_name,
+        }
+        readiness.record_boot_event(
+            "dispatch_requested",
+            room=room_name,
+            agent_name=agent_name,
+            source="token_handler",
+            dispatch_metadata=dispatch_metadata,
+            **dispatch_worker_snapshot,
+        )
+        readiness.record_boot_event(
+            "dispatch_request_sent",
+            room=room_name,
+            agent_name=agent_name,
+            source="token_handler",
+            dispatch_kind="real_room",
+            dispatch_metadata=dispatch_metadata,
+            **dispatch_worker_snapshot,
+        )
+        dispatch = await lk.agent_dispatch.create_dispatch(
             CreateAgentDispatchRequest(
                 agent_name=agent_name,
                 room=room_name,
-                metadata='{"source":"token_server"}',
+                metadata=dispatch_metadata,
             )
         )
+        dispatch_state = getattr(dispatch, "state", None)
+        dispatch_jobs = list(getattr(dispatch_state, "jobs", []) or []) if dispatch_state else []
+        readiness.record_boot_event(
+            "dispatch_ack_received",
+            room=room_name,
+            agent_name=agent_name,
+            source="token_handler",
+            dispatch_kind="real_room",
+            dispatch_id=str(getattr(dispatch, "id", "") or ""),
+            dispatch_metadata=str(getattr(dispatch, "metadata", "") or dispatch_metadata),
+            dispatch_job_count=len(dispatch_jobs),
+            dispatch_worker_ids=[
+                str(getattr(getattr(job, "state", None), "worker_id", "") or "")
+                for job in dispatch_jobs
+            ],
+            **dispatch_worker_snapshot,
+        )
         logger.info(f"✅ Dispatch created for room={room_name}, agent={agent_name}")
+        readiness.mark_dispatch_created(room_name=room_name, agent_name=agent_name)
+        readiness.mark_dispatch_pipeline_ready(source="token_handler")
     finally:
         await lk.aclose()
 
@@ -606,19 +985,61 @@ async def _check_room_session_ready(
     )
     participants = list(getattr(participants_resp, "participants", []) or [])
     participant_count = len(participants)
+    participant_identities = [
+        str(getattr(participant, "identity", "") or "")
+        for participant in participants
+    ]
     agent_present = any(
         str(getattr(participant, "identity", "") or "").startswith("agent-")
         or (agent_name and agent_name in str(getattr(participant, "identity", "") or ""))
         for participant in participants
     )
+    room_stage = get_runtime_readiness_tracker().room_stage_snapshot(room_name)
+    dispatch_snapshot = [
+        {
+            "id": str(getattr(item, "id", "") or ""),
+            "agent_name": str(getattr(item, "agent_name", "") or ""),
+            "metadata": str(getattr(item, "metadata", "") or ""),
+            "job_count": len(list(getattr(getattr(item, "state", None), "jobs", []) or [])),
+            "worker_ids": [
+                str(getattr(getattr(job, "state", None), "worker_id", "") or "")
+                for job in list(getattr(getattr(item, "state", None), "jobs", []) or [])
+            ],
+        }
+        for item in dispatches or []
+    ]
+    room_failure_class = ""
+    room_failure_reason = ""
+    if room_stage.get("session_failed_at_ms"):
+        room_failure_class = "session_failed"
+        room_failure_reason = str(room_stage.get("session_failure_reason") or "session_failed")
+    elif not room_stage.get("worker_job_claimed_at_ms"):
+        room_failure_class = "no_worker_claim"
+        room_failure_reason = "no_worker_claim"
+    elif not room_stage.get("room_connect_success_at_ms"):
+        room_failure_class = "worker_connecting"
+        room_failure_reason = str(
+            room_stage.get("room_connect_failure_reason") or "worker_connecting"
+        )
+    elif not room_stage.get("room_joined_at_ms") or not agent_present:
+        room_failure_class = "room_joining"
+        room_failure_reason = "room_joining"
+    elif not room_stage.get("session_started_at_ms") or not room_stage.get("session_ready_at_ms"):
+        room_failure_class = "session_booting"
+        room_failure_reason = "session_booting"
 
     return (
-        dispatch_ready and agent_present,
+        dispatch_ready and agent_present and not room_failure_class,
         {
             "dispatch_ready": dispatch_ready,
             "agent_present": agent_present,
             "participant_count": participant_count,
             "agent_name": agent_name or "",
+            "participant_identities": participant_identities,
+            "dispatch_snapshot": dispatch_snapshot,
+            "room_failure_class": room_failure_class,
+            "room_failure_reason": room_failure_reason,
+            "room_stage": room_stage,
         },
     )
 
@@ -627,42 +1048,175 @@ async def _wait_for_room_session_ready(
     lk: LiveKitAPI,
     room_name: str,
     *,
-    attempts: int = 5,
+    wait_budget_s: float,
     interval_s: float = 0.2,
 ) -> tuple[bool, dict[str, object]]:
+    started = time.monotonic()
+    started_ms = int(time.time() * 1000)
+    deadline = started + max(0.05, wait_budget_s)
+    grace_budget_s = _send_message_first_turn_grace_s()
+    grace_budget_ms = int(max(0.0, grace_budget_s * 1000.0))
+    grace_interval_s = _send_message_first_turn_grace_interval_s()
     status: dict[str, object] = {
         "dispatch_ready": False,
         "agent_present": False,
         "participant_count": 0,
-        "attempts": attempts,
+        "attempts": 0,
+        "elapsed_ms": 0,
+        "wait_budget_ms": int(max(0.0, wait_budget_s * 1000.0)),
+        "poll_interval_ms": int(max(0.0, interval_s * 1000.0)),
     }
-    for _ in range(max(1, attempts)):
+    attempt_index = 0
+    grace_applied = False
+    grace_started: float | None = None
+    grace_attempts = 0
+    while True:
+        attempt_index += 1
         ready, status = await _check_room_session_ready(lk, room_name)
+        status["attempt_index"] = attempt_index
+        status["attempts"] = attempt_index
+        status["elapsed_ms"] = max(0, int((time.monotonic() - started) * 1000.0))
+        status["wait_budget_ms"] = int(max(0.0, wait_budget_s * 1000.0))
+        status["poll_interval_ms"] = int(
+            max(0.0, (grace_interval_s if grace_applied else interval_s) * 1000.0)
+        )
+        if grace_applied:
+            grace_attempts += 1
+        _annotate_room_gate_status(
+            status,
+            first_request_arrived_at_ms=started_ms,
+            first_request_released_at_ms=None,
+            grace_applied=grace_applied,
+            grace_elapsed_ms=max(0, int((time.monotonic() - grace_started) * 1000.0))
+            if grace_started is not None
+            else 0,
+            grace_attempts=grace_attempts,
+            grace_budget_ms=grace_budget_ms,
+        )
         if ready:
-            status["attempts"] = attempts
+            _annotate_room_gate_status(
+                status,
+                first_request_arrived_at_ms=started_ms,
+                first_request_released_at_ms=int(time.time() * 1000),
+                grace_applied=grace_applied,
+                grace_elapsed_ms=max(0, int((time.monotonic() - grace_started) * 1000.0))
+                if grace_started is not None
+                else 0,
+                grace_attempts=grace_attempts,
+                grace_budget_ms=grace_budget_ms,
+            )
             return True, status
-        await asyncio.sleep(max(0.05, interval_s))
-    status["attempts"] = attempts
-    return False, status
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            if (
+                not grace_applied
+                and grace_budget_s > 0.0
+                and _should_apply_first_turn_session_grace(status)
+            ):
+                grace_applied = True
+                grace_started = time.monotonic()
+                deadline = grace_started + grace_budget_s
+                status["first_turn_grace_started_at_ms"] = int(time.time() * 1000)
+                continue
+            status["elapsed_ms"] = max(0, int(time.time() * 1000) - started_ms)
+            _annotate_room_gate_status(
+                status,
+                first_request_arrived_at_ms=started_ms,
+                first_request_released_at_ms=int(time.time() * 1000),
+                grace_applied=grace_applied,
+                grace_elapsed_ms=max(0, int((time.monotonic() - grace_started) * 1000.0))
+                if grace_started is not None
+                else 0,
+                grace_attempts=grace_attempts,
+                grace_budget_ms=grace_budget_ms,
+            )
+            return False, status
+        active_interval_s = grace_interval_s if grace_applied else interval_s
+        await asyncio.sleep(min(max(0.05, active_interval_s), remaining))
 
 async def handle_token(request):
     """Integrated token generation endpoint"""
+    room_name = ""
+    participant_name = ""
+    started = time.monotonic()
     try:
         data = await request.json()
-        room_name = data.get('roomName')
-        participant_name = data.get('participantName')
+        room_name = str(data.get('roomName') or "").strip()
+        participant_name = str(data.get('participantName') or "").strip()
         metadata = data.get('metadata', {})
         
         if not room_name or not participant_name:
             return web.json_response({'error': 'roomName and participantName required'}, status=400)
 
-        # Ensure this room is routed to the configured worker name.
-        # If this fails, returning token would create a silent no-agent session.
-        await _ensure_room_dispatch(room_name)
-        
         active_slot = os.getenv("LIVEKIT_ACTIVE_SLOT", "1").strip()
         suffix = _livekit_slot_suffix(active_slot)
-        
+        tracker = get_runtime_readiness_tracker()
+        generation = _current_room_context_generation()
+        token_env = _token_credentials_present_for_slot(suffix)
+        tracker.record_boot_event(
+            "token_request_started",
+            room=room_name,
+            participant=participant_name,
+            generation=generation,
+            pid=os.getpid(),
+            elapsed_ms=0,
+            **token_env,
+        )
+
+        route_ready, readiness_snapshot = await _wait_for_first_turn_route_ready(tracker)
+        if not route_ready:
+            tracker.record_boot_event(
+                "token_request_rejected_warming_up",
+                room=room_name,
+                participant=participant_name,
+                generation=generation,
+                pid=os.getpid(),
+                elapsed_ms=max(0, int((time.monotonic() - started) * 1000.0)),
+                state=readiness_snapshot.get("state"),
+                cycle_id=readiness_snapshot.get("cycle_id"),
+                **token_env,
+            )
+            return web.json_response(
+                _warming_up_payload(readiness_snapshot, room_name=room_name),
+                status=503,
+            )
+
+        dispatch_attempts = _token_dispatch_retry_attempts()
+        retry_delay_s = _token_dispatch_retry_delay_s()
+        last_error: Exception | None = None
+        attempts_used = 0
+        for attempt in range(1, dispatch_attempts + 1):
+            attempts_used = attempt
+            try:
+                # Ensure this room is routed to the configured worker name.
+                # If this fails, returning token would create a silent no-agent session.
+                await _ensure_room_dispatch(room_name)
+                last_error = None
+                break
+            except Exception as exc:
+                last_error = exc
+                transient = _is_transient_token_dispatch_error(exc)
+                if transient and attempt < dispatch_attempts:
+                    tracker.record_boot_event(
+                        "token_request_retry_scheduled",
+                        room=room_name,
+                        participant=participant_name,
+                        generation=generation,
+                        pid=os.getpid(),
+                        attempt=attempt,
+                        retry_delay_ms=int(max(0.0, retry_delay_s * 1000.0)),
+                        exception_type=type(exc).__name__,
+                        exception_message=str(exc),
+                        elapsed_ms=max(0, int((time.monotonic() - started) * 1000.0)),
+                        **token_env,
+                    )
+                    if retry_delay_s > 0:
+                        await asyncio.sleep(retry_delay_s)
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+
         token = (
             AccessToken(os.getenv(f"LIVEKIT_API_KEY{suffix}"), os.getenv(f"LIVEKIT_API_SECRET{suffix}"))
             .with_identity(participant_name)
@@ -679,17 +1233,29 @@ async def handle_token(request):
         if metadata:
             token = token.with_metadata(json.dumps(metadata))
 
-        _latest_token_room_context.update(
-            {
-                "room_name": str(room_name),
-                "participant_name": str(participant_name),
-                "issued_at_ms": int(time.time() * 1000),
-            }
+        context = _publish_token_room_context(
+            room_name=room_name,
+            participant_name=participant_name,
+            token_status=200,
+            context_state="token_issued",
         )
         logger.info(
-            "send_message_room_context_updated room=%s participant=%s",
+            "send_message_room_context_updated room=%s participant=%s generation=%s pid=%s",
             room_name,
             participant_name,
+            context.get("generation"),
+            context.get("pid"),
+        )
+        tracker.mark_first_token_issued(room_name=str(room_name))
+        tracker.record_boot_event(
+            "token_request_success",
+            room=room_name,
+            participant=participant_name,
+            generation=context.get("generation"),
+            pid=os.getpid(),
+            dispatch_attempts=attempts_used,
+            elapsed_ms=max(0, int((time.monotonic() - started) * 1000.0)),
+            **token_env,
         )
             
         print(f"✅ [Internal] Generated token for {participant_name} in room {room_name}")
@@ -698,6 +1264,36 @@ async def handle_token(request):
             'url': os.getenv(f"LIVEKIT_URL{suffix}")
         })
     except Exception as e:
+        if room_name and participant_name:
+            context = _publish_token_room_context(
+                room_name=room_name,
+                participant_name=participant_name,
+                token_status=500,
+                context_state="token_failed",
+                reason=str(e),
+            )
+            logger.warning(
+                "send_message_room_context_failed room=%s participant=%s generation=%s pid=%s error=%s",
+                room_name,
+                participant_name,
+                context.get("generation"),
+                context.get("pid"),
+                e,
+            )
+        active_slot = os.getenv("LIVEKIT_ACTIVE_SLOT", "1").strip()
+        suffix = _livekit_slot_suffix(active_slot)
+        token_env = _token_credentials_present_for_slot(suffix)
+        get_runtime_readiness_tracker().record_boot_event(
+            "token_request_failed",
+            room=room_name,
+            participant=participant_name,
+            generation=_current_room_context_generation(),
+            pid=os.getpid(),
+            elapsed_ms=max(0, int((time.monotonic() - started) * 1000.0)),
+            exception_type=type(e).__name__,
+            exception_message=str(e),
+            **token_env,
+        )
         logger.error(f"❌ Token error: {e}")
         return web.json_response({'error': str(e)}, status=500)
 
@@ -719,62 +1315,192 @@ async def handle_send_message(request):
 
         user_id = str(data.get('user_id') or '').strip() or 'test_user'
         run_id = str(data.get('run_id') or '').strip()
-        room_name = str(_latest_token_room_context.get("room_name") or "").strip()
-        if not room_name:
+        room_context = _room_context_snapshot()
+        room_name = str(room_context.get("room_name") or "").strip()
+        tracker = get_runtime_readiness_tracker()
+        tracker.record_boot_event(
+            "send_received",
+            room=room_name or "",
+            user_id=user_id,
+            run_id=run_id or "",
+        )
+        context_generation = int(room_context.get("generation") or 0)
+        current_generation = _current_room_context_generation()
+        context_state = str(room_context.get("context_state") or "")
+        if (
+            not room_context
+            or context_generation != current_generation
+            or context_state != "token_issued"
+            or not room_name
+        ):
             logger.warning(
-                "send_message_rejected_no_room user_id=%s run_id=%s",
+                "send_message_rejected_room_context user_id=%s run_id=%s generation=%s current_generation=%s state=%s pid=%s",
                 user_id,
                 run_id or "-",
+                context_generation,
+                current_generation,
+                context_state or "missing",
+                room_context.get("pid"),
             )
-            return web.json_response(
-                {'error': 'No active token-issued room context yet'}, status=409
-            )
+            status, payload = _room_context_error_payload(room_context)
+            return web.json_response(payload, status=status)
 
         if run_id:
-            previous_room = _last_room_by_run_id.get(run_id)
-            if previous_room and previous_room != room_name:
+            previous_entry = _last_room_by_run_id.get(run_id) or {}
+            previous_room = str(previous_entry.get("room_name") or "")
+            previous_generation = int(previous_entry.get("generation") or 0)
+            if previous_room and (
+                previous_room != room_name or previous_generation != current_generation
+            ):
                 logger.warning(
-                    "send_message_room_changed run_id=%s previous_room=%s new_room=%s",
+                    "send_message_room_changed run_id=%s previous_room=%s previous_generation=%s new_room=%s generation=%s",
                     run_id,
                     previous_room,
+                    previous_generation,
                     room_name,
+                    current_generation,
                 )
-            _last_room_by_run_id[run_id] = room_name
+            _last_room_by_run_id[run_id] = {
+                "room_name": room_name,
+                "generation": current_generation,
+                "issued_at_ms": room_context.get("issued_at_ms"),
+            }
 
+        runtime_ready = tracker.snapshot()
+        if not _first_turn_route_gate_status(runtime_ready)["allowed"]:
+            logger.warning(
+                "send_message_rejected_warming_up room=%s user_id=%s run_id=%s state=%s cycle_id=%s",
+                room_name,
+                user_id,
+                run_id or "-",
+                runtime_ready.get("state"),
+                runtime_ready.get("cycle_id"),
+            )
+            return web.json_response(
+                _warming_up_payload(runtime_ready, room_name=room_name),
+                status=503,
+            )
         livekit_url, livekit_api_key, livekit_api_secret = _resolve_livekit_credentials()
+
         lk = LiveKitAPI(
             url=livekit_url,
             api_key=livekit_api_key,
             api_secret=livekit_api_secret,
         )
         try:
-            ready, readiness = await _wait_for_room_session_ready(
+            wait_budget = _static_send_message_wait_budget(tracker)
+            wait_budget_s = float(wait_budget["wait_budget_s"])
+            poll_interval_s = _send_message_poll_interval_s()
+            ready, room_status = await _wait_for_room_session_ready(
                 lk,
                 room_name,
-                attempts=5,
-                interval_s=0.2,
+                wait_budget_s=wait_budget_s,
+                interval_s=poll_interval_s,
             )
             if not ready:
+                tracker.record_boot_event(
+                    "session_not_ready_reason",
+                    room=room_name,
+                    user_id=user_id,
+                    run_id=run_id or "",
+                    source="send_message",
+                    reason=str(room_status.get("room_failure_reason") or "session_not_ready"),
+                    **room_status,
+                )
                 logger.warning(
-                    "send_message_rejected_session_not_ready room=%s user_id=%s run_id=%s dispatch_ready=%s agent_present=%s participant_count=%s",
+                    "send_message_rejected_session_not_ready room=%s user_id=%s run_id=%s class=%s dispatch_ready=%s agent_present=%s participant_count=%s attempts=%s elapsed_ms=%s",
                     room_name,
                     user_id,
                     run_id or "-",
-                    readiness.get("dispatch_ready"),
-                    readiness.get("agent_present"),
-                    readiness.get("participant_count"),
+                    room_status.get("room_failure_class"),
+                    room_status.get("dispatch_ready"),
+                    room_status.get("agent_present"),
+                    room_status.get("participant_count"),
+                    room_status.get("attempt_index"),
+                    room_status.get("elapsed_ms"),
+                )
+                tracker.record_boot_event(
+                    "session_gate_failed",
+                    room=room_name,
+                    user_id=user_id,
+                    run_id=run_id or "",
+                    source="send_message",
+                    elapsed_ms=room_status.get("elapsed_ms"),
+                    room_wait_budget_source=wait_budget.get("room_wait_budget_source"),
+                    room_wait_budget_ms=int(max(0.0, wait_budget_s * 1000.0)),
+                    room_failure_class=room_status.get("room_failure_class"),
+                    first_request_arrived_at_ms=room_status.get("first_request_arrived_at_ms"),
+                    first_request_released_at_ms=room_status.get("first_request_released_at_ms"),
+                    worker_job_claimed_at_ms=room_status.get("worker_job_claimed_at_ms"),
+                    room_joined_at_ms=room_status.get("room_joined_at_ms"),
+                    session_started_at_ms=room_status.get("session_started_at_ms"),
+                    session_ready_at_ms=room_status.get("session_ready_at_ms"),
+                    first_turn_grace_applied=room_status.get("first_turn_grace_applied"),
+                    first_turn_grace_elapsed_ms=room_status.get("first_turn_grace_elapsed_ms"),
                 )
                 return web.json_response(
                     {
-                        "error": "session_not_ready",
+                        "error": str(room_status.get("room_failure_class") or "session_not_ready"),
                         "retry_after_ms": 500,
                         "room": room_name,
-                        "details": readiness,
+                        "details": {
+                            **room_status,
+                            "wait_budget_ms": int(max(0.0, wait_budget_s * 1000.0)),
+                            "room_wait_budget_ms": int(max(0.0, wait_budget_s * 1000.0)),
+                            "room_wait_budget_source": wait_budget.get("room_wait_budget_source"),
+                            "successful_room_join_count": int(wait_budget.get("successful_room_join_count") or 0),
+                            "probe": runtime_ready.get("probe"),
+                            "worker_state": runtime_ready.get("state"),
+                            "worker_alive": runtime_ready.get("worker_alive"),
+                            "last_probe_ok": runtime_ready.get("last_probe_ok"),
+                            "last_probe_age_ms": runtime_ready.get("last_probe_age_ms"),
+                            "session": runtime_ready.get("session"),
+                        },
                     },
                     status=503,
                 )
+            tracker.record_boot_event(
+                "session_gate_passed",
+                room=room_name,
+                user_id=user_id,
+                run_id=run_id or "",
+                source="send_message",
+                elapsed_ms=room_status.get("elapsed_ms"),
+                room_wait_budget_source=wait_budget.get("room_wait_budget_source"),
+                room_wait_budget_ms=int(max(0.0, wait_budget_s * 1000.0)),
+                first_request_arrived_at_ms=room_status.get("first_request_arrived_at_ms"),
+                first_request_released_at_ms=room_status.get("first_request_released_at_ms"),
+                worker_job_claimed_at_ms=room_status.get("worker_job_claimed_at_ms"),
+                room_joined_at_ms=room_status.get("room_joined_at_ms"),
+                session_started_at_ms=room_status.get("session_started_at_ms"),
+                session_ready_at_ms=room_status.get("session_ready_at_ms"),
+                first_turn_grace_applied=room_status.get("first_turn_grace_applied"),
+                first_turn_grace_elapsed_ms=room_status.get("first_turn_grace_elapsed_ms"),
+            )
+            tracker.record_boot_event(
+                "worker_job_claimed",
+                room=room_name,
+                user_id=user_id,
+                run_id=run_id or "",
+                source="send_message",
+            )
+            tracker.record_boot_event(
+                "worker_job_started",
+                room=room_name,
+                user_id=user_id,
+                run_id=run_id or "",
+                source="send_message",
+            )
+            tracker.mark_first_session_ready(room_name=room_name)
 
             payload = message.encode("utf-8")
+            tracker.record_boot_event(
+                "first_response_started",
+                room=room_name,
+                user_id=user_id,
+                run_id=run_id or "",
+                bytes=len(payload),
+            )
             await lk.room.send_data(
                 room.SendDataRequest(
                     room=room_name,
@@ -782,6 +1508,13 @@ async def handle_send_message(request):
                     kind=models.DataPacket.Kind.Value("RELIABLE"),
                     topic="lk.chat",
                 )
+            )
+            tracker.record_boot_event(
+                "first_response_completed",
+                room=room_name,
+                user_id=user_id,
+                run_id=run_id or "",
+                bytes=len(payload),
             )
         finally:
             await lk.aclose()
@@ -874,81 +1607,9 @@ async def handle_ready(request):
     Validates that critical runtime dependencies are not just configured
     but actually usable. Returns 503 if any critical check fails.
     """
-    import os
-    import sqlite3
-
-    checks = {}
-    ready = True
-
-    # Check 1: LLM provider key present and non-empty
-    llm_provider = os.getenv("LLM_PROVIDER", "groq").lower()
-    if llm_provider == "groq":
-        key = os.getenv("GROQ_API_KEY", "").strip()
-    elif llm_provider == "openai":
-        key = os.getenv("OPENAI_API_KEY", "").strip()
-    else:
-        key = (
-            os.getenv("GROQ_API_KEY", "").strip()
-            or os.getenv("OPENAI_API_KEY", "").strip()
-        )
-    checks["llm_key"] = "ok" if key else "missing"
-    if not key:
-        ready = False
-
-    # Check 2: SQLite database is accessible (valid SQLite file exists or can be created)
-    # Uses the same path as GlobalAgentContainer.initialize() → SQLiteTaskStore("dev_maya_one.db")
-    # Note: we verify the path + SQLite header, NOT a specific table, because the tasks table
-    # is created by SQLiteTaskStore.__init__() which runs concurrently with the token server
-    # startup (race condition). After SqliteTaskStore initializes, the table will exist.
-    try:
-        db_path = os.getenv("SQLITE_DB_PATH", "dev_maya_one.db")
-        db_exists = os.path.isfile(db_path)
-        if db_exists:
-            # Verify it's a readable SQLite file by checking header bytes
-            with open(db_path, "rb") as f:
-                header = f.read(16)
-            is_sqlite = header == b"SQLite format 3\x00"
-        else:
-            is_sqlite = True  # Will be created on first access — that's OK
-        checks["sqlite_db"] = "ok" if is_sqlite else "invalid_file"
-        if not is_sqlite:
-            ready = False
-        # Also verify we can open it (validates permissions / locked file)
-        conn = sqlite3.connect(db_path, timeout=2.0)
-        conn.execute("SELECT 1")
-        conn.close()
-    except FileNotFoundError:
-        checks["sqlite_db"] = "not_found"
-        # DB will be created on first access — consider this acceptable
-        checks["sqlite_db"] = "ok"  # Downgrade: file missing at startup is OK (lazy init)
-    except Exception as e:
-        checks["sqlite_db"] = f"error: {e}"
-        ready = False
-
-    # Check 3: LiveKit credentials present
-    lk_url = os.getenv("LIVEKIT_URL", "").strip()
-    lk_key = os.getenv("LIVEKIT_API_KEY", "").strip()
-    lk_secret = os.getenv("LIVEKIT_API_SECRET", "").strip()
-    lk_ok = bool(lk_url and lk_key and lk_secret)
-    checks["livekit_credentials"] = "ok" if lk_ok else "missing"
-    if not lk_ok:
-        ready = False
-
-    # Check 4: STT provider key present
-    stt_provider = os.getenv("STT_PROVIDER", "deepgram").lower()
-    if stt_provider == "deepgram":
-        stt_key = os.getenv("DEEPGRAM_API_KEY", "").strip()
-    else:
-        stt_key = "n/a"
-    checks["stt_key"] = "ok" if stt_key else "missing"
-    if not stt_key:
-        ready = False
-
-    status_code = 200 if ready else 503
-    return web.json_response(
-        {"ready": ready, "checks": checks},
-        status=status_code,
-    )
+    readiness = get_runtime_readiness_tracker().snapshot()
+    status_code = 200 if bool(readiness.get("ready")) else 503
+    return web.json_response(readiness, status=status_code)
 
 async def handle_api_keys(request):
     """Sync API keys from Flutter app to backend .env file"""
